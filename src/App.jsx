@@ -282,6 +282,26 @@ function tokenizeTaggedLine(line) {
 function transposeTaggedText(text, semitoneDelta, useFlats) {
   return String(text || "").replace(/\[([^\]]*)\]/g, (_, sym) => `[${transposeChordSymbol(sym, semitoneDelta, useFlats)}]`);
 }
+const NASHVILLE = ["1", "1#", "2", "2#", "3", "4", "4#", "5", "5#", "6", "6#", "7"];
+function toNashville(symbol, currentKey) {
+  if (!symbol) return symbol;
+  const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
+  const baseSemi = KEY_TO_SEMITONE[currentKey] || 0;
+  const convertOne = (part) => {
+    const m = part.match(CHORD_ROOT_RE);
+    if (!m) return part;
+    const root = m[1] + m[2];
+    const rest = part.slice(m[0].length);
+    const semitone = KEY_TO_SEMITONE[root];
+    if (semitone === undefined) return part;
+    const diff = (semitone - baseSemi + 12) % 12;
+    return NASHVILLE[diff] + rest;
+  };
+  return symbol.split("/").map(convertOne).join("/");
+}
+function nashvillizeTaggedText(text, songKey) {
+  return String(text || "").replace(/\[([^\]]*)\]/g, (_, sym) => `[${toNashville(sym, songKey)}]`);
+}
 
 /* =========================================================================
    Seed data
@@ -1371,8 +1391,8 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   const lines = String(text || "").split("\n");
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
-  const tagGap = Math.max(4, tagSize * 0.28); // gap between the chord/note tag and the lyric char below it
-  const topPad = tagSize + tagGap; // tighter than the row-to-row gap, so a tag reads as "attached" to its line
+  const tagGap = Math.max(4, tagSize * 0.28); 
+  const topPad = tagSize + tagGap; 
 
   const commitTag = (lineIdx, tokenIdx, value) => {
     const lns = String(text || "").split("\n");
@@ -1399,12 +1419,12 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: lineHeightMult, textAlign }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
-        if (tokens.length === 0) tokens.push({ ch: null, tag: null }); // empty line still needs a tappable slot
+        if (tokens.length === 0) tokens.push({ ch: null, tag: null });
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: fontSize * 0.3, wordBreak: "normal", overflowWrap: "break-word" }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)), wordBreak: "keep-all" }}>
             {tokens.map((tok, ti) => {
               const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
               const isSpace = tok.ch === " " || tok.ch === null;
@@ -1427,10 +1447,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                         {flatify(tok.tag)}
                       </span>
                     )}
-                    {editable && !tok.tag && (
-                      <span style={{ position: "absolute", top: 0, left: 0, fontSize: tagSize, color: C.textFaint, opacity: 0.5 }}>+</span>
-                    )}
-                    <span style={{ color: showLyrics ? (dim ? C.textMuted : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
+                    <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
                       {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
                     </span>
                     {isEditingThis && (
@@ -1858,7 +1875,12 @@ function SongRow({ song, onOpen, onEdit, mode, C }) {
 }
 function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
   const [query, setQuery] = useState("");
-  const filtered = songs.filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase())).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const [langFilter, setLangFilter] = useState("All");
+  const filtered = songs
+    .filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()))
+    .filter((s) => langFilter === "All" || s.language === langFilter)
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
@@ -1866,10 +1888,13 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{songs.length} songs</div></div>
           <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
           <ClearableInput value={query} onChangeText={setQuery} placeholder="Search title or artist"
             leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
-            style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
+            style={{ flex: 1, minWidth: 0, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
+          <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+            {langFilter}
+          </button>
         </div>
       </div>
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
@@ -1969,6 +1994,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [showLyrics, setShowLyrics] = useState(true);
+  const [nashvilleMode, setNashvilleMode] = useState(false);
 
   const showBottomBar = mode === "drums" && !!engine;
 
@@ -2014,7 +2040,9 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
           <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={16} /></button>
-          <div style={keyButtonStyle}>{flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}</div>
+          <button onClick={() => setNashvilleMode(!nashvilleMode)} style={keyButtonStyle}>
+            {nashvilleMode ? "123" : flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
+          </button>
           <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={16} /></button>
           {song.description && (
             <button onClick={() => setDescOpen((o) => !o)} style={chevronBtn}>
@@ -2032,7 +2060,11 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
         )}
         {song.sections.map((sec, idx) => {
           const raw = sec[sectionField] || (sectionField !== "lyrics" ? sec.lyrics : "");
-          const displayText = (mode === "chords" && wrappedDelta !== 0) ? transposeTaggedText(raw, wrappedDelta, useFlats) : raw;
+          let displayText = raw;
+          if (mode === "chords") {
+            if (nashvilleMode) displayText = nashvillizeTaggedText(raw, song.key);
+            else if (wrappedDelta !== 0) displayText = transposeTaggedText(raw, wrappedDelta, useFlats);
+          }
           return (
             <div key={sec.id} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{sec.label || "Section"}</div>
@@ -2049,25 +2081,25 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}`, gap: 8 }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, justifySelf: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
-            <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-              <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
-              <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
-              </button>
-            </div>
+        <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}`, gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "start" }}>
+            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
+            <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
+            </button>
           </div>
-          <button onClick={engine.toggle} style={{ width: 62, height: 62, borderRadius: "50%", border: "none", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {engine.playing ? <Square size={20} color={C.accent} fill={C.accent} /> : <Play size={20} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
-          </button>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, justifySelf: "end" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 40, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button {...decBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>−</button>
-              <button {...incBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>+</button>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8, justifySelf: "center", minWidth: 100 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "0 8px" }}>
+              <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
             </div>
+            <button onClick={engine.toggle} style={{ height: 44, borderRadius: 12, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {engine.playing ? <Square size={20} color={C.accent} fill={C.accent} /> : <Play size={20} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
+            <button {...decBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+            <div style={{ fontSize: 17, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 32, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
+            <button {...incBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
           </div>
         </div>
       )}
@@ -2253,15 +2285,15 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, s
     </div>
   );
 }
-
 /* =========================================================================
    Settings — mode tab-select (Vocals, Drums, Chords) up top per spec #2,
    then Display (text size, alignment, line spacing, bold), the Click
    app's click-tone/pan controls, and Library import/export.
    ========================================================================= */
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, pianoSettings, setPianoSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
+  const [pianoToneIndex, setPianoToneIndex] = useState(() => Math.max(0, PIANO_TONES.findIndex((t) => t.id === pianoSettings?.pianoTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
@@ -2304,6 +2336,15 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTe
               <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
             </div>
           </Field>
+          <Field label="CHORD/NOTE SIZE">
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
+                <button onClick={() => setChordFontSize((f) => Math.min(30, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+              </div>
+            </div>
+          </Field>
           <Field label="LINE SPACING">
             <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
               <button onClick={() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
@@ -2326,38 +2367,61 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTe
           <Field label="PREVIEW">
             <div style={{ background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
               <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
-              <ChordText
-                text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
-                editable={false} dim={false} showLyrics brightTags
-                textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing}
-                accent={C.accent} C={C}
-              />
+              {mode === "vocals" ? (
+                <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
+                  {"Way maker, miracle worker,\npromise keeper, light in the darkness"}
+                </pre>
+              ) : (
+                <ChordText
+                  text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
+                  editable={false} dim={false} showLyrics brightTags
+                  textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
+                  accent={C.accent} C={C}
+                />
+              )}
             </div>
           </Field>
         </div>
 
-        <SectionLabel>CLICK</SectionLabel>
-        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-          <Field label="CLICK TONE">
-            <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-              <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
-              <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex].name}</div>
-              <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+        {mode === "drums" ? (
+          <>
+            <SectionLabel>CLICK</SectionLabel>
+            <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+              <Field label="CLICK TONE">
+                <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                  <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                  <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex].name}</div>
+                  <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+                </div>
+              </Field>
+              <Field label="AUDIO OUTPUT">
+                <div style={{ display: "flex", gap: 8 }}>
+                  {PAN_OPTIONS.map((p) => {
+                    const active = clickSettings.pan === p.id;
+                    return (
+                      <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
             </div>
-          </Field>
-          <Field label="AUDIO OUTPUT">
-            <div style={{ display: "flex", gap: 8 }}>
-              {PAN_OPTIONS.map((p) => {
-                const active = clickSettings.pan === p.id;
-                return (
-                  <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
-                    {p.label}
-                  </button>
-                );
-              })}
+          </>
+        ) : (
+          <>
+            <SectionLabel>PIANO TONE</SectionLabel>
+            <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+              <Field label="TONE">
+                <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                  <button onClick={() => cyclePianoTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                  <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{PIANO_TONES[pianoToneIndex]?.name}</div>
+                  <button onClick={() => cyclePianoTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+                </div>
+              </Field>
             </div>
-          </Field>
-        </div>
+          </>
+        )}
 
         <SectionLabel>LIBRARY</SectionLabel>
         <div style={{ display: "flex", gap: 10 }}>
@@ -2448,10 +2512,24 @@ export default function App() {
       syncRevision.current = result.revision;
       localStorage.setItem("zong:revision", String(result.revision));
       if (result.conflict) {
-        localStorage.setItem("zong:conflict-backup", JSON.stringify({ savedAt: new Date().toISOString(), songs, setlists }));
-        setSongs(result.state?.songs || []); setSetlists(result.state?.setlists || []); syncDirty.current = false;
-        setSyncStatus("Conflict backed up");
-        flash("A sync conflict was backed up on this device; the shared library was loaded.");
+        localStorage.setItem("zong:conflict-backup", JSON.stringify({ savedAt: new Date().toISOString(), remoteSongs: result.state?.songs, remoteSetlists: result.state?.setlists }));
+        
+        const mergedSongs = [...songs];
+        (result.state?.songs || []).forEach(rs => {
+          if (!mergedSongs.find(ls => ls.id === rs.id)) mergedSongs.push(rs);
+        });
+        
+        const mergedSetlists = [...setlists];
+        (result.state?.setlists || []).forEach(rs => {
+          if (!mergedSetlists.find(ls => ls.id === rs.id)) mergedSetlists.push(rs);
+        });
+
+        setSongs(mergedSongs); 
+        setSetlists(mergedSetlists); 
+        syncDirty.current = true;
+        setSyncStatus("Conflict merged");
+        flash("Sync conflict: remote additions were merged with your local library.");
+
       } else if (result.pulled) {
         setSongs(result.state?.songs || []); setSetlists(result.state?.setlists || []); syncDirty.current = false; setSyncStatus("Up to date");
       } else { syncDirty.current = false; setSyncStatus("Up to date"); }
