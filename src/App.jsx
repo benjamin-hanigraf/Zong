@@ -843,13 +843,8 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
-      <div style={{ height: 60, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 20px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box" }}>
-        <div style={{ fontSize: 15, fontWeight: 600, flex: 1 }}>Piano</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 20, padding: "2px 6px" }}>
-          <button onClick={() => changeTone(-1)} style={{ background: "none", border: "none", color: C.text, display: "flex", cursor: "pointer" }}><ChevronLeft size={16} /></button>
-          <div style={{ fontSize: 13, fontWeight: 700, minWidth: 90, textAlign: "center" }}>{currentToneObj.name}</div>
-          <button onClick={() => changeTone(1)} style={{ background: "none", border: "none", color: C.text, display: "flex", cursor: "pointer" }}><ChevronRight size={16} /></button>
-        </div>
+      <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Piano</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
@@ -1366,8 +1361,9 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
     if (loadedSong) onUpdateSongSubdivision(loadedSong.id, next);
   };
 
+  const NAV_H = "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))";
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: "16px 20px 0", boxSizing: "border-box", overflowY: "auto" }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, paddingBottom: NAV_H, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: `16px 20px calc(${NAV_H})`, boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", height: 40, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
@@ -1521,7 +1517,8 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                       {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
                     </span>
                   </span>
-                  {isSpace && <wbr />}
+                  {/* Break opportunity: after space/null and after punctuation */}
+                  {(isSpace || /[,\.!?;:]/.test(tok.ch)) && <wbr />}
                 </span>
               );
             })}
@@ -1699,6 +1696,187 @@ function KebabMenu({ onEdit, onShare, onDelete, isInSetlist, onRemoveFromSetlist
 }
 
 /* =========================================================================
+   SectionChordEditor — lets users edit chords/notes inline on the same line
+   as the lyrics between characters. The lyric characters are read-only,
+   and users can navigate/type only in the slots between/before/after them.
+   ========================================================================= */
+function parseLine(taggedLine, plainLyricsLine) {
+  const lyrics = plainLyricsLine || "";
+  const insertions = Array(lyrics.length + 1).fill("");
+  const tokens = tokenizeTaggedLine(taggedLine);
+  let lyricIndex = 0;
+  tokens.forEach((t) => {
+    if (t.tag) {
+      insertions[lyricIndex] = t.tag;
+    }
+    if (t.ch !== null) {
+      lyricIndex++;
+    }
+  });
+  return { lyrics, insertions };
+}
+
+function serializeLine(lyrics, insertions) {
+  let out = "";
+  for (let i = 0; i < lyrics.length; i++) {
+    if (insertions[i]) {
+      out += `[${insertions[i]}]`;
+    }
+    out += lyrics[i];
+  }
+  if (insertions[lyrics.length]) {
+    out += `[${insertions[lyrics.length]}]`;
+  }
+  return out;
+}
+
+function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent }) {
+  const lyricLines = String(lyricsText || "").split("\n");
+  const taggedLines = String(taggedText || "").split("\n");
+  const [activeCell, setActiveCell] = useState(null); // { lineIdx, charIdx }
+
+  if (!lyricsText || lyricsText.trim() === "") {
+    return (
+      <div style={{ color: C.textMuted, fontSize: 13.5, fontStyle: "italic", padding: "10px 0" }}>
+        Please type lyrics in the Lyrics tab first.
+      </div>
+    );
+  }
+
+  const handleUpdate = (lineIdx, charIdx, value) => {
+    const nextLines = lyricLines.map((line, li) => {
+      const taggedLine = taggedLines[li] || "";
+      const { insertions } = parseLine(taggedLine, line);
+      if (li === lineIdx) {
+        insertions[charIdx] = value;
+      }
+      return serializeLine(line, insertions);
+    });
+    onChange(nextLines.join("\n"));
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize: 15, lineHeight: "2.3em" }}>
+      {lyricLines.map((line, li) => {
+        const taggedLine = taggedLines[li] || "";
+        const { insertions } = parseLine(taggedLine, line);
+
+        return (
+          <div key={li} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", whiteSpace: "pre-wrap", wordBreak: "normal" }}>
+            {Array.from({ length: line.length + 1 }).map((_, ci) => {
+              const isEditing = activeCell && activeCell.lineIdx === li && activeCell.charIdx === ci;
+              const value = insertions[ci] || "";
+              const hasVal = value !== "";
+              const char = line[ci] || ""; // character after this slot
+
+              return (
+                <span key={ci} style={{ display: "inline-flex", alignItems: "center", position: "relative" }}>
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={value}
+                      onChange={(e) => handleUpdate(li, ci, e.target.value)}
+                      onBlur={() => setActiveCell(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === "Escape") {
+                          e.preventDefault();
+                          setActiveCell(null);
+                        } else if (e.key === "ArrowLeft" && e.target.selectionStart === 0) {
+                          e.preventDefault();
+                          if (ci > 0) {
+                            setActiveCell({ lineIdx: li, charIdx: ci - 1 });
+                          }
+                        } else if (e.key === "ArrowRight" && e.target.selectionEnd === e.target.value.length) {
+                          e.preventDefault();
+                          if (ci < line.length) {
+                            setActiveCell({ lineIdx: li, charIdx: ci + 1 });
+                          }
+                        } else if (e.key === "Backspace" && e.target.value === "") {
+                          e.preventDefault();
+                          handleUpdate(li, ci, "");
+                          if (ci > 0) {
+                            setActiveCell({ lineIdx: li, charIdx: ci - 1 });
+                          }
+                        }
+                      }}
+                      style={{
+                        background: C.surface2,
+                        border: `1.5px solid ${accent}`,
+                        borderRadius: 6,
+                        color: accent,
+                        fontFamily: MONO,
+                        fontWeight: "bold",
+                        fontSize: 13.5,
+                        padding: "1px 4px",
+                        margin: "0 2px",
+                        width: Math.max(34, value.length * 8.5 + 10),
+                        outline: "none",
+                        textAlign: "center",
+                        height: 20,
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  ) : hasVal ? (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveCell({ lineIdx: li, charIdx: ci });
+                      }}
+                      style={{
+                        color: "#fff",
+                        background: accent,
+                        fontWeight: "bold",
+                        fontSize: 13,
+                        padding: "1px 5px",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        margin: "0 2.5px",
+                        userSelect: "none",
+                        lineHeight: "1.2em",
+                      }}
+                    >
+                      {flatify(value)}
+                    </span>
+                  ) : (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveCell({ lineIdx: li, charIdx: ci });
+                      }}
+                      style={{
+                        display: "inline-block",
+                        width: 8,
+                        textAlign: "center",
+                        cursor: "pointer",
+                        color: `${accent}40`,
+                        fontWeight: "bold",
+                        fontSize: 12,
+                        userSelect: "none",
+                      }}
+                    >
+                      ·
+                    </span>
+                  )}
+                  {char && (
+                    <span
+                      onClick={() => setActiveCell({ lineIdx: li, charIdx: ci + 1 })}
+                      style={{ color: C.text, cursor: "text", userSelect: "none" }}
+                    >
+                      {char === " " ? "\u00A0" : char}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* =========================================================================
    Song form — the Chords app's Add/Edit Song page is the norm for Altar,
    with a Lyrics/Drums/Chords tab-select added under "Sections" (spec #7/#8).
    ========================================================================= */
@@ -1862,13 +2040,12 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                     style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical" }} />
                 ) : (
                   <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90 }}>
-                    <ChordText
-                      text={mergeLyricsWithTags(sec.lyrics, sectionTab === "drums" ? sec.drums : sec.chords)}
+                    <SectionChordEditor
+                      lyricsText={sec.lyrics}
+                      taggedText={mergeLyricsWithTags(sec.lyrics, sectionTab === "drums" ? sec.drums : sec.chords)}
                       onChange={(merged) => updateSection(sec.id, sectionTab, merged)}
-                      editable dim brightTags={false}
-                      fontSize={15} lineHeightMult={1.6}
-                      accent={C.accent} C={C}
-                      emptyHint="Type lyrics first, then tap between letters to add chords/notes"
+                      C={C}
+                      accent={C.accent}
                     />
                   </div>
                 )}
@@ -2790,7 +2967,8 @@ export default function App() {
       paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
       <style>{`
-        html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; background: ${C.bg}; }
+        html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
+        #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
         .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .bpm-number-input { -moz-appearance: textfield; }
         button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
@@ -2798,8 +2976,9 @@ export default function App() {
         input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
         input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
         * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-        input, textarea { -webkit-user-select: text; user-select: text; }
-        .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; }
+        input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
+        textarea { touch-action: pan-y; }
+        .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
         *::-webkit-scrollbar { display: none; }
         * { scrollbar-width: none; -ms-overflow-style: none; }
       `}</style>
