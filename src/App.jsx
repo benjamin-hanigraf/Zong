@@ -657,30 +657,54 @@ function LandscapeLock({ children }) {
     </div>
   );
 }
-const SILENT_VIDEO_SRC = "data:video/mp4;base64,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";
+const SILENT_VIDEO_SRC = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAZWbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAwN0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAIAAAACAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAJ7bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAAMgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAACJm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAeZzdGJsAAAAunN0c2QAAAAAAAAAAQAAAKphdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAIAAgBIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAMGF2Y0MBQsAK/+EAGGdCwArZH4iIwEQAAAMABAAAAwDIPEiZIAEABWjLg8sgAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAAGuAAABrgAAAAGHN0dHMAAAAAAAAAAQAAABkAAAIAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAABMc3RzYwAAAAAAAAAFAAAAAQAAAAEAAAABAAAAAgAAAAMAAAABAAAABgAAAAQAAAABAAAABwAAAAMAAAABAAAACQAAAAIAAAABAAAAeHN0c3oAAAAAAAAAAAAAABkAAAKDAAAACQAAAAoAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAANHN0Y28AAAAAAAAACQAABpsAAAkiAAAJQgAACWEAAAmAAAAJnwAACccAAAnmAAAKBQAAAn10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAA+gAAAAAAAAAAAAAAAEBAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAEAAABAAAAAAH1bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAfQAAAI0BVxAAAAAAALWhkbHIAAAAAAAAAAHNvdW4AAAAAAAAAAAAAAABTb3VuZEhhbmRsZXIAAAABoG1pbmYAAAAQc21oZAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAABZHN0YmwAAAB+c3RzZAAAAAAAAAABAAAAbm1wNGEAAAAAAAAAAQAAAAAAAAAAAAEAEAAAAAAfQAAAAAAANmVzZHMAAAAAA4CAgCUAAgAEgICAF0AVAAAAAAAfQAAAAXcFgICABRWIVuUABoCAgAECAAAAFGJ0cnQAAAAAAAAfQAAAAXcAAAAgc3R0cwAAAAAAAAACAAAACAAABAAAAAABAAADQAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAA4c3RzegAAAAAAAAAAAAAACQAAABUAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAADRzdGNvAAAAAAAAAAkAAAaGAAAJHgAACT4AAAldAAAJfAAACZsAAAnDAAAJ4gAACgEAAAAac2dwZAEAAAByb2xsAAAAAgAAAAH//wAAABxzYmdwAAAAAHJvbGwAAAABAAAACQAAAAEAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYwLjE2LjEwMAAAAAhmcmVlAAADmW1kYXTeAgBMYXZjNjAuMzEuMTAyAAIwQA4AAAJxBgX//23cRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMTA4IDMxZTE5ZjkgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIzIC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MCByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgxOjB4MTExIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0yNSBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAAApliIQM8mKAALC+ARggBwAAAAVBmjgZ6gAAAAZBmlQGeoAAAAAFQZpgM9QBGCAHAAAABUGagDPUAAAABUGaoDPUAAAABUGawDPUARggBwAAAAVBmuAz1AAAAAVBmwAz1AAAAAVBmyAz1AEYIAcAAAAFQZtAM9QAAAAFQZtgM9QAAAAFQZuAM9QBGCAHAAAABUGboDPUAAAABUGbwDPUAAAABUGb4DPUAAAABUGaADPUARggBwAAAAVBmiAz1AAAAAVBmkAz1AAAAAVBmmAz1AEYIAcAAAAFQZqAM9QAAAAFQZqgM9QAAAAFQZrAL9QBGCAHAAAABUGa4C/UAAAABUGbACvU";
 
-function PianoScreen({ C, pianoSettings }) {
+function PianoScreen({ C, pianoSettings, setPianoSettings }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const audioCtxRef = useRef(null);
+  const masterCompRef = useRef(null);
   const pianoWaveRef = useRef(null);
   const pianoWaveToneRef = useRef(null);
   const activeRef = useRef(new Map());
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
-  const pianoToneRef = useRef(pianoSettings?.pianoTone || "grand");
+  const [pianoTone, setPianoToneState] = useState(pianoSettings?.pianoTone || "grand");
+  const pianoToneRef = useRef(pianoTone);
 
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
-  useEffect(() => { pianoToneRef.current = pianoSettings?.pianoTone || "grand"; }, [pianoSettings?.pianoTone]);
+  useEffect(() => {
+    const t = pianoSettings?.pianoTone || "grand";
+    setPianoToneState(t);
+    pianoToneRef.current = t;
+  }, [pianoSettings?.pianoTone]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
+
+  const changeTone = (dir) => {
+    const idx = PIANO_TONES.findIndex((t) => t.id === pianoToneRef.current);
+    const nextIdx = (idx + dir + PIANO_TONES.length) % PIANO_TONES.length;
+    const nextTone = PIANO_TONES[nextIdx].id;
+    setPianoToneState(nextTone);
+    pianoToneRef.current = nextTone;
+    if (setPianoSettings) setPianoSettings({ ...pianoSettings, pianoTone: nextTone });
+  };
 
   const WHITE_PRESSED = C.accent;
   const BLACK_PRESSED = C.accent;
 
   const ensureCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+      const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.setValueAtTime(-6, ctx.currentTime);
+      comp.knee.setValueAtTime(10, ctx.currentTime);
+      comp.ratio.setValueAtTime(8, ctx.currentTime);
+      comp.attack.setValueAtTime(0.003, ctx.currentTime);
+      comp.release.setValueAtTime(0.1, ctx.currentTime);
+      comp.connect(ctx.destination);
+      masterCompRef.current = comp;
+      audioCtxRef.current = ctx;
     }
     if (pianoWaveToneRef.current !== pianoToneRef.current || !pianoWaveRef.current) {
       pianoWaveRef.current = buildPianoWave(audioCtxRef.current, pianoToneRef.current);
@@ -703,7 +727,7 @@ function PianoScreen({ C, pianoSettings }) {
     const freq = freqFor(semitone);
     const env = PIANO_TONE_ENV[pianoToneRef.current] || PIANO_TONE_ENV.grand;
     const gain = ctx.createGain();
-    const peak = 0.68;
+    const peak = 1.15;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(peak, now + env.attack);
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak * env.decayTo), now + 0.4);
@@ -719,7 +743,7 @@ function PianoScreen({ C, pianoSettings }) {
     const osc = ctx.createOscillator();
     osc.setPeriodicWave(pianoWaveRef.current);
     osc.frequency.value = freq;
-    osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+    osc.connect(filter); filter.connect(gain); gain.connect(masterCompRef.current || ctx.destination);
     osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch {} };
     osc.start(now);
     return { osc, gain };
@@ -731,8 +755,8 @@ function PianoScreen({ C, pianoSettings }) {
     try {
       voice.gain.gain.cancelScheduledValues(now);
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
-      voice.osc.stop(now + 0.16);
+      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+      voice.osc.stop(now + 0.09);
     } catch {}
   };
   const keyAt = (x, y) => {
@@ -785,8 +809,7 @@ function PianoScreen({ C, pianoSettings }) {
       if (document.visibilityState !== "hidden") return;
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null; pianoWaveRef.current = null; pianoWaveToneRef.current = null; videoUnlockedRef.current = false;
+      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => {});
     };
     window.addEventListener("pointermove", handleMove, { passive: false });
     window.addEventListener("pointerup", handleUp);
@@ -799,25 +822,42 @@ function PianoScreen({ C, pianoSettings }) {
       document.removeEventListener("visibilitychange", handleVisibility);
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null; pianoWaveRef.current = null; pianoWaveToneRef.current = null; videoUnlockedRef.current = false;
+      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => {});
     };
   }, []);
 
-  const isLandscapeScreen = useIsLandscapeScreen();
+  // Close AudioContext fully on unmount so pitch/sample-rate state doesn't accumulate
+  useEffect(() => {
+    return () => {
+      if (audioCtxRef.current) {
+        try { audioCtxRef.current.close(); } catch {}
+        audioCtxRef.current = null;
+        masterCompRef.current = null;
+        pianoWaveRef.current = null;
+        pianoWaveToneRef.current = null;
+      }
+    };
+  }, []);
+
+  const currentToneObj = PIANO_TONES.find((t) => t.id === pianoTone) || PIANO_TONES[0];
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
       <div style={{ height: 60, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 20px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box" }}>
         <div style={{ fontSize: 15, fontWeight: 600, flex: 1 }}>Piano</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 20, padding: "2px 6px" }}>
+          <button onClick={() => changeTone(-1)} style={{ background: "none", border: "none", color: C.text, display: "flex", cursor: "pointer" }}><ChevronLeft size={16} /></button>
+          <div style={{ fontSize: 13, fontWeight: 700, minWidth: 90, textAlign: "center" }}>{currentToneObj.name}</div>
+          <button onClick={() => changeTone(1)} style={{ background: "none", border: "none", color: C.text, display: "flex", cursor: "pointer" }}><ChevronRight size={16} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
             color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
           }}>
             <ChevronLeft size={15} />
           </button>
-          <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 30, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>C{octaveStart}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>C{octaveStart}</div>
           <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
             color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
@@ -865,11 +905,10 @@ function PianoScreen({ C, pianoSettings }) {
         src={SILENT_VIDEO_SRC}
         loop
         playsInline
-        muted={false}
-        volume={0.01}
+        muted={true}
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
       />
-      {isLandscapeScreen ? pianoBody : <LandscapeLock>{pianoBody}</LandscapeLock>}
+      <LandscapeLock>{pianoBody}</LandscapeLock>
     </div>
   );
 }
@@ -1328,7 +1367,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
   };
 
   return (
-    <div style={{ minHeight: "calc(100vh - 84px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: "28px 20px 0", boxSizing: "border-box" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: "16px 20px 0", boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", height: 40, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
@@ -1362,7 +1401,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} flashBeat={flashBeat} accents={accents} onChange={changeAccents} C={C} />
       </div>
 
-      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
+      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={220} playing={playing} onToggle={toggle} C={C} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 320 }}>
         <div style={{ flex: 1 }}>
@@ -1391,8 +1430,8 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   const lines = String(text || "").split("\n");
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
-  const tagGap = Math.max(4, tagSize * 0.28); 
-  const topPad = tagSize + tagGap; 
+  const tagGap = Math.max(4, tagSize * 0.28);
+  const topPad = tagSize + tagGap;
 
   const commitTag = (lineIdx, tokenIdx, value) => {
     const lns = String(text || "").split("\n");
@@ -1419,12 +1458,12 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "break-word" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)), wordBreak: "keep-all" }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)) }}>
             {tokens.map((tok, ti) => {
               const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
               const isSpace = tok.ch === " " || tok.ch === null;
@@ -1437,7 +1476,29 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                       cursor: editable ? "pointer" : "default", minWidth: tok.ch === null ? fontSize * 0.4 : undefined,
                     }}
                   >
-                    {tok.tag && (
+                    {/* Chord/tag slot — shows inline input when editing, otherwise chord label */}
+                    {isEditingThis ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={() => closeEditor(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.currentTarget.blur(); }
+                          if (e.key === "Escape") closeEditor(false);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          position: "absolute", top: 0, left: 0,
+                          width: Math.max(tagSize * 3, 40), fontSize: tagSize,
+                          fontFamily: MONO, fontWeight: 800,
+                          color: brightTags ? "#FFFFFF" : accent,
+                          background: "transparent", border: "none", outline: "none",
+                          padding: 0, margin: 0, lineHeight: 1,
+                          caretColor: accent,
+                        }}
+                      />
+                    ) : tok.tag ? (
                       <span style={{
                         position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
                         fontSize: tagSize, fontWeight: 800,
@@ -1446,20 +1507,19 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                       }}>
                         {flatify(tok.tag)}
                       </span>
-                    )}
+                    ) : editable ? (
+                      /* Empty slot tap target — shows a faint + when in edit mode */
+                      <span style={{
+                        position: "absolute", top: 0, left: 0,
+                        fontSize: tagSize, fontWeight: 800,
+                        color: `${accent}44`,
+                        lineHeight: 1,
+                        userSelect: "none",
+                      }}>+</span>
+                    ) : null}
                     <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
                       {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
                     </span>
-                    {isEditingThis && (
-                      <span onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -topPad - tagGap, left: 0, zIndex: 50, display: "flex", alignItems: "center", gap: 4 }}>
-                        <input
-                          autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
-                          onBlur={() => closeEditor(true)}
-                          onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } if (e.key === "Escape") closeEditor(false); }}
-                          style={{ width: 54, fontSize: 13, fontFamily: MONO, fontWeight: 700, padding: "3px 5px", borderRadius: 6, border: `1px solid ${accent}`, background: C.surface3, color: C.text }}
-                        />
-                      </span>
-                    )}
                   </span>
                   {isSpace && <wbr />}
                 </span>
@@ -1743,7 +1803,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
         <button onClick={handlePasteFromClipboard} title="Paste song from clipboard" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ClipboardPaste size={20} /></button>
       </div>
 
-      <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60 }}>
+      <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60, maxWidth: 800, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
         <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={(v) => { setTitle(v); setError(""); }} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
         <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(v); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
 
@@ -1822,25 +1882,21 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
 
         {error && <div style={{ color: C.danger, fontSize: 13, textAlign: "center", fontWeight: 500 }}>{error}</div>}
 
-        <button disabled={!canSave} onClick={handleSave} style={{ marginTop: 8, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint }}>
-          SAVE
-        </button>
-
-        {initial && (
-          <button onClick={() => onDuplicate(initial)} style={{ fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text }}>
-            Duplicate Song
+        {confirmDelete ? (
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.borderStrong}`, background: "transparent", color: C.textMuted }}>Cancel</button>
+            <button onClick={() => onDelete(initial.id)} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff" }}>Confirm Delete</button>
+          </div>
+        ) : initial ? (
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger }}>Delete</button>
+            <button disabled={!canSave} onClick={handleSave} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "14px 0", borderRadius: 12, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint }}>SAVE</button>
+            <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text }}>Copy</button>
+          </div>
+        ) : (
+          <button disabled={!canSave} onClick={handleSave} style={{ marginTop: 8, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint }}>
+            SAVE
           </button>
-        )}
-
-        {initial && (
-          confirmDelete ? (
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.borderStrong}`, background: "transparent", color: C.textMuted }}>Cancel</button>
-              <button onClick={() => onDelete(initial.id)} style={{ flex: 1, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff" }}>Confirm Delete</button>
-            </div>
-          ) : (
-            <button onClick={() => setConfirmDelete(true)} style={{ fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger }}>Delete Song</button>
-          )
         )}
       </div>
     </div>
@@ -1884,17 +1940,19 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{songs.length} songs</div></div>
-          <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+              {langFilter}
+            </button>
+            <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+          </div>
         </div>
-        <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+        <div style={{ marginTop: 16 }}>
           <ClearableInput value={query} onChangeText={setQuery} placeholder="Search title or artist"
             leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
-            style={{ flex: 1, minWidth: 0, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
-          <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-            {langFilter}
-          </button>
+            style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
       </div>
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
@@ -2034,7 +2092,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {mode === "chords" && (
-        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, flexWrap: "nowrap", overflow: "hidden" }}>
           <button onClick={() => setShowLyrics((s) => !s)} style={lyricsToggleStyle(showLyrics)}>Lyrics</button>
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
@@ -2285,11 +2343,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, s
     </div>
   );
 }
-/* =========================================================================
-   Settings — mode tab-select (Vocals, Drums, Chords) up top per spec #2,
-   then Display (text size, alignment, line spacing, bold), the Click
-   app's click-tone/pan controls, and Library import/export.
-   ========================================================================= */
+
 function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, pianoSettings, setPianoSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
@@ -2298,143 +2352,160 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
 
+  useEffect(() => {
+    if (pianoSettings?.pianoTone) {
+      const idx = PIANO_TONES.findIndex((t) => t.id === pianoSettings.pianoTone);
+      if (idx >= 0) setPianoToneIndex(idx);
+    }
+  }, [pianoSettings?.pianoTone]);
+
   const cycleTone = (dir) => {
     const next = (toneIndex + dir + CLICK_TONES.length) % CLICK_TONES.length;
     setToneIndex(next);
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
   };
+  const cyclePianoTone = (dir) => {
+    const next = (pianoToneIndex + dir + PIANO_TONES.length) % PIANO_TONES.length;
+    setPianoToneIndex(next);
+    if (setPianoSettings) setPianoSettings({ ...pianoSettings, pianoTone: PIANO_TONES[next].id });
+  };
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
-        <div style={{ fontSize: 26, fontWeight: 700 }}>Settings</div>
+        <div style={{ fontSize: 26, fontWeight: 700, maxWidth: 800, margin: "0 auto" }}>Settings</div>
       </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px", boxSizing: "border-box" }}>
+        <div style={{ width: "100%", maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column" }}>
 
-        <SectionLabel>MODE</SectionLabel>
-        <div style={{ display: "flex", gap: 8, marginBottom: 26, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 4 }}>
-          {MODES.map((m) => {
-            const active = mode === m;
-            const meta = MODE_META[m];
-            return (
-              <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
-                {meta.label}
-              </button>
-            );
-          })}
-        </div>
+          <SectionLabel>MODE</SectionLabel>
+          <div style={{ display: "flex", gap: 8, marginBottom: 26, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 4 }}>
+            {MODES.map((m) => {
+              const active = mode === m;
+              const meta = MODE_META[m];
+              return (
+                <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
+                  {meta.label}
+                </button>
+              );
+            })}
+          </div>
 
-        <SectionLabel>DISPLAY</SectionLabel>
-        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-          <Field label="TEXT SIZE">
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                <button onClick={() => setFontSize((f) => Math.max(14, f - 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
-                <button onClick={() => setFontSize((f) => Math.min(40, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+          <SectionLabel>DISPLAY</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+            <Field label="TEXT SIZE">
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                  <button onClick={() => setFontSize((f) => Math.max(14, f - 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
+                  <button onClick={() => setFontSize((f) => Math.min(40, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                </div>
+                <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
-              <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
-            </div>
-          </Field>
-          <Field label="CHORD/NOTE SIZE">
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
-                <button onClick={() => setChordFontSize((f) => Math.min(30, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+            </Field>
+            <Field label="CHORD/NOTE SIZE">
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                  <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
+                  <button onClick={() => setChordFontSize((f) => Math.min(30, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                </div>
               </div>
+            </Field>
+            <Field label="LINE SPACING">
+              <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                <button onClick={() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{lineSpacing.toFixed(2)}</div>
+                <button onClick={() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+              </div>
+            </Field>
+            <Field label="TEXT ALIGNMENT">
+              <div style={{ display: "flex", gap: 8 }}>
+                {alignOptions.map(({ id, Icon }) => {
+                  const active = textAlign === id;
+                  return (
+                    <button key={id} onClick={() => setTextAlign(id)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Icon size={16} />
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="PREVIEW">
+              <div style={{ background: "#000000", border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
+                {mode === "vocals" ? (
+                  <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "break-word", margin: 0, textAlign, color: "rgba(255,255,255,0.4)" }}>
+                    {"Way maker, miracle worker,\npromise keeper, light in the darkness"}
+                  </pre>
+                ) : (
+                  <ChordText
+                    text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
+                    editable={false} dim={true} showLyrics={true} brightTags={true}
+                    textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
+                    accent={C.accent} C={C}
+                  />
+                )}
+              </div>
+            </Field>
+          </div>
+
+          {mode === "drums" ? (
+            <>
+              <SectionLabel>CLICK</SectionLabel>
+              <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+                <Field label="CLICK TONE">
+                  <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                    <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                    <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex]?.name}</div>
+                    <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+                  </div>
+                </Field>
+                <Field label="AUDIO OUTPUT">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {PAN_OPTIONS.map((p) => {
+                      const active = clickSettings.pan === p.id;
+                      return (
+                        <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              </div>
+            </>
+          ) : (
+            <>
+              <SectionLabel>PIANO TONE</SectionLabel>
+              <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+                <Field label="TONE">
+                  <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                    <button onClick={() => cyclePianoTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                    <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{PIANO_TONES[pianoToneIndex]?.name}</div>
+                    <button onClick={() => cyclePianoTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+                  </div>
+                </Field>
+              </div>
+            </>
+          )}
+
+          <SectionLabel>LIBRARY</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => fileRef.current?.click()} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Download size={16} color={C.accent} /> Import</button>
+              <input ref={fileRef} type="file" accept="application/json" onChange={(e) => { if (e.target.files[0]) onImportFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
+              <button onClick={onExportOpen} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Upload size={16} color={C.accent} /> Export</button>
             </div>
-          </Field>
-          <Field label="LINE SPACING">
-            <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-              <button onClick={() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-              <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{lineSpacing.toFixed(2)}</div>
-              <button onClick={() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-            </div>
-          </Field>
-          <Field label="TEXT ALIGNMENT">
-            <div style={{ display: "flex", gap: 8 }}>
-              {alignOptions.map(({ id, Icon }) => {
-                const active = textAlign === id;
-                return (
-                  <button key={id} onClick={() => setTextAlign(id)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Icon size={16} />
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-          <Field label="PREVIEW">
-            <div style={{ background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
-              {mode === "vocals" ? (
-                <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
-                  {"Way maker, miracle worker,\npromise keeper, light in the darkness"}
-                </pre>
-              ) : (
-                <ChordText
-                  text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
-                  editable={false} dim={false} showLyrics brightTags
-                  textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
-                  accent={C.accent} C={C}
-                />
-              )}
-            </div>
-          </Field>
+          </div>
+
+          <SectionLabel>BAND SYNC</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
+            <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Shared library</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
+          </div>
+
+          <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Zong — by Benjamin Hanigraf</div>
         </div>
-
-        {mode === "drums" ? (
-          <>
-            <SectionLabel>CLICK</SectionLabel>
-            <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-              <Field label="CLICK TONE">
-                <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-                  <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
-                  <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex].name}</div>
-                  <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
-                </div>
-              </Field>
-              <Field label="AUDIO OUTPUT">
-                <div style={{ display: "flex", gap: 8 }}>
-                  {PAN_OPTIONS.map((p) => {
-                    const active = clickSettings.pan === p.id;
-                    return (
-                      <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
-                        {p.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </Field>
-            </div>
-          </>
-        ) : (
-          <>
-            <SectionLabel>PIANO TONE</SectionLabel>
-            <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-              <Field label="TONE">
-                <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-                  <button onClick={() => cyclePianoTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
-                  <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{PIANO_TONES[pianoToneIndex]?.name}</div>
-                  <button onClick={() => cyclePianoTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
-                </div>
-              </Field>
-            </div>
-          </>
-        )}
-
-        <SectionLabel>LIBRARY</SectionLabel>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => fileRef.current?.click()} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Download size={16} color={C.accent} /> Import</button>
-          <input ref={fileRef} type="file" accept="application/json" onChange={(e) => { if (e.target.files[0]) onImportFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
-          <button onClick={onExportOpen} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Upload size={16} color={C.accent} /> Export</button>
-        </div>
-
-        <SectionLabel>BAND SYNC</SectionLabel>
-        <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between", marginBottom: 12 }}><span>Shared library</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
-
-        <div style={{ flex: 1 }} />
-        <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 24 }}>Zong — by Benjamin Hanigraf</div>
       </div>
     </div>
   );
@@ -2737,7 +2808,7 @@ export default function App() {
         {tab === "practice" && (
           mode === "drums"
             ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => setEditingSong(null)} C={C} />
-            : <PianoScreen C={C} pianoSettings={pianoSettings} />
+            : <PianoScreen C={C} pianoSettings={pianoSettings} setPianoSettings={setPianoSettings} />
         )}
         {tab === "songs" && (
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => setEditingSong(null)} onEdit={(s) => setEditingSong(s)} mode={mode} C={C} />
