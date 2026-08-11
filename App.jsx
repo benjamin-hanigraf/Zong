@@ -53,15 +53,15 @@ function useIndexedDbState(key, seed) {
     idbGet(key).then((stored) => {
       if (cancelled) return;
       if (stored !== undefined) setValue(stored);
-      else idbSet(key, seed).catch(() => {});
-    }).catch(() => {});
+      else idbSet(key, seed).catch(() => { });
+    }).catch(() => { });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   const persist = useCallback((next) => {
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      idbSet(key, resolved).catch(() => {});
+      idbSet(key, resolved).catch(() => { });
       return resolved;
     });
   }, [key]);
@@ -77,7 +77,7 @@ function useLocalStorageState(key, seed) {
   const persist = useCallback((next) => {
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      try { localStorage.setItem(key, JSON.stringify(resolved)); } catch {}
+      try { localStorage.setItem(key, JSON.stringify(resolved)); } catch { }
       return resolved;
     });
   }, [key]);
@@ -523,16 +523,24 @@ function extractTagsByIndex(taggedText) {
 function mergeLyricsWithTags(lyricsText, taggedText) {
   const lyricLines = String(lyricsText || "").split("\n");
   const tagLines = extractTagsByIndex(taggedText);
-  return lyricLines.map((line, li) => {
+  const lineCount = Math.max(lyricLines.length, tagLines.length, 1);
+  const out = [];
+  for (let li = 0; li < lineCount; li++) {
+    const rawLine = lyricLines[li] ?? "";
     const tags = tagLines[li] || [];
-    let out = "";
+    // A section with no lyrics typed yet still gets a row of blank,
+    // clickable positions so chords/notes can be entered freely (spec #7).
+    const minLen = rawLine.length === 0 ? Math.max(32, tags.length) : rawLine.length;
+    const line = rawLine.length >= minLen ? rawLine : rawLine + " ".repeat(minLen - rawLine.length);
+    let lineOut = "";
     for (let i = 0; i < line.length; i++) {
-      if (tags[i]) out += `[${tags[i]}]`;
-      out += line[i];
+      if (tags[i]) lineOut += `[${tags[i]}]`;
+      lineOut += line[i];
     }
-    if (tags[line.length]) out += `[${tags[line.length]}]`;
-    return out;
-  }).join("\n");
+    if (tags[line.length]) lineOut += `[${tags[line.length]}]`;
+    out.push(lineOut);
+  }
+  return out.join("\n");
 }
 
 /* =========================================================================
@@ -665,7 +673,7 @@ function PianoScreen({ C, pianoSettings }) {
       pianoWaveRef.current = buildPianoWave(audioCtxRef.current, pianoToneRef.current);
       pianoWaveToneRef.current = pianoToneRef.current;
     }
-    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => {});
+    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => { });
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
       silentVideoRef.current.play().catch(() => { videoUnlockedRef.current = false; });
@@ -699,7 +707,7 @@ function PianoScreen({ C, pianoSettings }) {
     osc.setPeriodicWave(pianoWaveRef.current);
     osc.frequency.value = freq;
     osc.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch {} };
+    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch { } };
     osc.start(now);
     return { osc, gain };
   };
@@ -712,7 +720,7 @@ function PianoScreen({ C, pianoSettings }) {
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
       voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
       voice.osc.stop(now + 0.16);
-    } catch {}
+    } catch { }
   };
   const keyAt = (x, y) => {
     const hitEl = document.elementFromPoint(x, y);
@@ -764,7 +772,7 @@ function PianoScreen({ C, pianoSettings }) {
       if (document.visibilityState !== "hidden") return;
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => {});
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => { });
       audioCtxRef.current = null; pianoWaveRef.current = null; pianoWaveToneRef.current = null; videoUnlockedRef.current = false;
     };
     window.addEventListener("pointermove", handleMove, { passive: false });
@@ -778,7 +786,7 @@ function PianoScreen({ C, pianoSettings }) {
       document.removeEventListener("visibilitychange", handleVisibility);
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => {});
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close().catch(() => { });
       audioCtxRef.current = null; pianoWaveRef.current = null; pianoWaveToneRef.current = null; videoUnlockedRef.current = false;
     };
   }, []);
@@ -882,10 +890,10 @@ function useMetronomeEngine(settings) {
   const [flashBeat, setFlashBeat] = useState(-1);
   const [loadedSong, setLoadedSong] = useState(null);
 
-  useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch {} }, [bpm]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch {} }, [timeSig]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_accents", JSON.stringify(accents)); } catch {} }, [accents]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_subdivision", subdivision); } catch {} }, [subdivision]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch { } }, [timeSig]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_accents", JSON.stringify(accents)); } catch { } }, [accents]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_subdivision", subdivision); } catch { } }, [subdivision]);
 
   const bpmRef = useRef(bpm);
   const timeSigRef = useRef(timeSig);
@@ -916,7 +924,7 @@ function useMetronomeEngine(settings) {
       if (audioCtxRef.current.state === "closed") {
         audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
       } else if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
-        audioCtxRef.current.resume().catch(() => {});
+        audioCtxRef.current.resume().catch(() => { });
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -1126,7 +1134,7 @@ function Knob({ value, min = 30, max = 300, onChange, size = 220, playing, onTog
   };
   const handlePointerUp = (e) => {
     setDragging(false);
-    try { knobRef.current.releasePointerCapture(e.pointerId); } catch {}
+    try { knobRef.current.releasePointerCapture(e.pointerId); } catch { }
     const moved = Math.hypot(e.clientX - downPosRef.current.x, e.clientY - downPosRef.current.y);
     if (moved < 6 && rectRef.current) {
       const centerX = rectRef.current.left + rectRef.current.width / 2;
@@ -1367,6 +1375,10 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
 function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
+  const [dragFrom, setDragFrom] = useState(null); // { line, index, tag } | null
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const containerRef = useRef(null);
+  const dragMovedRef = useRef(false);
   const lines = String(text || "").split("\n");
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
@@ -1383,6 +1395,23 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
     onChange(lns.join("\n"));
   };
 
+  // Moves a tag from one character position to another on the same line —
+  // used by click-and-drag repositioning (spec #8) — without touching the
+  // lyric characters or any other tag's position.
+  const moveTag = (lineIdx, fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    const lns = String(text || "").split("\n");
+    const tokens = tokenizeTaggedLine(lns[lineIdx] || "");
+    while (tokens.length <= Math.max(fromIdx, toIdx)) tokens.push({ ch: null, tag: null });
+    const moving = tokens[fromIdx]?.tag;
+    if (!moving) return;
+    tokens[fromIdx] = { ...tokens[fromIdx], tag: null };
+    tokens[toIdx] = { ...tokens[toIdx], tag: moving };
+    const rebuilt = tokens.map((t) => (t.tag ? `[${t.tag}]` : "") + (t.ch ?? "")).join("");
+    lns[lineIdx] = rebuilt;
+    onChange(lns.join("\n"));
+  };
+
   const openEditor = (lineIdx, tokenIdx, currentTag) => {
     if (!editable) return;
     setEditorFor({ line: lineIdx, index: tokenIdx });
@@ -1393,60 +1422,166 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
     setEditorFor(null); setDraft("");
   };
 
+  // Click-and-drag repositioning: press on an existing tag, drag horizontally
+  // along the same line, release to move it to the character underneath the
+  // finger/cursor. A short press with barely any movement still falls through
+  // to the normal tap-to-edit behaviour.
+  const findTokenUnder = (clientX, clientY, lineIdx) => {
+    const el = document.elementFromPoint(clientX, clientY);
+    const tokenEl = el && el.closest ? el.closest("[data-token-idx]") : null;
+    if (!tokenEl || !containerRef.current || !containerRef.current.contains(tokenEl)) return null;
+    if (Number(tokenEl.dataset.lineIdx) !== lineIdx) return null;
+    return Number(tokenEl.dataset.tokenIdx);
+  };
+  const handleDragPointerDown = (e, li, ti, tag) => {
+    if (!editable) return;
+    e.preventDefault();
+    dragMovedRef.current = false;
+    setDragFrom({ line: li, index: ti, tag });
+    setDragOverIdx(ti);
+  };
+  useEffect(() => {
+    if (!dragFrom) return;
+    const handleMove = (e) => {
+      const idx = findTokenUnder(e.clientX, e.clientY, dragFrom.line);
+      if (idx != null) {
+        if (idx !== dragFrom.index) dragMovedRef.current = true;
+        setDragOverIdx(idx);
+      }
+    };
+    const handleUp = (e) => {
+      const idx = findTokenUnder(e.clientX, e.clientY, dragFrom.line);
+      if (dragMovedRef.current && idx != null && idx !== dragFrom.index) {
+        moveTag(dragFrom.line, dragFrom.index, idx);
+      } else if (!dragMovedRef.current) {
+        openEditor(dragFrom.line, dragFrom.index, dragFrom.tag);
+      }
+      setDragFrom(null);
+      setDragOverIdx(null);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => { window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointerup", handleUp); };
+  }, [dragFrom]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!hasAnyContent && !editable) {
     return <div style={{ color: C.textFaint, fontSize, fontFamily: MONO }}>{emptyHint || "\u2014"}</div>;
   }
 
+  const renderToken = (tok, ti, li) => {
+    const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
+    const isDragSource = dragFrom && dragFrom.line === li && dragFrom.index === ti;
+    const isDragTarget = dragFrom && dragOverIdx === ti && dragFrom.line === li && !isDragSource;
+    return (
+      <span
+        key={ti}
+        data-token-idx={ti}
+        data-line-idx={li}
+        onClick={editable && !dragFrom ? () => openEditor(li, ti, tok.tag) : undefined}
+        style={{
+          position: "relative", display: "inline-block", paddingTop: topPad,
+          cursor: editable ? "pointer" : "default", minWidth: tok.ch === null ? fontSize * 0.4 : undefined,
+          background: isDragTarget ? (C.accentSoft || "rgba(255,255,255,0.08)") : "transparent", borderRadius: 4,
+        }}
+      >
+        {tok.tag && !isEditingThis && (
+          <span
+            onPointerDown={(e) => handleDragPointerDown(e, li, ti, tok.tag)}
+            style={{
+              position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
+              fontSize: tagSize, fontWeight: 800,
+              color: brightTags ? "#FFFFFF" : accent,
+              opacity: isDragSource ? 0.35 : 1,
+              cursor: editable ? "grab" : "default", touchAction: editable ? "none" : undefined,
+            }}
+          >
+            {flatify(tok.tag)}
+          </span>
+        )}
+        {editable && !tok.tag && !isEditingThis && (
+          <span style={{ position: "absolute", top: 0, left: 0, fontSize: tagSize, color: C.textFaint, opacity: 0.5, borderBottom: `1px dotted ${C.textFaint}` }}>·</span>
+        )}
+        <span style={{ color: showLyrics ? (dim ? C.textMuted : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
+          {tok.ch === null ? "\u00A0" : tok.ch === " " ? " " : tok.ch}
+        </span>
+        {isEditingThis && (
+          // Typing happens directly in place — same slot the tag/dotted-line
+          // occupies — instead of opening a separate floating text box (spec #8).
+          <input
+            autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => closeEditor(true)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } if (e.key === "Escape") closeEditor(false); if (e.key === "Tab") closeEditor(true); }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute", top: 0, left: 0, zIndex: 50,
+              width: Math.max(22, draft.length * tagSize * 0.64 + 8), fontSize: tagSize, fontFamily: MONO, fontWeight: 800,
+              padding: 0, border: "none", borderBottom: `1px solid ${accent}`, borderRadius: 0, background: "transparent",
+              color: "#FFFFFF", outline: "none", caretColor: accent,
+            }}
+          />
+        )}
+      </span>
+    );
+  };
+
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: lineHeightMult, textAlign }}>
+    <div ref={containerRef} style={{ fontFamily: MONO, fontSize, lineHeight: lineHeightMult, textAlign }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null }); // empty line still needs a tappable slot
+
+        // Group tokens into whole "words" (runs of non-space tokens) so the
+        // browser can only ever break the line at a space — never inside a
+        // word — regardless of how narrow the container is. Each space is
+        // rendered as its own breakable unit, positioned between words (so
+        // a wrapped line never starts with a leading space).
+        const groups = [];
+        let current = [];
+        tokens.forEach((tok, ti) => {
+          if (tok.ch === " ") {
+            if (current.length) { groups.push({ type: "word", items: current }); current = []; }
+            groups.push({ type: "space", tok, ti });
+          } else {
+            current.push({ tok, ti });
+          }
+        });
+        if (current.length) groups.push({ type: "word", items: current });
+
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: fontSize * 0.3, wordBreak: "normal", overflowWrap: "break-word" }}>
-            {tokens.map((tok, ti) => {
-              const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
-              const isSpace = tok.ch === " " || tok.ch === null;
-              return (
-                <span key={ti}>
-                  <span
-                    onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
-                    style={{
-                      position: "relative", display: "inline-block", paddingTop: topPad,
-                      cursor: editable ? "pointer" : "default", minWidth: tok.ch === null ? fontSize * 0.4 : undefined,
-                    }}
-                  >
-                    {tok.tag && (
-                      <span style={{
-                        position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
-                        fontSize: tagSize, fontWeight: 800,
-                        color: brightTags ? "#FFFFFF" : accent,
-                        opacity: 1,
-                      }}>
-                        {flatify(tok.tag)}
-                      </span>
-                    )}
-                    {editable && !tok.tag && (
-                      <span style={{ position: "absolute", top: 0, left: 0, fontSize: tagSize, color: C.textFaint, opacity: 0.5 }}>+</span>
-                    )}
-                    <span style={{ color: showLyrics ? (dim ? C.textMuted : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
-                      {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
-                    </span>
-                    {isEditingThis && (
-                      <span onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -topPad - tagGap, left: 0, zIndex: 50, display: "flex", alignItems: "center", gap: 4 }}>
-                        <input
-                          autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
-                          onBlur={() => closeEditor(true)}
-                          onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } if (e.key === "Escape") closeEditor(false); }}
-                          style={{ width: 54, fontSize: 13, fontFamily: MONO, fontWeight: 700, padding: "3px 5px", borderRadius: 6, border: `1px solid ${accent}`, background: C.surface3, color: C.text }}
-                        />
-                      </span>
-                    )}
-                  </span>
-                  {isSpace && <wbr />}
+          <div key={li} style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+            {editable && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: topPad, flexShrink: 0 }}>
+                <button
+                  type="button" title="Copy this line's chords/notes"
+                  onClick={() => { const raw = String(text || "").split("\n")[li] || ""; navigator.clipboard?.writeText(raw).catch(() => { }); }}
+                  style={{ width: 18, height: 18, border: "none", background: "none", padding: 0, opacity: 0.5, color: C.textFaint, fontSize: 10, lineHeight: "18px" }}
+                >⧉</button>
+                <button
+                  type="button" title="Paste chords/notes onto this line"
+                  onClick={async () => {
+                    try {
+                      const clip = await navigator.clipboard.readText();
+                      if (!clip) return;
+                      const lns = String(text || "").split("\n");
+                      lns[li] = clip.split("\n")[0] || "";
+                      onChange(lns.join("\n"));
+                    } catch { }
+                  }}
+                  style={{ width: 18, height: 18, border: "none", background: "none", padding: 0, opacity: 0.5, color: C.textFaint, fontSize: 10, lineHeight: "18px" }}
+                >⇩</button>
+              </div>
+            )}
+            <div style={{ minHeight: fontSize * lineHeightMult, marginBottom: fontSize * 0.65, flex: 1 }}>
+              {groups.map((g, gi) => g.type === "word" ? (
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap" }}>
+                  {g.items.map(({ tok, ti }) => renderToken(tok, ti, li))}
                 </span>
-              );
-            })}
+              ) : (
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "pre-wrap" }}>
+                  {renderToken(g.tok, g.ti, li)}
+                </span>
+              ))}
+            </div>
           </div>
         );
       })}
@@ -1717,15 +1852,15 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
   const canSave = title.trim().length > 0;
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: "auto", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
-      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, display: "flex", flexDirection: "column", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
         <button onClick={handlePasteFromClipboard} title="Paste song from clipboard" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ClipboardPaste size={20} /></button>
       </div>
 
-      <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60 }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", boxSizing: "border-box", padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60 }}>
         <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={(v) => { setTitle(v); setError(""); }} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
         <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(v); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
 
@@ -1787,10 +1922,10 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                     <ChordText
                       text={mergeLyricsWithTags(sec.lyrics, sectionTab === "drums" ? sec.drums : sec.chords)}
                       onChange={(merged) => updateSection(sec.id, sectionTab, merged)}
-                      editable dim brightTags={false}
-                      fontSize={15} lineHeightMult={1.6}
+                      editable dim brightTags
+                      fontSize={15} tagFontSize={15} lineHeightMult={1.7}
                       accent={C.accent} C={C}
-                      emptyHint="Type lyrics first, then tap between letters to add chords/notes"
+                      emptyHint="Tap the dotted line above a letter to add a chord/note"
                     />
                   </div>
                 )}
@@ -1857,7 +1992,12 @@ function SongRow({ song, onOpen, onEdit, mode, C }) {
 }
 function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
   const [query, setQuery] = useState("");
-  const filtered = songs.filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase())).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const [langFilter, setLangFilter] = useState("All"); // "All" | "English" | "Tamil"
+  const filtered = songs
+    .filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()))
+    .filter((s) => langFilter === "All" || (s.language || "English") === langFilter)
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const langOptions = [{ id: "All", label: "All" }, ...LANGUAGES];
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
@@ -1869,6 +2009,16 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
           <ClearableInput value={query} onChangeText={setQuery} placeholder="Search title or artist"
             leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
+        </div>
+        <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+          {langOptions.map((opt) => {
+            const active = langFilter === opt.id;
+            return (
+              <button key={opt.id} onClick={() => setLangFilter(opt.id)} style={{ flex: 1, height: 32, borderRadius: 8, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface2, color: active ? C.accent : C.textMuted, fontFamily: FONT, fontSize: 12.5, fontWeight: 700 }}>
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </div>
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
@@ -2048,25 +2198,27 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}`, gap: 8 }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, justifySelf: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
-            <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-              <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
-              <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
-              </button>
-            </div>
+        <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}`, gap: 10 }}>
+          <div style={{ display: "flex", gap: 6, justifySelf: "start" }}>
+            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
+            <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
+            </button>
           </div>
-          <button onClick={engine.toggle} style={{ width: 62, height: 62, borderRadius: "50%", border: "none", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {engine.playing ? <Square size={20} color={C.accent} fill={C.accent} /> : <Play size={20} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
-          </button>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, justifySelf: "end" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 40, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button {...decBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>−</button>
-              <button {...incBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>+</button>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8, justifySelf: "center" }}>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
             </div>
+            <button onClick={engine.toggle} style={{ width: "100%", height: 40, borderRadius: 10, border: "none", background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {engine.playing ? <Square size={17} color={C.accent} fill={C.accent} /> : <Play size={17} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "end" }}>
+            <button {...decBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>−</button>
+            <div style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 34, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
+            <button {...incBpmHold} style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 16, fontFamily: FONT }}>+</button>
           </div>
         </div>
       )}
@@ -2142,11 +2294,11 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       setDragY(deltaY);
       const rowHeight = 60; const total = setlistSongs.length;
       if (deltaY > rowHeight / 2 && idx < total - 1) {
-        const next = [...setlist.entries]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+        const next = [...setlist.entries];[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current += rowHeight; setActiveDragIndex(idx + 1); setDragY(clientY - startYRef.current);
       } else if (deltaY < -rowHeight / 2 && idx > 0) {
-        const next = [...setlist.entries]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
+        const next = [...setlist.entries];[next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current -= rowHeight; setActiveDragIndex(idx - 1); setDragY(clientY - startYRef.current);
       }
@@ -2258,9 +2410,10 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, s
    then Display (text size, alignment, line spacing, bold), the Click
    app's click-tone/pan controls, and Library import/export.
    ========================================================================= */
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, pianoSettings, setPianoSettings, onImportFile, onExportOpen, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
+  const [pianoToneIndex, setPianoToneIndex] = useState(() => Math.max(0, PIANO_TONES.findIndex((t) => t.id === pianoSettings.pianoTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
@@ -2270,6 +2423,19 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTe
     setToneIndex(next);
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
   };
+  const cyclePianoTone = (dir) => {
+    const next = (pianoToneIndex + dir + PIANO_TONES.length) % PIANO_TONES.length;
+    setPianoToneIndex(next);
+    setPianoSettings({ ...pianoSettings, pianoTone: PIANO_TONES[next].id });
+  };
+
+  const isVocalsPreview = mode === "vocals";
+  const isDrumsPreview = mode === "drums";
+  const previewText = isVocalsPreview
+    ? "Way maker, miracle worker,\npromise keeper, light in the darkness"
+    : isDrumsPreview
+      ? "[K]Groove in [S]the pock[K]et,\n[K]Steady [S]on the [K]back[S]eat"
+      : "[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness";
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -2303,6 +2469,13 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTe
               <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
             </div>
           </Field>
+          <Field label="CHORD / NOTE TEXT SIZE">
+            <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+              <button onClick={() => setChordFontSize((f) => Math.max(9, f - 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+              <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
+              <button onClick={() => setChordFontSize((f) => Math.min(40, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+            </div>
+          </Field>
           <Field label="LINE SPACING">
             <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
               <button onClick={() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
@@ -2326,36 +2499,48 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, textAlign, setTe
             <div style={{ background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
               <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
               <ChordText
-                text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
-                editable={false} dim={false} showLyrics brightTags
-                textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing}
+                text={previewText}
+                editable={false} dim={!isVocalsPreview} showLyrics={!isDrumsPreview} brightTags={!isVocalsPreview}
+                textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                 accent={C.accent} C={C}
               />
             </div>
           </Field>
         </div>
 
-        <SectionLabel>CLICK</SectionLabel>
+        <SectionLabel>{mode === "drums" ? "CLICK" : "PIANO"}</SectionLabel>
         <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-          <Field label="CLICK TONE">
-            <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-              <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
-              <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex].name}</div>
-              <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
-            </div>
-          </Field>
-          <Field label="AUDIO OUTPUT">
-            <div style={{ display: "flex", gap: 8 }}>
-              {PAN_OPTIONS.map((p) => {
-                const active = clickSettings.pan === p.id;
-                return (
-                  <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
-                    {p.label}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
+          {mode === "drums" ? (
+            <Field label="CLICK TONE">
+              <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex].name}</div>
+                <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+              </div>
+            </Field>
+          ) : (
+            <Field label="PIANO TONE">
+              <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
+                <button onClick={() => cyclePianoTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{PIANO_TONES[pianoToneIndex].name}</div>
+                <button onClick={() => cyclePianoTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+              </div>
+            </Field>
+          )}
+          {mode === "drums" && (
+            <Field label="AUDIO OUTPUT">
+              <div style={{ display: "flex", gap: 8 }}>
+                {PAN_OPTIONS.map((p) => {
+                  const active = clickSettings.pan === p.id;
+                  return (
+                    <button key={p.id} onClick={() => setClickSettings({ ...clickSettings, pan: p.id })} style={{ flex: 1, height: 48, boxSizing: "border-box", borderRadius: 10, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text }}>
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          )}
         </div>
 
         <SectionLabel>LIBRARY</SectionLabel>
@@ -2450,11 +2635,11 @@ export default function App() {
   useEffect(() => {
     if (!navigator.wakeLock) return;
     let sentinel = null;
-    const acquire = () => { if (document.visibilityState === "visible") navigator.wakeLock.request("screen").then((s) => { sentinel = s; }).catch(() => {}); };
+    const acquire = () => { if (document.visibilityState === "visible") navigator.wakeLock.request("screen").then((s) => { sentinel = s; }).catch(() => { }); };
     acquire();
     const handleVisibility = () => { if (document.visibilityState === "visible") acquire(); };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => { document.removeEventListener("visibilitychange", handleVisibility); if (sentinel) sentinel.release().catch(() => {}); };
+    return () => { document.removeEventListener("visibilitychange", handleVisibility); if (sentinel) sentinel.release().catch(() => { }); };
   }, []);
 
   // Keep iOS routing audio through the "media" session so the hardware
@@ -2464,7 +2649,7 @@ export default function App() {
     audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
     audio.loop = true; audio.setAttribute("playsinline", "true"); audio.volume = 1; audio.style.display = "none";
     document.body.appendChild(audio);
-    const unlock = () => { if (audio.paused) audio.play().catch(() => {}); };
+    const unlock = () => { if (audio.paused) audio.play().catch(() => { }); };
     window.addEventListener("pointerdown", unlock, { once: true, passive: true });
     const handleVisibility = () => { if (document.visibilityState === "visible" && audio.paused) unlock(); };
     document.addEventListener("visibilitychange", handleVisibility);
