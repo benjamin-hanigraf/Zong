@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Component } from "react";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
@@ -3117,6 +3117,59 @@ function AppInner() {
   );
 }
 
+/* On-screen crash reporter — shows JS errors directly on the page so they
+   can be read without any dev tools (e.g. on a phone). Catches both React
+   render errors and any other uncaught runtime/promise errors. */
+class CrashReporter extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error("Altar crashed:", error, info);
+  }
+  componentDidMount() {
+    window.addEventListener("error", this.handleWindowError);
+    window.addEventListener("unhandledrejection", this.handleRejection);
+  }
+  componentWillUnmount() {
+    window.removeEventListener("error", this.handleWindowError);
+    window.removeEventListener("unhandledrejection", this.handleRejection);
+  }
+  handleWindowError = (e) => {
+    this.setState({ error: e.error || new Error(e.message) });
+  };
+  handleRejection = (e) => {
+    this.setState({ error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)) });
+  };
+  render() {
+    if (this.state.error) {
+      const err = this.state.error;
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "#1a0000", color: "#ffb3b3",
+          fontFamily: "monospace", fontSize: 13, padding: 20, overflow: "auto",
+          whiteSpace: "pre-wrap", boxSizing: "border-box", zIndex: 999999,
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#ff6b6b", marginBottom: 12 }}>
+            Altar crashed — copy this text to fix it:
+          </div>
+          <div>{String(err && err.message ? err.message : err)}</div>
+          <div style={{ marginTop: 12, fontSize: 11, opacity: 0.8 }}>{err && err.stack}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  return <AppInner />;
+  return (
+    <CrashReporter>
+      <AppInner />
+    </CrashReporter>
+  );
 }
