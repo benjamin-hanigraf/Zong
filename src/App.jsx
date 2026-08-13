@@ -3116,3 +3116,7 @@ function AppInner() {
     </div>
   );
 }
+
+export default function App() {
+  return <AppInner />;
+}
