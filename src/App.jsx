@@ -54,15 +54,15 @@ function useIndexedDbState(key, seed) {
     idbGet(key).then((stored) => {
       if (cancelled) return;
       if (stored !== undefined) setValue(stored);
-      else idbSet(key, seed).catch(() => {});
-    }).catch(() => {});
+      else idbSet(key, seed).catch(() => { });
+    }).catch(() => { });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   const persist = useCallback((next) => {
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      idbSet(key, resolved).catch(() => {});
+      idbSet(key, resolved).catch(() => { });
       return resolved;
     });
   }, [key]);
@@ -78,7 +78,7 @@ function useLocalStorageState(key, seed) {
   const persist = useCallback((next) => {
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      try { localStorage.setItem(key, JSON.stringify(resolved)); } catch {}
+      try { localStorage.setItem(key, JSON.stringify(resolved)); } catch { }
       return resolved;
     });
   }, [key]);
@@ -136,13 +136,6 @@ const PAN_OPTIONS = [
 ];
 const DEFAULT_CLICK_SETTINGS = { clickTone: "classic", pan: "center" };
 
-const PIANO_TONES = [
-  { id: "grand", name: "Grand Piano" },
-  { id: "epiano", name: "Electric Piano" },
-  { id: "organ", name: "Organ" },
-  { id: "bell", name: "Bell" },
-  { id: "pad", name: "Warm Pad" },
-];
 const DEFAULT_PIANO_SETTINGS = { pianoTone: "grand" };
 const LANGUAGES = [
   { id: "English", label: "English" },
@@ -584,22 +577,10 @@ function IosShareIcon({ size = 16, color = "currentColor" }) {
     </svg>
   );
 }
-const PIANO_TONE_HARMONICS = {
-  grand: [0, 1, 0.55, 0.32, 0.22, 0.15, 0.1, 0.07, 0.05, 0.03],
-  epiano: [0, 1, 0.15, 0.5, 0.05, 0.25, 0.02, 0.1, 0.01, 0.05],
-  organ: [0, 1, 0, 0.5, 0, 0.33, 0, 0.25, 0, 0.2],
-  bell: [0, 1, 0.4, 0.05, 0.65, 0.02, 0.35, 0.01, 0.2, 0.15],
-  pad: [0, 1, 0.3, 0.1, 0.4, 0.05, 0.2, 0.03, 0.1, 0.02],
-};
-const PIANO_TONE_ENV = {
-  grand: { attack: 0.008, decayTo: 0.4, filterOpen: 9, filterSustain: 1.4, tail: 7 },
-  epiano: { attack: 0.004, decayTo: 0.5, filterOpen: 6, filterSustain: 2.2, tail: 6 },
-  organ: { attack: 0.012, decayTo: 0.95, filterOpen: 5, filterSustain: 5, tail: 10 },
-  bell: { attack: 0.002, decayTo: 0.15, filterOpen: 12, filterSustain: 3, tail: 9 },
-  pad: { attack: 0.35, decayTo: 0.7, filterOpen: 4, filterSustain: 2.6, tail: 8 },
-};
-function buildPianoWave(ctx, toneId) {
-  const amps = PIANO_TONE_HARMONICS[toneId] || PIANO_TONE_HARMONICS.grand;
+const PIANO_TONE_HARMONICS_GRAND = [0, 1, 0.55, 0.32, 0.22, 0.15, 0.1, 0.07, 0.05, 0.03];
+const PIANO_TONE_ENV_GRAND = { attack: 0.008, decayTo: 0.4, filterOpen: 9, filterSustain: 1.4, tail: 7 };
+function buildPianoWave(ctx) {
+  const amps = PIANO_TONE_HARMONICS_GRAND;
   const numHarmonics = amps.length - 1;
   const real = new Float32Array(numHarmonics + 1);
   const imag = new Float32Array(numHarmonics + 1);
@@ -659,36 +640,19 @@ function LandscapeLock({ children }) {
 }
 const SILENT_VIDEO_SRC = "data:video/mp4;base64,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";
 
-function PianoScreen({ C, pianoSettings, setPianoSettings }) {
+function PianoScreen({ C }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const audioCtxRef = useRef(null);
   const masterCompRef = useRef(null);
   const pianoWaveRef = useRef(null);
-  const pianoWaveToneRef = useRef(null);
   const activeRef = useRef(new Map());
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
-  const [pianoTone, setPianoToneState] = useState(pianoSettings?.pianoTone || "grand");
-  const pianoToneRef = useRef(pianoTone);
 
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
-  useEffect(() => {
-    const t = pianoSettings?.pianoTone || "grand";
-    setPianoToneState(t);
-    pianoToneRef.current = t;
-  }, [pianoSettings?.pianoTone]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
-
-  const changeTone = (dir) => {
-    const idx = PIANO_TONES.findIndex((t) => t.id === pianoToneRef.current);
-    const nextIdx = (idx + dir + PIANO_TONES.length) % PIANO_TONES.length;
-    const nextTone = PIANO_TONES[nextIdx].id;
-    setPianoToneState(nextTone);
-    pianoToneRef.current = nextTone;
-    if (setPianoSettings) setPianoSettings({ ...pianoSettings, pianoTone: nextTone });
-  };
 
   const WHITE_PRESSED = C.accent;
   const BLACK_PRESSED = C.accent;
@@ -697,20 +661,19 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.setValueAtTime(-6, ctx.currentTime);
-      comp.knee.setValueAtTime(10, ctx.currentTime);
-      comp.ratio.setValueAtTime(8, ctx.currentTime);
+      comp.threshold.setValueAtTime(-18, ctx.currentTime);
+      comp.knee.setValueAtTime(24, ctx.currentTime);
+      comp.ratio.setValueAtTime(6, ctx.currentTime);
       comp.attack.setValueAtTime(0.003, ctx.currentTime);
-      comp.release.setValueAtTime(0.1, ctx.currentTime);
+      comp.release.setValueAtTime(0.15, ctx.currentTime);
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
       audioCtxRef.current = ctx;
     }
-    if (pianoWaveToneRef.current !== pianoToneRef.current || !pianoWaveRef.current) {
-      pianoWaveRef.current = buildPianoWave(audioCtxRef.current, pianoToneRef.current);
-      pianoWaveToneRef.current = pianoToneRef.current;
+    if (!pianoWaveRef.current) {
+      pianoWaveRef.current = buildPianoWave(audioCtxRef.current);
     }
-    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => {});
+    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => { });
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
       silentVideoRef.current.play().catch(() => { videoUnlockedRef.current = false; });
@@ -725,9 +688,9 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const freq = freqFor(semitone);
-    const env = PIANO_TONE_ENV[pianoToneRef.current] || PIANO_TONE_ENV.grand;
+    const env = PIANO_TONE_ENV_GRAND;
     const gain = ctx.createGain();
-    const peak = 1.15;
+    const peak = 0.62;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(peak, now + env.attack);
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak * env.decayTo), now + 0.4);
@@ -744,7 +707,7 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
     osc.setPeriodicWave(pianoWaveRef.current);
     osc.frequency.value = freq;
     osc.connect(filter); filter.connect(gain); gain.connect(masterCompRef.current || ctx.destination);
-    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch {} };
+    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch { } };
     osc.start(now);
     return { osc, gain };
   };
@@ -757,7 +720,7 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
       voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
       voice.osc.stop(now + 0.09);
-    } catch {}
+    } catch { }
   };
   const keyAt = (x, y) => {
     const hitEl = document.elementFromPoint(x, y);
@@ -809,7 +772,7 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
       if (document.visibilityState !== "hidden") return;
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => {});
+      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
     };
     window.addEventListener("pointermove", handleMove, { passive: false });
     window.addEventListener("pointerup", handleUp);
@@ -822,7 +785,7 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
       document.removeEventListener("visibilitychange", handleVisibility);
       activeRef.current.forEach((v) => stopVoice(v.voice));
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => {});
+      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
     };
   }, []);
 
@@ -830,7 +793,7 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
   useEffect(() => {
     return () => {
       if (audioCtxRef.current) {
-        try { audioCtxRef.current.close(); } catch {}
+        try { audioCtxRef.current.close(); } catch { }
         audioCtxRef.current = null;
         masterCompRef.current = null;
         pianoWaveRef.current = null;
@@ -838,8 +801,6 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
       }
     };
   }, []);
-
-  const currentToneObj = PIANO_TONES.find((t) => t.id === pianoTone) || PIANO_TONES[0];
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
@@ -900,7 +861,8 @@ function PianoScreen({ C, pianoSettings, setPianoSettings }) {
         src={SILENT_VIDEO_SRC}
         loop
         playsInline
-        muted={true}
+        muted={false}
+        volume={0.01}
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
       />
       <LandscapeLock>{pianoBody}</LandscapeLock>
@@ -937,10 +899,10 @@ function useMetronomeEngine(settings) {
   const [flashBeat, setFlashBeat] = useState(-1);
   const [loadedSong, setLoadedSong] = useState(null);
 
-  useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch {} }, [bpm]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch {} }, [timeSig]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_accents", JSON.stringify(accents)); } catch {} }, [accents]);
-  useEffect(() => { try { localStorage.setItem("altar_metronome_subdivision", subdivision); } catch {} }, [subdivision]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch { } }, [timeSig]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_accents", JSON.stringify(accents)); } catch { } }, [accents]);
+  useEffect(() => { try { localStorage.setItem("altar_metronome_subdivision", subdivision); } catch { } }, [subdivision]);
 
   const bpmRef = useRef(bpm);
   const timeSigRef = useRef(timeSig);
@@ -949,10 +911,25 @@ function useMetronomeEngine(settings) {
   const clickToneRef = useRef(settings?.clickTone || "classic");
   const panRef = useRef(settings?.pan || "center");
   const audioCtxRef = useRef(null);
+  const masterCompRef = useRef(null);
   const schedulerRef = useRef(null);
   const nextNoteTimeRef = useRef(0);
   const beatRef = useRef(0);
   const tapTimesRef = useRef([]);
+
+  const ensureMasterChain = (ctx) => {
+    if (!masterCompRef.current || masterCompRef.current.context !== ctx) {
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.setValueAtTime(-18, ctx.currentTime);
+      comp.knee.setValueAtTime(24, ctx.currentTime);
+      comp.ratio.setValueAtTime(6, ctx.currentTime);
+      comp.attack.setValueAtTime(0.003, ctx.currentTime);
+      comp.release.setValueAtTime(0.15, ctx.currentTime);
+      comp.connect(ctx.destination);
+      masterCompRef.current = comp;
+    }
+    return masterCompRef.current;
+  };
 
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
   useEffect(() => {
@@ -971,7 +948,7 @@ function useMetronomeEngine(settings) {
       if (audioCtxRef.current.state === "closed") {
         audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
       } else if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
-        audioCtxRef.current.resume().catch(() => {});
+        audioCtxRef.current.resume().catch(() => { });
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -996,17 +973,18 @@ function useMetronomeEngine(settings) {
     const ctx = audioCtxRef.current;
     const isAccent = state === "accent";
     const tone = clickToneRef.current;
-    let dest = ctx.destination;
+    const master = ensureMasterChain(ctx);
+    let dest = master;
     if (ctx.createStereoPanner) {
       const panner = ctx.createStereoPanner();
       panner.pan.setValueAtTime(panValue(), time);
-      panner.connect(ctx.destination);
+      panner.connect(master);
       dest = panner;
     }
     if (tone === "cowbell") {
       const dur = 0.12;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(isAccent ? 0.6 : 0.34, time);
+      gain.gain.setValueAtTime(isAccent ? 0.42 : 0.24, time);
       gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
       const bp = ctx.createBiquadFilter();
       bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 1.1;
@@ -1028,7 +1006,7 @@ function useMetronomeEngine(settings) {
       const bp = ctx.createBiquadFilter();
       bp.type = "bandpass"; bp.frequency.value = isAccent ? 1600 : 1100; bp.Q.value = 6;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(1.0, time);
+      gain.gain.setValueAtTime(0.7, time);
       gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
       noise.connect(bp); bp.connect(gain); gain.connect(dest);
       noise.start(time); noise.stop(time + dur);
@@ -1037,7 +1015,7 @@ function useMetronomeEngine(settings) {
     if (tone === "digital") {
       const osc = ctx.createOscillator(); const gain = ctx.createGain();
       osc.type = "square"; osc.frequency.value = isAccent ? 1800 : 1200;
-      gain.gain.setValueAtTime(isAccent ? 0.7 : 0.4, time);
+      gain.gain.setValueAtTime(isAccent ? 0.5 : 0.28, time);
       gain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
       osc.connect(gain); gain.connect(dest);
       osc.start(time); osc.stop(time + 0.03);
@@ -1045,7 +1023,7 @@ function useMetronomeEngine(settings) {
     }
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     osc.frequency.value = isAccent ? 1500 : 1000;
-    gain.gain.setValueAtTime(isAccent ? 1.0 : 0.56, time);
+    gain.gain.setValueAtTime(isAccent ? 0.7 : 0.4, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
     osc.connect(gain); gain.connect(dest);
     osc.start(time); osc.stop(time + 0.05);
@@ -1181,7 +1159,7 @@ function Knob({ value, min = 30, max = 300, onChange, size = 220, playing, onTog
   };
   const handlePointerUp = (e) => {
     setDragging(false);
-    try { knobRef.current.releasePointerCapture(e.pointerId); } catch {}
+    try { knobRef.current.releasePointerCapture(e.pointerId); } catch { }
     const moved = Math.hypot(e.clientX - downPosRef.current.x, e.clientY - downPosRef.current.y);
     if (moved < 6 && rectRef.current) {
       const centerX = rectRef.current.left + rectRef.current.width / 2;
@@ -1363,7 +1341,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
 
   const NAV_H = "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))";
   return (
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, paddingBottom: NAV_H, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: `16px 20px calc(${NAV_H})`, boxSizing: "border-box", overflowY: "auto" }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, paddingBottom: NAV_H, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-evenly", padding: `28px 20px calc(${NAV_H})`, boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", height: 40, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
@@ -1397,7 +1375,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} flashBeat={flashBeat} accents={accents} onChange={changeAccents} C={C} />
       </div>
 
-      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={220} playing={playing} onToggle={toggle} C={C} />
+      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 320 }}>
         <div style={{ flex: 1 }}>
@@ -1454,7 +1432,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "break-word" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -2037,7 +2015,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                 {sectionTab === "lyrics" ? (
                   <textarea value={sec.lyrics} onChange={(e) => updateSection(sec.id, "lyrics", e.target.value)}
                     placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical" }} />
+                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" }} />
                 ) : (
                   <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90 }}>
                     <SectionChordEditor
@@ -2113,7 +2091,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
     .filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()))
     .filter((s) => langFilter === "All" || s.language === langFilter)
     .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
-  
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
@@ -2304,7 +2282,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
             <div key={sec.id} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{sec.label || "Section"}</div>
               {isVocals ? (
-                <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "break-word", margin: 0, textAlign, color: C.text }}>
+                <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
                   {sec.lyrics || "\u2014"}
                 </pre>
               ) : (
@@ -2410,11 +2388,11 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       setDragY(deltaY);
       const rowHeight = 60; const total = setlistSongs.length;
       if (deltaY > rowHeight / 2 && idx < total - 1) {
-        const next = [...setlist.entries]; [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+        const next = [...setlist.entries];[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current += rowHeight; setActiveDragIndex(idx + 1); setDragY(clientY - startYRef.current);
       } else if (deltaY < -rowHeight / 2 && idx > 0) {
-        const next = [...setlist.entries]; [next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
+        const next = [...setlist.entries];[next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current -= rowHeight; setActiveDragIndex(idx - 1); setDragY(clientY - startYRef.current);
       }
@@ -2521,30 +2499,17 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, s
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, pianoSettings, setPianoSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
-  const [pianoToneIndex, setPianoToneIndex] = useState(() => Math.max(0, PIANO_TONES.findIndex((t) => t.id === pianoSettings?.pianoTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
-
-  useEffect(() => {
-    if (pianoSettings?.pianoTone) {
-      const idx = PIANO_TONES.findIndex((t) => t.id === pianoSettings.pianoTone);
-      if (idx >= 0) setPianoToneIndex(idx);
-    }
-  }, [pianoSettings?.pianoTone]);
 
   const cycleTone = (dir) => {
     const next = (toneIndex + dir + CLICK_TONES.length) % CLICK_TONES.length;
     setToneIndex(next);
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
-  };
-  const cyclePianoTone = (dir) => {
-    const next = (pianoToneIndex + dir + PIANO_TONES.length) % PIANO_TONES.length;
-    setPianoToneIndex(next);
-    if (setPianoSettings) setPianoSettings({ ...pianoSettings, pianoTone: PIANO_TONES[next].id });
   };
 
   return (
@@ -2612,7 +2577,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
               <div style={{ background: "#000000", border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
                 <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
                 {mode === "vocals" ? (
-                  <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "break-word", margin: 0, textAlign, color: "rgba(255,255,255,0.4)" }}>
+                  <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
                     {"Way maker, miracle worker,\npromise keeper, light in the darkness"}
                   </pre>
                 ) : (
@@ -2652,20 +2617,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 </Field>
               </div>
             </>
-          ) : (
-            <>
-              <SectionLabel>PIANO TONE</SectionLabel>
-              <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-                <Field label="TONE">
-                  <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-                    <button onClick={() => cyclePianoTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
-                    <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{PIANO_TONES[pianoToneIndex]?.name}</div>
-                    <button onClick={() => cyclePianoTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
-                  </div>
-                </Field>
-              </div>
-            </>
-          )}
+          ) : null}
 
           <SectionLabel>LIBRARY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
@@ -2730,7 +2682,6 @@ export default function App() {
   const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.75);
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
-  const [pianoSettings, setPianoSettings] = useLocalStorageState("altar:piano-settings", DEFAULT_PIANO_SETTINGS);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Not connected");
   const syncRevision = useRef(Number(localStorage.getItem("zong:revision") || 0));
@@ -2740,7 +2691,7 @@ export default function App() {
   const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
 
-  const [tab, setTab] = useState("songs");
+  const [tab, setTab] = useState("practice");
   const [editingSong, setEditingSong] = useState(undefined);
   const [viewing, setViewing] = useState(null);
   const [stageIndex, setStageIndex] = useState(null);
@@ -2761,19 +2712,19 @@ export default function App() {
       localStorage.setItem("zong:revision", String(result.revision));
       if (result.conflict) {
         localStorage.setItem("zong:conflict-backup", JSON.stringify({ savedAt: new Date().toISOString(), remoteSongs: result.state?.songs, remoteSetlists: result.state?.setlists }));
-        
+
         const mergedSongs = [...songs];
         (result.state?.songs || []).forEach(rs => {
           if (!mergedSongs.find(ls => ls.id === rs.id)) mergedSongs.push(rs);
         });
-        
+
         const mergedSetlists = [...setlists];
         (result.state?.setlists || []).forEach(rs => {
           if (!mergedSetlists.find(ls => ls.id === rs.id)) mergedSetlists.push(rs);
         });
 
-        setSongs(mergedSongs); 
-        setSetlists(mergedSetlists); 
+        setSongs(mergedSongs);
+        setSetlists(mergedSetlists);
         syncDirty.current = true;
         setSyncStatus("Conflict merged");
         flash("Sync conflict: remote additions were merged with your local library.");
@@ -2822,11 +2773,11 @@ export default function App() {
   useEffect(() => {
     if (!navigator.wakeLock) return;
     let sentinel = null;
-    const acquire = () => { if (document.visibilityState === "visible") navigator.wakeLock.request("screen").then((s) => { sentinel = s; }).catch(() => {}); };
+    const acquire = () => { if (document.visibilityState === "visible") navigator.wakeLock.request("screen").then((s) => { sentinel = s; }).catch(() => { }); };
     acquire();
     const handleVisibility = () => { if (document.visibilityState === "visible") acquire(); };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => { document.removeEventListener("visibilitychange", handleVisibility); if (sentinel) sentinel.release().catch(() => {}); };
+    return () => { document.removeEventListener("visibilitychange", handleVisibility); if (sentinel) sentinel.release().catch(() => { }); };
   }, []);
 
   // Keep iOS routing audio through the "media" session so the hardware
@@ -2836,11 +2787,17 @@ export default function App() {
     audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
     audio.loop = true; audio.setAttribute("playsinline", "true"); audio.volume = 1; audio.style.display = "none";
     document.body.appendChild(audio);
-    const unlock = () => { if (audio.paused) audio.play().catch(() => {}); };
-    window.addEventListener("pointerdown", unlock, { once: true, passive: true });
+    const unlock = () => { if (audio.paused) audio.play().catch(() => { }); };
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("touchstart", unlock, { passive: true });
     const handleVisibility = () => { if (document.visibilityState === "visible" && audio.paused) unlock(); };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => { window.removeEventListener("pointerdown", unlock); document.removeEventListener("visibilitychange", handleVisibility); audio.pause(); audio.remove(); };
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("touchstart", unlock);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      audio.pause(); audio.remove();
+    };
   }, []);
 
   const flash = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 2000); };
@@ -2987,7 +2944,7 @@ export default function App() {
         {tab === "practice" && (
           mode === "drums"
             ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => setEditingSong(null)} C={C} />
-            : <PianoScreen C={C} pianoSettings={pianoSettings} setPianoSettings={setPianoSettings} />
+            : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => setEditingSong(null)} onEdit={(s) => setEditingSong(s)} mode={mode} C={C} />
@@ -3004,7 +2961,6 @@ export default function App() {
             bold={bold} setBold={setBold}
             lineSpacing={lineSpacing} setLineSpacing={setLineSpacing}
             clickSettings={clickSettings} setClickSettings={setClickSettings}
-            pianoSettings={pianoSettings} setPianoSettings={setPianoSettings}
             onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={configureSync} syncStatus={syncStatus}
             C={C}
           />
