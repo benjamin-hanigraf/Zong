@@ -797,7 +797,6 @@ function PianoScreen({ C }) {
         audioCtxRef.current = null;
         masterCompRef.current = null;
         pianoWaveRef.current = null;
-        pianoWaveToneRef.current = null;
       }
     };
   }, []);
@@ -1398,14 +1397,18 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
    precede. Used for the Drums/Chords tabs of the Add/Edit Song form and
    for the song-view chart itself.
    ========================================================================= */
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold }) {
+function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n");
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
   const tagGap = Math.max(4, tagSize * 0.28);
-  const topPad = tagSize + tagGap;
+  const topPad = showTags ? tagSize + tagGap : 0;
+  // lyricsBold/notesBold let callers control lyric-character and chord-label weight
+  // independently; `bold` is kept as a legacy fallback that drives both.
+  const lyricWeightBold = lyricsBold != null ? lyricsBold : bold;
+  const noteWeightBold = notesBold != null ? notesBold : bold;
 
   const commitTag = (lineIdx, tokenIdx, value) => {
     const lns = String(text || "").split("\n");
@@ -1432,7 +1435,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", letterSpacing: "normal" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing: "normal", hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -1467,7 +1470,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               }}
             >
               {/* Chord/tag slot — shows inline input when editing, otherwise chord label */}
-              {isEditingThis ? (
+              {!showTags ? null : isEditingThis ? (
                 <input
                   autoFocus
                   value={draft}
@@ -1491,7 +1494,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               ) : tok.tag ? (
                 <span style={{
                   position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
-                  fontSize: tagSize, fontWeight: bold ? 800 : 600,
+                  fontSize: tagSize, fontWeight: noteWeightBold ? 800 : 600,
                   color: brightTags ? "#FFFFFF" : accent,
                   opacity: 1,
                 }}>
@@ -1507,7 +1510,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   userSelect: "none",
                 }}>+</span>
               ) : null}
-              <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: bold ? 700 : 400 }}>
+              <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
                 {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
               </span>
             </span>
@@ -1736,7 +1739,7 @@ function serializeLine(lyrics, insertions) {
   return out;
 }
 
-function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent }) {
+function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent, fontSize = 15, tagFontSize = 13, lyricsBold = false, notesBold = false, textAlign = "left" }) {
   const lyricLines = String(lyricsText || "").split("\n");
   const taggedLines = String(taggedText || "").split("\n");
   const [activeCell, setActiveCell] = useState(null); // { lineIdx, charIdx }
@@ -1762,13 +1765,13 @@ function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize: 15, lineHeight: "2.3em" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: "2.3em", textAlign }}>
       {lyricLines.map((line, li) => {
         const taggedLine = taggedLines[li] || "";
         const { insertions } = parseLine(taggedLine, line);
 
         return (
-          <div key={li} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", whiteSpace: "pre-wrap", wordBreak: "normal" }}>
+          <div key={li} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", whiteSpace: "pre-wrap", wordBreak: "keep-all", hyphens: "none" }}>
             {Array.from({ length: line.length + 1 }).map((_, ci) => {
               const isEditing = activeCell && activeCell.lineIdx === li && activeCell.charIdx === ci;
               const value = insertions[ci] || "";
@@ -1832,8 +1835,8 @@ function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent }) {
                       style={{
                         color: "#fff",
                         background: accent,
-                        fontWeight: "bold",
-                        fontSize: 13,
+                        fontWeight: notesBold ? 800 : "bold",
+                        fontSize: tagFontSize,
                         padding: "1px 5px",
                         borderRadius: 5,
                         cursor: "pointer",
@@ -1891,7 +1894,7 @@ const SECTION_TABS = [
   { id: "drums", label: "Drums" },
   { id: "chords", label: "Chords" },
 ];
-function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mode, C }) {
+function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mode, fontSize = 22, chordFontSize = 16, lyricsBold = false, notesBold = false, lineSpacing = 1.75, textAlign = "left", C }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [artist, setArtist] = useState(initial?.artist ?? "");
   const [tempo, setTempo] = useState(initial?.tempo ?? "");
@@ -2043,15 +2046,20 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                 {sectionTab === "lyrics" ? (
                   <textarea value={sec.lyrics} onChange={(e) => updateSection(sec.id, "lyrics", e.target.value)}
                     placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" }} />
+                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: lineSpacing, textAlign, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
                 ) : (
-                  <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90 }}>
+                  <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, overflowX: "hidden" }}>
                     <SectionChordEditor
                       lyricsText={sec.lyrics}
                       taggedText={mergeLyricsWithTags(sec.lyrics, sectionTab === "drums" ? sec.drums : sec.chords)}
                       onChange={(merged) => updateSection(sec.id, sectionTab, merged)}
                       C={C}
                       accent={C.accent}
+                      fontSize={fontSize}
+                      tagFontSize={chordFontSize}
+                      lyricsBold={lyricsBold}
+                      notesBold={notesBold}
+                      textAlign={textAlign}
                     />
                   </div>
                 )}
@@ -2089,19 +2097,43 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
 /* =========================================================================
    Songs list (no time signature shown per spec #6)
    ========================================================================= */
-function SongRow({ song, onOpen, onEdit, mode, C }) {
+function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, deleteConfirmMessage = "Delete this song?", C }) {
+  const MENU_WIDTH = 170;
+  const clampedX = Math.min(Math.max(x, MENU_WIDTH / 2 + 8), window.innerWidth - MENU_WIDTH / 2 - 8);
+  const openUpward = y > window.innerHeight - 160;
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 210 }} />
+      <div style={{
+        position: "fixed", left: clampedX, top: openUpward ? y - 10 : y + 10,
+        transform: openUpward ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+        zIndex: 220, width: "max-content", minWidth: MENU_WIDTH,
+        background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden",
+        boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+      }}>
+        <MenuItem icon={Pencil} label="Edit" onClick={() => { onClose(); onEdit(); }} C={C} />
+        <MenuItem icon={IosShareIcon} label="Share" onClick={() => { onClose(); onShare(); }} C={C} />
+        <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); if (window.confirm(deleteConfirmMessage)) onDelete(); }} C={C} />
+      </div>
+    </>
+  );
+}
+function SongRow({ song, onOpen, onEdit, onShare, onDelete, mode, C }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
-  const startPress = () => {
+  const [menuPos, setMenuPos] = useState(null); // { x, y } | null
+  const startPress = (e) => {
     firedLongPressRef.current = false;
+    const point = e.touches ? e.touches[0] : e;
+    const x = point.clientX, y = point.clientY;
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = setTimeout(() => { firedLongPressRef.current = true; onEdit(song); }, 500);
+    longPressTimerRef.current = setTimeout(() => { firedLongPressRef.current = true; setMenuPos({ x, y }); if (navigator.vibrate) navigator.vibrate(15); }, 500);
   };
   const cancelPress = () => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } };
   const handleClick = () => { if (firedLongPressRef.current) { firedLongPressRef.current = false; return; } onOpen(song); };
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative" }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={cancelPress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -2109,10 +2141,20 @@ function SongRow({ song, onOpen, onEdit, mode, C }) {
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
+      {menuPos && (
+        <PositionedActionMenu
+          x={menuPos.x} y={menuPos.y}
+          onEdit={() => onEdit(song)}
+          onShare={() => onShare(song)}
+          onDelete={() => onDelete(song.id)}
+          onClose={() => setMenuPos(null)}
+          C={C}
+        />
+      )}
     </div>
   );
 }
-function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
+function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, mode, C }) {
   const [query, setQuery] = useState("");
   const [langFilter, setLangFilter] = useState("All");
   const filtered = songs
@@ -2141,7 +2183,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, mode, C }) {
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
-        ) : filtered.map((s) => <SongRow key={s.id} song={s} onOpen={onOpen} onEdit={onEdit} mode={mode} C={C} />)}
+        ) : filtered.map((s) => <SongRow key={s.id} song={s} onOpen={onOpen} onEdit={onEdit} onShare={onShare} onDelete={onDelete} mode={mode} C={C} />)}
       </div>
     </div>
   );
@@ -2157,7 +2199,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}` }}>
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          <input className="no-ring" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             style={{ width: "100%", boxSizing: "border-box", fontFamily: FONT, fontSize: 17, fontWeight: 600, background: "transparent", border: "none", color: C.text, padding: 0, outline: "none" }} />
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", fontFamily: FONT, fontSize: 15.5, fontWeight: 700, color: C.accent, padding: "6px 4px" }}>Done</button>
@@ -2231,7 +2273,7 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
-function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, bold, lineSpacing, chordFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
+function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, chordFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [showLyrics, setShowLyrics] = useState(true);
@@ -2271,7 +2313,13 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist}</div>}
         </div>
-        <KebabMenu onEdit={() => onEdit(song)} onShare={() => onShare(song)} onDelete={() => onDelete(song.id)} isInSetlist={isInSetlist} onRemoveFromSetlist={onRemoveFromSetlist} C={C} />
+        {song.description ? (
+          <button onClick={() => setDescOpen((o) => !o)} style={chevronBtn}>
+            <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
+          </button>
+        ) : (
+          <div style={{ width: 30, height: 30, flexShrink: 0 }} />
+        )}
       </div>
 
       {mode === "chords" && (
@@ -2285,15 +2333,10 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
             {nashvilleMode ? "123" : flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
           </button>
           <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={16} /></button>
-          {song.description && (
-            <button onClick={() => setDescOpen((o) => !o)} style={chevronBtn}>
-              <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
-            </button>
-          )}
         </div>
       )}
 
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "16px 20px 40px" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "16px 20px 40px" }}>
         {descOpen && song.description && (
           <div style={{ marginBottom: 18, padding: "11px 13px", background: C.surface2, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 8, fontSize: 13.5, color: C.textMuted, whiteSpace: "pre-wrap" }}>
             {song.description}
@@ -2310,11 +2353,9 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
             <div key={sec.id} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{sec.label || "Section"}</div>
               {isVocals ? (
-                <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
-                  {sec.lyrics || "\u2014"}
-                </pre>
+                <ChordText text={sec.lyrics} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} emptyHint="\u2014" />
               ) : (
-                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} bold={bold} C={C} />
+                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} />
               )}
             </div>
           );
@@ -2435,7 +2476,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       <div style={{ padding: "16px 16px 12px", display: "flex", alignItems: "center", gap: 6 }}>
         <button onClick={onBack} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
         {editingName ? (
-          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          <input className="no-ring" autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             style={{ flex: 1, fontFamily: FONT, fontSize: 16, fontWeight: 700, background: "transparent", border: "none", color: C.text, textAlign: "center", padding: "6px 10px", textTransform: "uppercase", letterSpacing: 0.5, outline: "none" }} />
         ) : (
           <button onTouchStart={startNameLongPress} onTouchMove={cancelNameLongPress} onTouchEnd={cancelNameLongPress} onTouchCancel={cancelNameLongPress}
@@ -2484,18 +2525,16 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
   );
 }
 
-function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, setCreating, C }) {
+function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   const [query, setQuery] = useState("");
-  const [name, setName] = useState("");
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const filtered = setlists.filter((sl) => sl.name.toLowerCase().includes(query.toLowerCase()));
-  const submit = () => { const trimmed = name.trim(); if (!trimmed) return; onCreate(trimmed); setName(""); setCreating(false); };
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Setlists</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{setlists.length} setlists</div></div>
-          <button onClick={() => setCreating(true)} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+          <button onClick={onCreate} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
         <div style={{ marginTop: 16 }}>
           <ClearableInput value={query} onChangeText={setQuery} placeholder="Search setlists"
@@ -2515,19 +2554,11 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, creating, s
           </SwipeToDelete>
         ))}
       </div>
-      {creating && (
-        <Modal title="New Setlist" onClose={() => setCreating(false)} C={C}>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Setlist name" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box" }} />
-          <button onClick={submit} disabled={!name.trim()} style={{ marginTop: 14, width: "100%", fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "14px 0", borderRadius: 12, border: "none", background: name.trim() ? C.accent : C.surface3, color: name.trim() ? "#fff" : C.textFaint }}>
-            CREATE
-          </button>
-        </Modal>
-      )}
     </div>
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, bold, setBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
@@ -2570,7 +2601,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                   <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
                   <button onClick={() => setFontSize((f) => Math.min(80, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
-                <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
+                <button onClick={() => setLyricsBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${lyricsBold ? C.accent : C.border}`, background: lyricsBold ? C.accentSoft : C.surface3, color: lyricsBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
             </Field>
             <Field label="NOTES SIZE">
@@ -2578,8 +2609,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
                   <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
                   <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
-                  <button onClick={() => setChordFontSize((f) => Math.min(30, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button onClick={() => setChordFontSize((f) => Math.min(80, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
+                <button onClick={() => setNotesBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${notesBold ? C.accent : C.border}`, background: notesBold ? C.accentSoft : C.surface3, color: notesBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
             </Field>
             <Field label="LINE SPACING">
@@ -2602,18 +2634,21 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
               </div>
             </Field>
             <Field label="PREVIEW">
-              <div style={{ background: "#000000", border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+              <div style={{ background: "#000000", border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
                 <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
                 {mode === "vocals" ? (
-                  <pre style={{ fontFamily: MONO, fontSize, fontWeight: bold ? 700 : 400, lineHeight: lineSpacing, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", margin: 0, textAlign, color: C.text }}>
-                    {"Way maker, miracle worker,\npromise keeper, light in the darkness"}
-                  </pre>
+                  <ChordText
+                    text={"Way maker, miracle worker,\npromise keeper, light in the darkness"}
+                    editable={false} showLyrics showTags={false}
+                    textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing}
+                    accent={C.accent} lyricsBold={lyricsBold} C={C}
+                  />
                 ) : (
                   <ChordText
                     text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
-                    accent={C.accent} bold={bold} C={C}
+                    accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C}
                   />
                 )}
               </div>
@@ -2741,7 +2776,8 @@ function AppInner() {
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 22);
   const [chordFontSize, setChordFontSize] = useLocalStorageState("altar:chord-font-size", 16);
   const [textAlign, setTextAlign] = useLocalStorageState("altar:text-align", "left");
-  const [bold, setBold] = useLocalStorageState("altar:bold", false);
+  const [lyricsBold, setLyricsBold] = useLocalStorageState("altar:lyrics-bold", false);
+  const [notesBold, setNotesBold] = useLocalStorageState("altar:notes-bold", false);
   const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.75);
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
@@ -2759,7 +2795,6 @@ function AppInner() {
   const [viewing, setViewing] = useState(null);
   const [stageIndex, setStageIndex] = useState(null);
   const [stageAutoOpenPicker, setStageAutoOpenPicker] = useState(false);
-  const [creatingSetlist, setCreatingSetlist] = useState(false);
   const [exportPickerOpen, setExportPickerOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
 
@@ -2901,8 +2936,10 @@ function AppInner() {
     setViewing({ songId: newSong.id, fromSetlistId: null });
     flash(`Duplicated as "${candidate}"`);
   };
-  const handleCreateSetlist = (name) => {
-    const next = [...setlists, { id: uid(), name, entries: [] }];
+  const handleCreateSetlist = () => {
+    let n = 1;
+    while (setlists.some((sl) => sl.name.toLowerCase() === `setlist ${n}`.toLowerCase())) n += 1;
+    const next = [...setlists, { id: uid(), name: `Setlist ${n}`, entries: [] }];
     saveSetlists(next);
     setStageAutoOpenPicker(true);
     setStageIndex(next.length - 1);
@@ -2994,6 +3031,7 @@ function AppInner() {
         button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
         button:active { transform: scale(0.94); opacity: 0.8; }
         input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
+        input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
         input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
         * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
         input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
@@ -3010,10 +3048,10 @@ function AppInner() {
             : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => setEditingSong(null)} onEdit={(s) => setEditingSong(s)} mode={mode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => setEditingSong(null)} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} mode={mode} C={C} />
         )}
         {tab === "setlists" && (
-          <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} creating={creatingSetlist} setCreating={setCreatingSetlist} C={C} />
+          <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
         )}
         {tab === "settings" && (
           <SettingsScreen
@@ -3021,7 +3059,8 @@ function AppInner() {
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
             textAlign={textAlign} setTextAlign={setTextAlign}
-            bold={bold} setBold={setBold}
+            lyricsBold={lyricsBold} setLyricsBold={setLyricsBold}
+            notesBold={notesBold} setNotesBold={setNotesBold}
             lineSpacing={lineSpacing} setLineSpacing={setLineSpacing}
             clickSettings={clickSettings} setClickSettings={setClickSettings}
             onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={configureSync} syncStatus={syncStatus}
@@ -3030,10 +3069,10 @@ function AppInner() {
         )}
       </div>
 
-      {!creatingSetlist && <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />}
+      <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />
 
       {editingSong !== undefined && (
-        <SongForm initial={editingSong} onSave={handleSaveSong} onCancel={() => setEditingSong(undefined)} onDelete={handleDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} C={C} />
+        <SongForm initial={editingSong} onSave={handleSaveSong} onCancel={() => setEditingSong(undefined)} onDelete={handleDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
       )}
 
       {viewingSong && (
@@ -3050,7 +3089,7 @@ function AppInner() {
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
-          fontSize={fontSize} textAlign={textAlign} bold={bold} lineSpacing={lineSpacing} chordFontSize={chordFontSize}
+          fontSize={fontSize} textAlign={textAlign} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} chordFontSize={chordFontSize}
           mode={mode} engine={engine}
           C={C}
         />
