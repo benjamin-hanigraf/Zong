@@ -1398,7 +1398,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
    precede. Used for the Drums/Chords tabs of the Add/Edit Song form and
    for the song-view chart itself.
    ========================================================================= */
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint }) {
+function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n");
@@ -1432,74 +1432,102 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal", letterSpacing: "normal" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
+
+        // Group tokens into words (runs of non-space characters) and
+        // individual space units, so each word can be wrapped in a
+        // non-breaking span — this guarantees a line never breaks mid-word
+        // and never starts with a space or punctuation, matching the plain
+        // <pre> text-flow behaviour used in Vocals mode exactly.
+        const groups = [];
+        let current = [];
+        tokens.forEach((tok, ti) => {
+          const isSpace = tok.ch === " " || tok.ch === null;
+          if (isSpace) {
+            if (current.length) { groups.push({ type: "word", items: current }); current = []; }
+            groups.push({ type: "space", items: [{ tok, ti }] });
+          } else {
+            current.push({ tok, ti });
+          }
+        });
+        if (current.length) groups.push({ type: "word", items: current });
+
+        const renderChar = ({ tok, ti }) => {
+          const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
+          return (
+            <span
+              key={ti}
+              onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
+              style={{
+                position: "relative", display: "inline-block", paddingTop: topPad,
+                cursor: editable ? "pointer" : "default", width: "1ch",
+              }}
+            >
+              {/* Chord/tag slot — shows inline input when editing, otherwise chord label */}
+              {isEditingThis ? (
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => closeEditor(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.currentTarget.blur(); }
+                    if (e.key === "Escape") closeEditor(false);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    position: "absolute", top: 0, left: 0,
+                    width: Math.max(tagSize * 3, 40), fontSize: tagSize,
+                    fontFamily: MONO, fontWeight: 800,
+                    color: brightTags ? "#FFFFFF" : accent,
+                    background: "transparent", border: "none", outline: "none",
+                    padding: 0, margin: 0, lineHeight: 1,
+                    caretColor: accent,
+                  }}
+                />
+              ) : tok.tag ? (
+                <span style={{
+                  position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
+                  fontSize: tagSize, fontWeight: bold ? 800 : 600,
+                  color: brightTags ? "#FFFFFF" : accent,
+                  opacity: 1,
+                }}>
+                  {flatify(tok.tag)}
+                </span>
+              ) : editable ? (
+                /* Empty slot tap target — shows a faint + when in edit mode */
+                <span style={{
+                  position: "absolute", top: 0, left: 0,
+                  fontSize: tagSize, fontWeight: 800,
+                  color: `${accent}44`,
+                  lineHeight: 1,
+                  userSelect: "none",
+                }}>+</span>
+              ) : null}
+              <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: bold ? 700 : 400 }}>
+                {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
+              </span>
+            </span>
+          );
+        };
+
         return (
           <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)) }}>
-            {tokens.map((tok, ti) => {
-              const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
-              const isSpace = tok.ch === " " || tok.ch === null;
-              return (
-                <span key={ti}>
-                  <span
-                    onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
-                    style={{
-                      position: "relative", display: "inline-block", paddingTop: topPad,
-                      cursor: editable ? "pointer" : "default", minWidth: tok.ch === null ? fontSize * 0.4 : undefined,
-                    }}
-                  >
-                    {/* Chord/tag slot — shows inline input when editing, otherwise chord label */}
-                    {isEditingThis ? (
-                      <input
-                        autoFocus
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onBlur={() => closeEditor(true)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") { e.currentTarget.blur(); }
-                          if (e.key === "Escape") closeEditor(false);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          position: "absolute", top: 0, left: 0,
-                          width: Math.max(tagSize * 3, 40), fontSize: tagSize,
-                          fontFamily: MONO, fontWeight: 800,
-                          color: brightTags ? "#FFFFFF" : accent,
-                          background: "transparent", border: "none", outline: "none",
-                          padding: 0, margin: 0, lineHeight: 1,
-                          caretColor: accent,
-                        }}
-                      />
-                    ) : tok.tag ? (
-                      <span style={{
-                        position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
-                        fontSize: tagSize, fontWeight: 800,
-                        color: brightTags ? "#FFFFFF" : accent,
-                        opacity: 1,
-                      }}>
-                        {flatify(tok.tag)}
-                      </span>
-                    ) : editable ? (
-                      /* Empty slot tap target — shows a faint + when in edit mode */
-                      <span style={{
-                        position: "absolute", top: 0, left: 0,
-                        fontSize: tagSize, fontWeight: 800,
-                        color: `${accent}44`,
-                        lineHeight: 1,
-                        userSelect: "none",
-                      }}>+</span>
-                    ) : null}
-                    <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible") }}>
-                      {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
-                    </span>
-                  </span>
-                  {/* Break opportunity: after space/null and after punctuation */}
-                  {(isSpace || /[,\.!?;:]/.test(tok.ch)) && <wbr />}
+            {groups.map((g, gi) => (
+              g.type === "word" ? (
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap" }}>
+                  {g.items.map(renderChar)}
                 </span>
-              );
-            })}
+              ) : (
+                <span key={gi}>
+                  {g.items.map(renderChar)}
+                  <wbr />
+                </span>
+              )
+            ))}
           </div>
         );
       })}
@@ -2286,7 +2314,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
                   {sec.lyrics || "\u2014"}
                 </pre>
               ) : (
-                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} C={C} />
+                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} bold={bold} C={C} />
               )}
             </div>
           );
@@ -2535,17 +2563,17 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
 
           <SectionLabel>DISPLAY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-            <Field label="TEXT SIZE">
+            <Field label="LYRICS SIZE">
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
                   <button onClick={() => setFontSize((f) => Math.max(14, f - 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
                   <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
-                  <button onClick={() => setFontSize((f) => Math.min(40, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button onClick={() => setFontSize((f) => Math.min(80, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
                 <button onClick={() => setBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${bold ? C.accent : C.border}`, background: bold ? C.accentSoft : C.surface3, color: bold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
             </Field>
-            <Field label="CHORD/NOTE SIZE">
+            <Field label="NOTES SIZE">
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
                   <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
@@ -2585,7 +2613,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
-                    accent={C.accent} C={C}
+                    accent={C.accent} bold={bold} C={C}
                   />
                 )}
               </div>
@@ -2672,7 +2700,42 @@ function BottomNav({ active, onChange, mode, C }) {
 /* =========================================================================
    Root
    ========================================================================= */
-export default function App() {
+/* =========================================================================
+   Error boundary — a JS error thrown during render (e.g. from an audio
+   glitch after playing the metronome/piano) previously unmounted the whole
+   React tree, which also removed the <style> tag that paints html/body,
+   leaving a blank grey page behind. This catches render errors and shows
+   a small recoverable fallback instead of going blank.
+   ========================================================================= */
+class AppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error, info) { console.error("Altar crashed:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "#000", color: "#fff",
+          fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 16, padding: 24, textAlign: "center", boxSizing: "border-box",
+        }}>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Something went wrong</div>
+          <div style={{ fontSize: 13.5, color: "#98989D" }}>A playback glitch interrupted the app. Tap below to recover.</div>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            style={{ padding: "12px 24px", borderRadius: 12, border: "none", background: "#0A84FF", color: "#fff", fontFamily: "inherit", fontSize: 15, fontWeight: 700 }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppInner() {
   const [songs, setSongs] = useIndexedDbState("songs", SEED_SONGS);
   const [setlists, setSetlists] = useIndexedDbState("setlists", SEED_SETLISTS);
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 22);
