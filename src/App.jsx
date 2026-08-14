@@ -1515,7 +1515,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
    precede. Used for the Drums/Chords tabs of the Add/Edit Song form and
    for the song-view chart itself.
    ========================================================================= */
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold }) {
+function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
@@ -1617,7 +1617,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   color: brightTags ? "#FFFFFF" : accent,
                   opacity: 1,
                 }}>
-                  {flatify(tok.tag)}
+                  {flattenTags ? flatify(tok.tag) : tok.tag}
                 </span>
               ) : editable ? (
                 /* Empty slot tap target — shows a faint + when in edit mode */
@@ -1888,7 +1888,7 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: "2.3em", textAlign }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, letterSpacing: "normal" }}>
       {lines.map((line, li) => {
         const chordTags = [], drumTags = [];
         let idx = 0;
@@ -1901,7 +1901,7 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
         const activeTagsArr = tagType === "chords" ? chordTags : drumTags;
 
         return (
-          <div key={li} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", whiteSpace: "pre-wrap", wordBreak: "keep-all", hyphens: "none" }}>
+          <div key={li} style={{ whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }}>
             {Array.from({ length: chars.length + 1 }).map((_, ci) => {
               const isEditing = activeCell && activeCell.lineIdx === li && activeCell.charIdx === ci;
               const value = activeTagsArr[ci] || "";
@@ -1909,12 +1909,13 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
               const char = chars[ci] || ""; // character after this slot
 
               return (
-                <span key={ci} style={{ display: "inline-flex", alignItems: "center", position: "relative" }}>
+                <span key={ci} style={{ position: "relative" }}>
                   {isEditing ? (
                     <input
                       autoFocus
                       type="text"
                       value={value}
+                      size={Math.max(1, value.length || 1)}
                       onChange={(e) => handleUpdate(li, ci, e.target.value)}
                       onBlur={() => setActiveCell(null)}
                       onKeyDown={(e) => {
@@ -1936,40 +1937,34 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
                       style={{
                         background: "transparent",
                         border: "none",
-                        borderBottom: `1.5px solid ${accent}`,
-                        color: accent,
-                        fontFamily: MONO,
-                        fontWeight: notesBold ? 800 : 700,
-                        fontSize: tagFontSize,
-                        padding: "1px 2px",
-                        margin: "0 1px",
-                        width: Math.max(22, value.length * 8.5 + 8),
                         outline: "none",
-                        textAlign: "center",
-                        height: 20,
-                        boxSizing: "border-box",
+                        boxShadow: "none",
+                        color: accent,
+                        caretColor: accent,
+                        fontFamily: MONO,
+                        fontWeight: lyricsBold ? 700 : 400,
+                        fontSize,
+                        padding: 0,
+                        margin: 0,
+                        letterSpacing: "normal",
+                        verticalAlign: "baseline",
+                        lineHeight: "inherit",
                       }}
                     />
                   ) : hasVal ? (
                     <span
                       onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
-                      style={{
-                        color: accent,
-                        fontWeight: notesBold ? 800 : 700,
-                        fontSize: tagFontSize,
-                        cursor: "pointer",
-                        userSelect: "none",
-                        margin: "0 1px",
-                        lineHeight: "1.2em",
-                      }}
+                      style={{ color: accent, fontWeight: lyricsBold ? 700 : 400, cursor: "pointer", userSelect: "none" }}
                     >
                       {tagType === "chords" ? flatify(value) : value}
                     </span>
                   ) : (
                     <span
                       onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
-                      style={{ display: "inline-block", width: 6, height: "1em", cursor: "pointer" }}
-                    />
+                      style={{ cursor: "text" }}
+                    >
+                      {"\u200B"}
+                    </span>
                   )}
                   {char && (
                     <span
@@ -1998,6 +1993,25 @@ const SECTION_TABS = [
   { id: "chords", label: "Chords" },
   { id: "drums", label: "Drums" },
 ];
+function AutoGrowTextarea({ value, onChange, style, ...rest }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      style={{ ...style, overflow: "hidden", resize: "none" }}
+      {...rest}
+    />
+  );
+}
+
 function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mode, fontSize = 22, chordFontSize = 16, lyricsBold = false, notesBold = false, lineSpacing = 1.75, textAlign = "left", C }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [artist, setArtist] = useState(initial?.artist ?? "");
@@ -2159,9 +2173,9 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                 </div>
 
                 {sectionTab === "lyrics" ? (
-                  <textarea value={sec.lyrics} onChange={(e) => updateSectionLyrics(sec.id, e.target.value)}
+                  <AutoGrowTextarea value={sec.lyrics} onChange={(e) => updateSectionLyrics(sec.id, e.target.value)}
                     placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
+                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
                 ) : (
                   <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, overflowX: "hidden" }}>
                     <SectionChordEditor
@@ -2400,7 +2414,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [showLyrics, setShowLyrics] = useState(true);
-  const [nashvilleMode, setNashvilleMode] = useState(false);
+  const [nashvilleMode, setNashvilleMode] = useState(true);
 
   const showBottomBar = mode === "drums" && !!engine;
 
@@ -2429,8 +2443,8 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const sectionField = mode === "drums" ? "drums" : mode === "chords" ? "chords" : "lyrics";
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
-      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}` }}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
+      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
@@ -2451,11 +2465,11 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
-          <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={16} /></button>
-          <button onClick={() => setNashvilleMode(!nashvilleMode)} style={keyButtonStyle}>
-            {nashvilleMode ? "123" : flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
+          <button onClick={() => stepKey(-1)} disabled={nashvilleMode} style={{ ...chevronBtn, cursor: nashvilleMode ? "default" : "pointer" }}><ChevronLeft size={16} /></button>
+          <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
+            {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
           </button>
-          <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={16} /></button>
+          <button onClick={() => stepKey(1)} disabled={nashvilleMode} style={{ ...chevronBtn, cursor: nashvilleMode ? "default" : "pointer" }}><ChevronRight size={16} /></button>
         </div>
       )}
 
@@ -2478,7 +2492,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
               {isVocals ? (
                 <ChordText text={sec.lyrics} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} emptyHint="\u2014" />
               ) : (
-                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} />
+                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords"} C={C} />
               )}
             </div>
           );
@@ -2780,7 +2794,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 ) : (
                   <ChordText
                     text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
-                    editable={false} dim={true} showLyrics={true} brightTags={true}
+                    editable={false} dim={true} showLyrics={true} brightTags={true} flattenTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C}
                   />
