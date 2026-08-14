@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, Component } from "react";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Upload, Download, ClipboardPaste,
+  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy,
 } from "lucide-react";
 import { syncLibrary } from "./bandSync";
 
@@ -306,8 +306,8 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     sections: [
-      { id: uid(), label: "Verse", lyrics: "You call me out upon the waters\nThe great unknown where feet may fail", chords: "[D]You call me [G]out upon the [A]waters\nThe [Bm]great unknown where [G]feet may [A]fail", drums: "[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K]kick [S]snare [H]hi-hat" },
-      { id: uid(), label: "Chorus", lyrics: "And I will call upon Your name\nAnd keep my eyes above the waves", chords: "[D]And I will [A]call upon Your [Bm]name\nAnd [G]keep my eyes a[A]bove the [D]waves", drums: "[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K][K]double kick on beat 3" },
+      { id: uid(), label: "Verse", lyrics: "You call me out upon the waters\nThe great unknown where feet may fail", chords: "[D]You call me [G]out upon the [A]waters\nThe [Bm]great unknown where [G]feet may [A]fail", drums: "[Half-time]You call me out upon the waters\nThe great unknown where feet may fail" },
+      { id: uid(), label: "Chorus", lyrics: "And I will call upon Your name\nAnd keep my eyes above the waves", chords: "[D]And I will [A]call upon Your [Bm]name\nAnd [G]keep my eyes a[A]bove the [D]waves", drums: "And I will call upon Your name\nAnd keep my eyes a[Double Kick]bove the waves" },
     ],
   },
   {
@@ -315,14 +315,14 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     sections: [
-      { id: uid(), label: "Chorus", lyrics: "Way maker, miracle worker, promise keeper", chords: "[E]Way maker, [A]miracle worker, [C#m]promise [B]keeper", drums: "[K]1 [H]and [S]2 [H]and [K]3 [H]and [S]4 [H]and\nShuffle groove — swing 8ths" },
+      { id: uid(), label: "Chorus", lyrics: "Way maker, miracle worker, promise keeper", chords: "[E]Way maker, [A]miracle worker, [C#m]promise [B]keeper", drums: "[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper" },
     ],
   },
   {
     id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    sections: [{ id: uid(), label: "Verse", lyrics: "Into the darkness You shine", chords: "[A]Into the [E]darkness You [F#m]shine", drums: "[K]1 [H]e [S]2 [H]e [K][K]3 [H]e [S]4 [H]e\nRock groove — hard accent on beat 3" }],
+    sections: [{ id: uid(), label: "Verse", lyrics: "Into the darkness You shine", chords: "[A]Into the [E]darkness You [F#m]shine", drums: "Into the darkness You [Double Kick]shine" }],
   },
 ];
 const SEED_SETLISTS = [{
@@ -367,7 +367,7 @@ function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, typ
   );
 }
 
-function TimeSigPicker({ value, onChange, fullWidth, height = 44, C }) {
+function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, C }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const btnRef = useRef(null);
@@ -381,7 +381,7 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, C }) {
     setOpen((o) => !o);
   };
   return (
-    <div style={{ position: "relative", width: fullWidth ? "100%" : undefined }}>
+    <div style={{ position: "relative", width: fullWidth ? "100%" : undefined, boxSizing: "border-box", ...style }}>
       <button
         ref={btnRef} type="button" onClick={handleToggle}
         style={{
@@ -548,6 +548,109 @@ function mergeLyricsWithTags(lyricsText, taggedText) {
     if (tags[line.length]) out += `[${tags[line.length]}]`;
     return out;
   }).join("\n");
+}
+
+/* =========================================================================
+   Unified section content — a single string per section holds lyrics plus
+   BOTH tag types inline: [Chord] for chords, <Drum> for drum notes, each
+   attached to the character immediately following it. This lets the
+   Add/Edit form store one canonical string per section ("<Basic>[G]All to
+   [C]Jesus...") while Chords/Drums/Vocals modes each derive their own
+   [Tag]-only view from it (reusing the existing ChordText/ tag pipeline).
+   ========================================================================= */
+function tokenizeContentLine(rawLine) {
+  const line = String(rawLine || "").replace(/^ +/, "");
+  const tokens = [];
+  let i = 0;
+  let pendingChord = null, pendingDrum = null;
+  while (i < line.length) {
+    if (line[i] === "[") {
+      const end = line.indexOf("]", i);
+      if (end === -1) { tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum }); pendingChord = null; pendingDrum = null; i++; continue; }
+      pendingChord = line.slice(i + 1, end);
+      i = end + 1;
+      continue;
+    }
+    if (line[i] === "<") {
+      const end = line.indexOf(">", i);
+      if (end === -1) { tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum }); pendingChord = null; pendingDrum = null; i++; continue; }
+      pendingDrum = line.slice(i + 1, end);
+      i = end + 1;
+      continue;
+    }
+    tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum });
+    pendingChord = null; pendingDrum = null;
+    i++;
+  }
+  if (pendingChord !== null || pendingDrum !== null) tokens.push({ ch: null, chordTag: pendingChord, drumTag: pendingDrum });
+  return tokens;
+}
+function contentToLyricsPlain(content) {
+  return String(content || "").split("\n").map((line) => tokenizeContentLine(line).filter((t) => t.ch !== null).map((t) => t.ch).join("")).join("\n");
+}
+function contentToChordsTagged(content) {
+  return String(content || "").split("\n").map((line) => {
+    let out = "";
+    tokenizeContentLine(line).forEach((t) => {
+      if (t.chordTag) out += `[${t.chordTag}]`;
+      if (t.ch !== null) out += t.ch;
+    });
+    return out;
+  }).join("\n");
+}
+function contentToDrumsTagged(content) {
+  return String(content || "").split("\n").map((line) => {
+    let out = "";
+    tokenizeContentLine(line).forEach((t) => {
+      if (t.drumTag) out += `[${t.drumTag}]`;
+      if (t.ch !== null) out += t.ch;
+    });
+    return out;
+  }).join("\n");
+}
+function mergeLegacyToContent(lyricsText, chordsText, drumsText) {
+  const lyricLines = String(lyricsText || "").split("\n");
+  const chordTagLines = extractTagsByIndex(chordsText);
+  const drumTagLines = extractTagsByIndex(drumsText);
+  return lyricLines.map((line, li) => {
+    const chordTags = chordTagLines[li] || [];
+    const drumTags = drumTagLines[li] || [];
+    let out = "";
+    for (let i = 0; i < line.length; i++) {
+      if (drumTags[i]) out += `<${drumTags[i]}>`;
+      if (chordTags[i]) out += `[${chordTags[i]}]`;
+      out += line[i];
+    }
+    if (drumTags[line.length]) out += `<${drumTags[line.length]}>`;
+    if (chordTags[line.length]) out += `[${chordTags[line.length]}]`;
+    return out;
+  }).join("\n");
+}
+function resyncContentWithLyrics(content, newLyricsText) {
+  const oldLines = String(content || "").split("\n");
+  const newLines = String(newLyricsText || "").split("\n");
+  const maxLen = Math.max(oldLines.length, newLines.length);
+  const outLines = [];
+  for (let li = 0; li < maxLen; li++) {
+    const chordTags = [], drumTags = [];
+    let idx = 0;
+    tokenizeContentLine(oldLines[li] || "").forEach((t) => {
+      if (t.chordTag) chordTags[idx] = t.chordTag;
+      if (t.drumTag) drumTags[idx] = t.drumTag;
+      if (t.ch !== null) idx++;
+    });
+    const newLine = newLines[li] || "";
+    let out = "";
+    for (let i = 0; i < newLine.length; i++) {
+      if (drumTags[i]) out += `<${drumTags[i]}>`;
+      if (chordTags[i]) out += `[${chordTags[i]}]`;
+      out += newLine[i];
+    }
+    if (drumTags[newLine.length]) out += `<${drumTags[newLine.length]}>`;
+    if (chordTags[newLine.length]) out += `[${chordTags[newLine.length]}]`;
+    outLines.push(out);
+  }
+  return outLines.join("\n");
 }
 
 /* =========================================================================
@@ -1230,7 +1333,7 @@ function dotColor(state, lit, C) {
   if (state === "accent") return lit ? C.accent : C.accentDim;
   return lit ? "#fff" : C.surface3;
 }
-function BeatAccentControl({ count, flashBeat, accents, onChange, size = 9, C }) {
+function BeatAccentControl({ count, flashBeat, accents, onChange, size = 9, openUpwardOnly, C }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [hAlign, setHAlign] = useState("center"); // "center" | "left" | "right" — keeps the popup on-screen horizontally
@@ -1246,7 +1349,9 @@ function BeatAccentControl({ count, flashBeat, accents, onChange, size = 9, C })
     onChange(nextPattern);
   };
   const handleOpen = () => {
-    if (btnRef.current) {
+    if (openUpwardOnly) {
+      setOpenUpward(true);
+    } else if (btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
@@ -1367,7 +1472,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         ) : (
           <>
             <div style={{ fontSize: 18, fontWeight: 600 }}>Metronome</div>
-            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>Metronome & BH</div>
+            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>BH</div>
           </>
         )}
       </div>
@@ -1392,9 +1497,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 320 }}>
-        <div style={{ flex: 1, alignSelf: "stretch", height: 58 }}>
-          <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} C={C} />
-        </div>
+        <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ flex: 1, alignSelf: "stretch" }} C={C} />
         <button onClick={cycleSubdivision} style={{ flex: 1, height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <SubdivisionIcon value={subdivision} size={19} color={C.text} />
         </button>
@@ -1755,44 +1858,55 @@ function serializeLine(lyrics, insertions) {
   return out;
 }
 
-function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent, fontSize = 15, tagFontSize = 13, lyricsBold = false, notesBold = false, textAlign = "left" }) {
-  const lyricLines = String(lyricsText || "").split("\n");
-  const taggedLines = String(taggedText || "").split("\n");
+function SectionChordEditor({ content, onChangeContent, tagType, C, accent, fontSize = 15, tagFontSize = 13, lyricsBold = false, notesBold = false, textAlign = "left" }) {
+  const lines = String(content || "").split("\n");
   const [activeCell, setActiveCell] = useState(null); // { lineIdx, charIdx }
 
-  if (!lyricsText || lyricsText.trim() === "") {
-    return (
-      <div style={{ color: C.textMuted, fontSize: 13.5, fontStyle: "italic", padding: "10px 0" }}>
-        Please type lyrics in the Lyrics tab first.
-      </div>
-    );
-  }
-
   const handleUpdate = (lineIdx, charIdx, value) => {
-    const nextLines = lyricLines.map((line, li) => {
-      const taggedLine = taggedLines[li] || "";
-      const { insertions } = parseLine(taggedLine, line);
-      if (li === lineIdx) {
-        insertions[charIdx] = value;
+    const nextLines = lines.map((line, li) => {
+      if (li !== lineIdx) return line;
+      const chordTags = [], drumTags = [];
+      let idx = 0;
+      const chars = [];
+      tokenizeContentLine(line).forEach((t) => {
+        if (t.chordTag) chordTags[idx] = t.chordTag;
+        if (t.drumTag) drumTags[idx] = t.drumTag;
+        if (t.ch !== null) { chars.push(t.ch); idx++; }
+      });
+      if (tagType === "chords") chordTags[charIdx] = value; else drumTags[charIdx] = value;
+      let out = "";
+      for (let i = 0; i < chars.length; i++) {
+        if (drumTags[i]) out += `<${drumTags[i]}>`;
+        if (chordTags[i]) out += `[${chordTags[i]}]`;
+        out += chars[i];
       }
-      return serializeLine(line, insertions);
+      if (drumTags[chars.length]) out += `<${drumTags[chars.length]}>`;
+      if (chordTags[chars.length]) out += `[${chordTags[chars.length]}]`;
+      return out;
     });
-    onChange(nextLines.join("\n"));
+    onChangeContent(nextLines.join("\n"));
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: "2.3em", textAlign }}>
-      {lyricLines.map((line, li) => {
-        const taggedLine = taggedLines[li] || "";
-        const { insertions } = parseLine(taggedLine, line);
+      {lines.map((line, li) => {
+        const chordTags = [], drumTags = [];
+        let idx = 0;
+        const chars = [];
+        tokenizeContentLine(line).forEach((t) => {
+          if (t.chordTag) chordTags[idx] = t.chordTag;
+          if (t.drumTag) drumTags[idx] = t.drumTag;
+          if (t.ch !== null) { chars.push(t.ch); idx++; }
+        });
+        const activeTagsArr = tagType === "chords" ? chordTags : drumTags;
 
         return (
           <div key={li} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", whiteSpace: "pre-wrap", wordBreak: "keep-all", hyphens: "none" }}>
-            {Array.from({ length: line.length + 1 }).map((_, ci) => {
+            {Array.from({ length: chars.length + 1 }).map((_, ci) => {
               const isEditing = activeCell && activeCell.lineIdx === li && activeCell.charIdx === ci;
-              const value = insertions[ci] || "";
+              const value = activeTagsArr[ci] || "";
               const hasVal = value !== "";
-              const char = line[ci] || ""; // character after this slot
+              const char = chars[ci] || ""; // character after this slot
 
               return (
                 <span key={ci} style={{ display: "inline-flex", alignItems: "center", position: "relative" }}>
@@ -1809,33 +1923,27 @@ function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent, fontS
                           setActiveCell(null);
                         } else if (e.key === "ArrowLeft" && e.target.selectionStart === 0) {
                           e.preventDefault();
-                          if (ci > 0) {
-                            setActiveCell({ lineIdx: li, charIdx: ci - 1 });
-                          }
+                          if (ci > 0) setActiveCell({ lineIdx: li, charIdx: ci - 1 });
                         } else if (e.key === "ArrowRight" && e.target.selectionEnd === e.target.value.length) {
                           e.preventDefault();
-                          if (ci < line.length) {
-                            setActiveCell({ lineIdx: li, charIdx: ci + 1 });
-                          }
+                          if (ci < chars.length) setActiveCell({ lineIdx: li, charIdx: ci + 1 });
                         } else if (e.key === "Backspace" && e.target.value === "") {
                           e.preventDefault();
                           handleUpdate(li, ci, "");
-                          if (ci > 0) {
-                            setActiveCell({ lineIdx: li, charIdx: ci - 1 });
-                          }
+                          if (ci > 0) setActiveCell({ lineIdx: li, charIdx: ci - 1 });
                         }
                       }}
                       style={{
-                        background: C.surface2,
-                        border: `1.5px solid ${accent}`,
-                        borderRadius: 6,
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: `1.5px solid ${accent}`,
                         color: accent,
                         fontFamily: MONO,
-                        fontWeight: "bold",
-                        fontSize: 13.5,
-                        padding: "1px 4px",
-                        margin: "0 2px",
-                        width: Math.max(34, value.length * 8.5 + 10),
+                        fontWeight: notesBold ? 800 : 700,
+                        fontSize: tagFontSize,
+                        padding: "1px 2px",
+                        margin: "0 1px",
+                        width: Math.max(22, value.length * 8.5 + 8),
                         outline: "none",
                         textAlign: "center",
                         height: 20,
@@ -1844,49 +1952,29 @@ function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent, fontS
                     />
                   ) : hasVal ? (
                     <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveCell({ lineIdx: li, charIdx: ci });
-                      }}
+                      onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
                       style={{
-                        color: "#fff",
-                        background: accent,
-                        fontWeight: notesBold ? 800 : "bold",
+                        color: accent,
+                        fontWeight: notesBold ? 800 : 700,
                         fontSize: tagFontSize,
-                        padding: "1px 5px",
-                        borderRadius: 5,
                         cursor: "pointer",
-                        margin: "0 2.5px",
                         userSelect: "none",
+                        margin: "0 1px",
                         lineHeight: "1.2em",
                       }}
                     >
-                      {flatify(value)}
+                      {tagType === "chords" ? flatify(value) : value}
                     </span>
                   ) : (
                     <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveCell({ lineIdx: li, charIdx: ci });
-                      }}
-                      style={{
-                        display: "inline-block",
-                        width: 8,
-                        textAlign: "center",
-                        cursor: "pointer",
-                        color: `${accent}40`,
-                        fontWeight: "bold",
-                        fontSize: 12,
-                        userSelect: "none",
-                      }}
-                    >
-                      ·
-                    </span>
+                      onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
+                      style={{ display: "inline-block", width: 6, height: "1em", cursor: "pointer" }}
+                    />
                   )}
                   {char && (
                     <span
                       onClick={() => setActiveCell({ lineIdx: li, charIdx: ci + 1 })}
-                      style={{ color: C.text, cursor: "text", userSelect: "none" }}
+                      style={{ color: C.textMuted, cursor: "text", userSelect: "none" }}
                     >
                       {char === " " ? "\u00A0" : char}
                     </span>
@@ -1907,8 +1995,8 @@ function SectionChordEditor({ lyricsText, taggedText, onChange, C, accent, fontS
    ========================================================================= */
 const SECTION_TABS = [
   { id: "lyrics", label: "Lyrics" },
-  { id: "drums", label: "Drums" },
   { id: "chords", label: "Chords" },
+  { id: "drums", label: "Drums" },
 ];
 function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mode, fontSize = 22, chordFontSize = 16, lyricsBold = false, notesBold = false, lineSpacing = 1.75, textAlign = "left", C }) {
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -1921,7 +2009,10 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
   const [keyQuality, setKeyQuality] = useState(initial?.keyQuality ?? "Major");
   const [language, setLanguage] = useState(initial?.language ?? "English");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [sections, setSections] = useState(initial?.sections?.map((s) => ({ id: s.id, label: s.label, lyrics: s.lyrics ?? "", drums: s.drums ?? "", chords: s.chords ?? "" })) ?? [{ id: uid(), label: "Verse", lyrics: "", drums: "", chords: "" }]);
+  const [sections, setSections] = useState(initial?.sections?.map((s) => {
+    const content = s.content ?? mergeLegacyToContent(s.lyrics ?? "", s.chords ?? "", s.drums ?? "");
+    return { id: s.id, label: s.label, content, lyrics: s.lyrics ?? "", drums: s.drums ?? "", chords: s.chords ?? "" };
+  }) ?? [{ id: uid(), label: "Verse", content: "", lyrics: "", drums: "", chords: "" }]);
   const [accents, setAccents] = useState(initial?.accents ?? defaultAccents(4));
   const [subdivision, setSubdivision] = useState(initial?.subdivision ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1962,7 +2053,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
       if (fields.timeSignature !== undefined) { const m = fields.timeSignature.match(/^(\d+)\s*\/\s*(\d+)$/); if (m) setTimeSig({ beats: parseInt(m[1], 10), unit: parseInt(m[2], 10) }); }
       if (fields.key !== undefined) { const pk = parseKeyPaste(fields.key); if (pk) { setKeyNatural(pk.natural); setKeyAccidental(pk.accidental); setKeyQuality(pk.quality); } }
       if (fields.description !== undefined) setDescription(fields.description);
-      if (parsedSections.length) setSections(parsedSections);
+      if (parsedSections.length) setSections(parsedSections.map((s) => ({ ...s, content: mergeLegacyToContent(s.lyrics, s.chords, s.drums) })));
       setError("");
     } catch {
       setError("Couldn't read clipboard");
@@ -1977,8 +2068,16 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
   const handleTimeSigChange = (ts) => { setTimeSig(ts); const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats; setAccents(defaultAccents(effBeats)); };
 
   const updateSection = (id, field, value) => setSections((secs) => secs.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
+  const updateSectionLyrics = (id, newLyrics) => setSections((secs) => secs.map((s) => {
+    if (s.id !== id) return s;
+    const content = resyncContentWithLyrics(s.content, newLyrics);
+    return { ...s, content, lyrics: newLyrics, chords: contentToChordsTagged(content), drums: contentToDrumsTagged(content) };
+  }));
+  const updateSectionContent = (id, newContent) => setSections((secs) => secs.map((s) => (
+    s.id === id ? { ...s, content: newContent, lyrics: contentToLyricsPlain(newContent), chords: contentToChordsTagged(newContent), drums: contentToDrumsTagged(newContent) } : s
+  )));
   const removeSection = (id) => setSections((secs) => secs.filter((s) => s.id !== id));
-  const addSection = () => setSections((secs) => [...secs, { id: uid(), label: "", lyrics: "", drums: "", chords: "" }]);
+  const addSection = () => setSections((secs) => [...secs, { id: uid(), label: "", content: "", lyrics: "", drums: "", chords: "" }]);
 
   const handleSave = () => {
     const cleanTitle = toTitleCase(title.trim());
@@ -1992,7 +2091,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: composeKey(keyNatural, keyAccidental), keyQuality, language, description, accents, subdivision,
-      sections: sections.length ? sections : [{ id: uid(), label: "Verse", lyrics: "", drums: "", chords: "" }],
+      sections: sections.length ? sections : [{ id: uid(), label: "Verse", content: "", lyrics: "", drums: "", chords: "" }],
     });
   };
   const canSave = title.trim().length > 0;
@@ -2060,19 +2159,19 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                 </div>
 
                 {sectionTab === "lyrics" ? (
-                  <textarea value={sec.lyrics} onChange={(e) => updateSection(sec.id, "lyrics", e.target.value)}
+                  <textarea value={sec.lyrics} onChange={(e) => updateSectionLyrics(sec.id, e.target.value)}
                     placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: lineSpacing, textAlign, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
+                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", height: "auto", minHeight: 90, resize: "vertical", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
                 ) : (
                   <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, overflowX: "hidden" }}>
                     <SectionChordEditor
-                      lyricsText={sec.lyrics}
-                      taggedText={mergeLyricsWithTags(sec.lyrics, sectionTab === "drums" ? sec.drums : sec.chords)}
-                      onChange={(merged) => updateSection(sec.id, sectionTab, merged)}
+                      content={sec.content}
+                      tagType={sectionTab}
+                      onChangeContent={(next) => updateSectionContent(sec.id, next)}
                       C={C}
                       accent={C.accent}
-                      fontSize={fontSize}
-                      tagFontSize={chordFontSize}
+                      fontSize={15}
+                      tagFontSize={13}
                       lyricsBold={lyricsBold}
                       notesBold={notesBold}
                       textAlign={textAlign}
@@ -2092,17 +2191,25 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
         {confirmDelete ? (
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
             <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.borderStrong}`, background: "transparent", color: C.textMuted }}>Cancel</button>
-            <button onClick={() => onDelete(initial.id)} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff" }}>Confirm Delete</button>
+            <button onClick={() => onDelete(initial.id)} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Trash2 size={16} color="#fff" />Confirm Delete</button>
           </div>
         ) : initial ? (
-          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-            <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger }}>Delete</button>
-            <button disabled={!canSave} onClick={handleSave} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "14px 0", borderRadius: 12, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint }}>SAVE</button>
-            <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text }}>Copy</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+            <button disabled={!canSave} onClick={handleSave} style={{ fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Check size={17} color={canSave ? "#fff" : C.textFaint} />SAVE
+            </button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <Trash2 size={15} color={C.danger} />Delete
+              </button>
+              <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <Copy size={15} color={C.text} />Duplicate
+              </button>
+            </div>
           </div>
         ) : (
-          <button disabled={!canSave} onClick={handleSave} style={{ marginTop: 8, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint }}>
-            SAVE
+          <button disabled={!canSave} onClick={handleSave} style={{ marginTop: 8, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Check size={17} color={canSave ? "#fff" : C.textFaint} />SAVE
           </button>
         )}
       </div>
@@ -2379,25 +2486,25 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}`, gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "start" }}>
-            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
-            <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
-            </button>
+        <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: 8, padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} openUpwardOnly size={7} C={C} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8, justifySelf: "center", minWidth: 100 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "0 8px" }}>
-              <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "start" }}>
+              <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
+              <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
+              </button>
             </div>
-            <button onClick={engine.toggle} style={{ height: 44, borderRadius: 12, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <button onClick={engine.toggle} style={{ width: 56, height: 44, borderRadius: 12, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, justifySelf: "center" }}>
               {engine.playing ? <Square size={20} color={C.accent} fill={C.accent} /> : <Play size={20} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
             </button>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
-            <button {...decBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-            <div style={{ fontSize: 17, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 32, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
-            <button {...incBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
+              <button {...decBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+              <div style={{ fontSize: 17, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 32, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
+              <button {...incBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+            </div>
           </div>
         </div>
       )}
@@ -2586,14 +2693,18 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
     setToneIndex(next);
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
   };
+  const decLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.max(14, f - 1)));
+  const incLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.min(80, f + 1)));
+  const decNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.max(8, f - 1)));
+  const incNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.min(80, f + 1)));
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
-        <div style={{ fontSize: 26, fontWeight: 700, maxWidth: 800, margin: "0 auto" }}>Settings</div>
+        <div style={{ fontSize: 26, fontWeight: 700, width: "100%", margin: "0 auto" }}>Settings</div>
       </div>
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px", boxSizing: "border-box" }}>
-        <div style={{ width: "100%", maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: "100%", margin: "0 auto", display: "flex", flexDirection: "column" }}>
 
           <SectionLabel>MODE</SectionLabel>
           <div style={{ display: "flex", gap: 8, marginBottom: 26, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 4 }}>
@@ -2613,9 +2724,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             <Field label="LYRICS SIZE">
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button onClick={() => setFontSize((f) => Math.max(14, f - 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <button {...decLyricsSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
                   <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
-                  <button onClick={() => setFontSize((f) => Math.min(80, f + 2))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button {...incLyricsSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
                 <button onClick={() => setLyricsBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${lyricsBold ? C.accent : C.border}`, background: lyricsBold ? C.accentSoft : C.surface3, color: lyricsBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
@@ -2623,9 +2734,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             <Field label="NOTES SIZE">
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button onClick={() => setChordFontSize((f) => Math.max(8, f - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <button {...decNotesSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
                   <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
-                  <button onClick={() => setChordFontSize((f) => Math.min(80, f + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button {...incNotesSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
                 <button onClick={() => setNotesBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${notesBold ? C.accent : C.border}`, background: notesBold ? C.accentSoft : C.surface3, color: notesBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
               </div>
@@ -2661,7 +2772,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                   />
                 ) : mode === "drums" ? (
                   <ChordText
-                    text={"[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K]kick [S]snare [H]hi-hat"}
+                    text={"[Half-time]Way maker, miracle worker,\npromise keeper, [Double Kick]light in the darkness"}
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C}
