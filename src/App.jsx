@@ -139,7 +139,7 @@ const DEFAULT_CLICK_SETTINGS = { clickTone: "classic", pan: "center" };
 const DEFAULT_PIANO_SETTINGS = { pianoTone: "grand" };
 const LANGUAGES = [
   { id: "English", label: "English" },
-  { id: "Tamil", label: "Tamil" },
+  { id: "Tamil", label: "தமிழ்" },
 ];
 
 /* =========================================================================
@@ -253,7 +253,8 @@ function dedupeTitle(candidateTitle, artist, existingSongs) {
    A tag applies to the character immediately following it; a tag with no
    following character (end of line) is a trailing tag.
    ========================================================================= */
-function tokenizeTaggedLine(line) {
+function tokenizeTaggedLine(rawLine) {
+  const line = String(rawLine || "").replace(/^ +/, "");
   const tokens = [];
   let i = 0;
   let pendingTag = null;
@@ -305,8 +306,8 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     sections: [
-      { id: uid(), label: "Verse", lyrics: "You call me out upon the waters\nThe great unknown where feet may fail", chords: "[D]You call me [G]out upon the [A]waters\nThe [Bm]great unknown where [G]feet may [A]fail", drums: "" },
-      { id: uid(), label: "Chorus", lyrics: "And I will call upon Your name\nAnd keep my eyes above the waves", chords: "[D]And I will [A]call upon Your [Bm]name\nAnd [G]keep my eyes a[A]bove the [D]waves", drums: "" },
+      { id: uid(), label: "Verse", lyrics: "You call me out upon the waters\nThe great unknown where feet may fail", chords: "[D]You call me [G]out upon the [A]waters\nThe [Bm]great unknown where [G]feet may [A]fail", drums: "[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K]kick [S]snare [H]hi-hat" },
+      { id: uid(), label: "Chorus", lyrics: "And I will call upon Your name\nAnd keep my eyes above the waves", chords: "[D]And I will [A]call upon Your [Bm]name\nAnd [G]keep my eyes a[A]bove the [D]waves", drums: "[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K][K]double kick on beat 3" },
     ],
   },
   {
@@ -314,14 +315,14 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     sections: [
-      { id: uid(), label: "Chorus", lyrics: "Way maker, miracle worker, promise keeper", chords: "[E]Way maker, [A]miracle worker, [C#m]promise [B]keeper", drums: "" },
+      { id: uid(), label: "Chorus", lyrics: "Way maker, miracle worker, promise keeper", chords: "[E]Way maker, [A]miracle worker, [C#m]promise [B]keeper", drums: "[K]1 [H]and [S]2 [H]and [K]3 [H]and [S]4 [H]and\nShuffle groove — swing 8ths" },
     ],
   },
   {
     id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    sections: [{ id: uid(), label: "Verse", lyrics: "Into the darkness You shine", chords: "[A]Into the [E]darkness You [F#m]shine", drums: "" }],
+    sections: [{ id: uid(), label: "Verse", lyrics: "Into the darkness You shine", chords: "[A]Into the [E]darkness You [F#m]shine", drums: "[K]1 [H]e [S]2 [H]e [K][K]3 [H]e [S]4 [H]e\nRock groove — hard accent on beat 3" }],
   },
 ];
 const SEED_SETLISTS = [{
@@ -554,7 +555,7 @@ function mergeLyricsWithTags(lyricsText, taggedText) {
    ========================================================================= */
 function PianoIcon({ size = 20, color }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <svg width={size} style={{ height: size, width: "auto" }} viewBox="0 0 24 24" fill="none">
       <rect x="4" y="6" width="16" height="12" rx="2" stroke={color} strokeWidth="1.5" />
       <path d="M9.5 6v7M14.5 6v7" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
     </svg>
@@ -562,7 +563,7 @@ function PianoIcon({ size = 20, color }) {
 }
 function GaugeIcon({ size = 20, color }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg width={size} style={{ height: size, width: "auto" }} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 15l3.5-5.5" /><circle cx="12" cy="15" r="1.3" fill={color} stroke="none" />
       <path d="M4 15a8 8 0 1 1 16 0" />
     </svg>
@@ -619,6 +620,7 @@ function useIsLandscapeScreen() {
 function LandscapeLock({ children }) {
   const outerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const isLandscapeScreen = useIsLandscapeScreen();
   useEffect(() => {
     const el = outerRef.current;
     if (!el) return;
@@ -628,6 +630,13 @@ function LandscapeLock({ children }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  if (isLandscapeScreen) {
+    return (
+      <div ref={outerRef} style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: "#000" }}>
+        {children}
+      </div>
+    );
+  }
   return (
     <div ref={outerRef} style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: "#000" }}>
       {size.w > 0 && size.h > 0 && (
@@ -812,7 +821,7 @@ function PianoScreen({ C }) {
           }}>
             <ChevronLeft size={15} />
           </button>
-          <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>C{octaveStart}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
           <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
             color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
@@ -955,8 +964,14 @@ function useMetronomeEngine(settings) {
   }, []);
 
   const setBpm = (v, keepSong = false) => {
-    setBpmState(Math.min(300, Math.max(30, Math.round(v))));
+    const clamped = Math.min(300, Math.max(30, Math.round(v)));
+    setBpmState(clamped);
     if (!keepSong) setLoadedSong(null);
+    if (playing) {
+      bpmRef.current = clamped;
+      stop();
+      start();
+    }
   };
   const setTimeSig = (ts) => {
     setTimeSigState(ts);
@@ -1352,7 +1367,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         ) : (
           <>
             <div style={{ fontSize: 18, fontWeight: 600 }}>Metronome</div>
-            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>Zong</div>
+            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>Metronome & BH</div>
           </>
         )}
       </div>
@@ -1377,7 +1392,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 320 }}>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, alignSelf: "stretch", height: 58 }}>
           <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} C={C} />
         </div>
         <button onClick={cycleSubdivision} style={{ flex: 1, height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1400,7 +1415,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
 function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
-  const lines = String(text || "").split("\n");
+  const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
   const tagGap = Math.max(4, tagSize * 0.28);
@@ -1435,7 +1450,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: "normal", textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing: "normal", hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing: "normal", hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         const tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -1467,6 +1482,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               style={{
                 position: "relative", display: "inline-block", paddingTop: topPad,
                 cursor: editable ? "pointer" : "default", width: "1ch",
+                lineHeight: `${lineHeightMult}em`,
               }}
             >
               {/* Chord/tag slot — shows inline input when editing, otherwise chord label */}
@@ -1518,7 +1534,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         };
 
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)) }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => (
               g.type === "word" ? (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap" }}>
@@ -1592,8 +1608,8 @@ function useSetlistSongSwipe(onPrev, onNext) {
     const dx = dxRef.current;
     draggingRef.current = false; directionRef.current = null; dxRef.current = 0;
     if (wasHorizontal) {
-      if (dx > 70 && onPrev) onPrev();
-      else if (dx < -70 && onNext) onNext();
+      if (dx > 140 && onPrev) onPrev();
+      else if (dx < -140 && onNext) onNext();
     }
   };
   return { dragX: 0, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd } };
@@ -2169,7 +2185,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, mode, C 
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{songs.length} songs</div></div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-              {langFilter}
+              {langFilter === "All" ? "All" : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter)}
             </button>
             <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
           </div>
@@ -2532,7 +2548,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Setlists</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{setlists.length} setlists</div></div>
           <button onClick={onCreate} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
@@ -2643,6 +2659,13 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} C={C}
                   />
+                ) : mode === "drums" ? (
+                  <ChordText
+                    text={"[K]1 [H]e [S]2 [H]e [K]3 [H]e [S]4 [H]e\n[K]kick [S]snare [H]hi-hat"}
+                    editable={false} dim={true} showLyrics={true} brightTags={true}
+                    textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
+                    accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C}
+                  />
                 ) : (
                   <ChordText
                     text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
@@ -2696,7 +2719,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Shared library</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
           </div>
 
-          <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Zong — by Benjamin Hanigraf</div>
+          <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Created by Benjamin Hanigraf</div>
         </div>
       </div>
     </div>
