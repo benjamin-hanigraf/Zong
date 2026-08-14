@@ -2742,7 +2742,7 @@ function BottomNav({ active, onChange, mode, C }) {
    leaving a blank grey page behind. This catches render errors and shows
    a small recoverable fallback instead of going blank.
    ========================================================================= */
-class AppErrorBoundary extends React.Component {
+class AppErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false }; }
   static getDerivedStateFromError() { return { hasError: true }; }
   componentDidCatch(error, info) { console.error("Altar crashed:", error, info); }
