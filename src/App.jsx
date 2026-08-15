@@ -249,6 +249,49 @@ function dedupeTitle(candidateTitle, artist, existingSongs) {
 }
 
 /* =========================================================================
+   Song content model — each song now stores four plain-text blocks
+   (lyricsText, chordsText, chartText, drumsText) instead of a sections
+   array. Lines starting with "-" are section headers; [Tag] markers in the
+   chords/chart/drums text position a chord/note label above the following
+   character (parsed by ChordText's existing tokenizer).
+   ========================================================================= */
+function migrateSongShape(song) {
+  if (!song) return song;
+  return {
+    ...song,
+    lyricsText: song.lyricsText ?? "",
+    chordsText: song.chordsText ?? "",
+    chartText: song.chartText ?? "",
+    drumsText: song.drumsText ?? "",
+  };
+}
+function parseTextIntoBlocks(text) {
+  const lines = String(text || "").split("\n");
+  const blocks = [];
+  let current = null;
+  lines.forEach((rawLine) => {
+    const trimmed = rawLine.replace(/^ +/, "");
+    if (trimmed.startsWith("-")) {
+      current = { label: trimmed.slice(1).trim(), lines: [] };
+      blocks.push(current);
+    } else {
+      if (!current) { current = { label: null, lines: [] }; blocks.push(current); }
+      current.lines.push(rawLine);
+    }
+  });
+  return blocks;
+}
+// Chords tab only accepts Nashville-number tokens as chord tags — any
+// bracketed content that isn't a valid number token is treated as plain
+// text. Swapped to fullwidth brackets so the tokenizer (which only looks
+// for ASCII "["/"]") renders it as literal characters instead of a tag.
+function sanitizeChordsOnlyNashville(text) {
+  return String(text || "").replace(/\[([^\]]*)\]/g, (m, inner) => (
+    NUMBER_TOKEN_RE.test(inner.trim()) ? m : `\uFF3B${inner}\uFF3D`
+  ));
+}
+
+/* =========================================================================
    Chord/drum tag parsing — "[G]Gre[Em]at Are [C]You Lord[D]" style text.
    A tag applies to the character immediately following it; a tag with no
    following character (end of line) is a trailing tag.
@@ -276,25 +319,78 @@ function tokenizeTaggedLine(rawLine) {
 function transposeTaggedText(text, semitoneDelta, useFlats) {
   return String(text || "").replace(/\[([^\]]*)\]/g, (_, sym) => `[${transposeChordSymbol(sym, semitoneDelta, useFlats)}]`);
 }
-const NASHVILLE = ["1", "1#", "2", "2#", "3", "4", "4#", "5", "5#", "6", "6#", "7"];
-function toNashville(symbol, currentKey) {
-  if (!symbol) return symbol;
-  const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
-  const baseSemi = KEY_TO_SEMITONE[currentKey] || 0;
-  const convertOne = (part) => {
-    const m = part.match(CHORD_ROOT_RE);
-    if (!m) return part;
-    const root = m[1] + m[2];
-    const rest = part.slice(m[0].length);
-    const semitone = KEY_TO_SEMITONE[root];
-    if (semitone === undefined) return part;
-    const diff = (semitone - baseSemi + 12) % 12;
-    return NASHVILLE[diff] + rest;
-  };
-  return symbol.split("/").map(convertOne).join("/");
+
+/* =========================================================================
+   Nashville Number System <-> Chord conversion, major AND minor aware.
+   Chords are stored as NUMBER tokens (e.g. "6m", "b7", "4/1") — the same
+   canonical, key-independent notation a Nashville number chart uses — and
+   an actual chord letter name is derived on the fly for a given key via
+   tokenToChord(). This means transposition is free: changing the viewed
+   key just changes which letters tokenToChord spells out, with no
+   semitone math needed on stored data.
+   ========================================================================= */
+const MAJOR_SCALE_OFFSETS = [0, 2, 4, 5, 7, 9, 11];
+const MINOR_SCALE_OFFSETS = [0, 2, 3, 5, 7, 8, 10]; // natural minor
+// Diatonic triad quality for each scale degree (1-7), used whenever a number
+// has no explicit quality/accidental of its own — e.g. plain "6" in a major
+// key is the vi chord, which is minor (so it becomes "Em" in the key of G,
+// not "E"). Major key: I ii iii IV V vi vii°. Natural-minor key: i ii° III
+// iv v VI VII.
+const MAJOR_KEY_DEGREE_QUALITIES = ["", "m", "m", "", "", "m", "dim"];
+const MINOR_KEY_DEGREE_QUALITIES = ["m", "dim", "", "m", "m", "", ""];
+// Explicit "force major" suffixes a user can type on a normally-minor/dim
+// degree (e.g. "6M", "6maj") to get the major triad instead. Lowercase "m"
+// is intentionally excluded — that already means "minor" everywhere else.
+const MAJOR_OVERRIDE_SUFFIXES = new Set(["M", "Maj", "maj", "major", "Major"]);
+const NUMBER_TOKEN_RE = /^([b#]?)([1-7])((?:(?!\/)[^\s])*)(?:\/([b#]?)([1-7]))?$/;
+function tokenToChord(token, key, quality) {
+  if (!token) return token;
+  const trimmed = token.trim();
+  if (!trimmed) return token;
+  const semitoneRoot = KEY_TO_SEMITONE[key] ?? 0;
+  const useFlats = FLAT_KEYS.has(key);
+  const scaleOffsets = quality === "Minor" ? MINOR_SCALE_OFFSETS : MAJOR_SCALE_OFFSETS;
+  const degreeQualities = quality === "Minor" ? MINOR_KEY_DEGREE_QUALITIES : MAJOR_KEY_DEGREE_QUALITIES;
+  const m = trimmed.match(NUMBER_TOKEN_RE);
+  if (!m) return token;
+  const [, acc, degreeStr, qualitySuffix, bassAcc, bassDegreeStr] = m;
+  const degree = parseInt(degreeStr, 10);
+  const accShift = acc === "b" ? -1 : acc === "#" ? 1 : 0;
+  const rootSemitone = semitoneRoot + scaleOffsets[degree - 1] + accShift;
+  const rootUseFlats = acc === "b" ? true : acc === "#" ? false : useFlats;
+  // Church convention: a bare "7" in a Major key is voiced as 5/7 (the V
+  // chord over scale-degree-7 in the bass) instead of the default vii°.
+  // Explicit overrides (e.g. "7dim", or a manually-typed slash like "7/3")
+  // are left alone — this only fires when the user wrote a plain "7".
+  if (degree === 7 && quality !== "Minor" && !acc && !qualitySuffix && !bassDegreeStr) {
+    const fiveSemitone = semitoneRoot + scaleOffsets[4]; // scale degree 5
+    const sevenSemitone = semitoneRoot + scaleOffsets[6]; // scale degree 7 (bass)
+    return spellNote(fiveSemitone, useFlats) + "/" + spellNote(sevenSemitone, useFlats);
+  }
+  // Only fall back to the diatonic default when the number is unaltered
+  // (no leading b/#) and the user hasn't already written their own quality
+  // — an accidental signals a deliberate chromatic/borrowed chord, whose
+  // "correct" default quality isn't well-defined, so those are left as-is.
+  const defaultSuffix = acc ? "" : degreeQualities[degree - 1];
+  // "6M", "6maj", "6major", etc. force a plain major triad on a degree that
+  // would otherwise default to minor/diminished (e.g. vi -> VI, vii° -> VII).
+  const isMajorOverride = qualitySuffix && MAJOR_OVERRIDE_SUFFIXES.has(qualitySuffix);
+  const finalSuffix = isMajorOverride ? "" : (qualitySuffix || defaultSuffix);
+  let chord = spellNote(rootSemitone, rootUseFlats) + finalSuffix;
+  if (bassDegreeStr) {
+    const bassDegree = parseInt(bassDegreeStr, 10);
+    const bassShift = bassAcc === "b" ? -1 : bassAcc === "#" ? 1 : 0;
+    const bassSemitone = semitoneRoot + scaleOffsets[bassDegree - 1] + bassShift;
+    const bassUseFlats = bassAcc === "b" ? true : bassAcc === "#" ? false : useFlats;
+    chord += "/" + spellNote(bassSemitone, bassUseFlats);
+  }
+  return chord;
 }
-function nashvillizeTaggedText(text, songKey) {
-  return String(text || "").replace(/\[([^\]]*)\]/g, (_, sym) => `[${toNashville(sym, songKey)}]`);
+// Converts every [number] tag in a tagged (lyric-interleaved) text block
+// into its derived [ChordLetter] for the given key/quality, leaving the
+// lyric characters and non-number tags untouched.
+function numbersTaggedToChordsTagged(taggedText, key, quality) {
+  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (_, tok) => `[${tokenToChord(tok, key, quality)}]`);
 }
 
 /* =========================================================================
@@ -305,24 +401,28 @@ const SEED_SONGS = [
     id: "seed-1", title: "Oceans", artist: "Hillsong United", tempo: 72, timeSignature: "4/4", key: "D", keyQuality: "Major",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    sections: [
-      { id: uid(), label: "Verse", lyrics: "You call me out upon the waters\nThe great unknown where feet may fail", chords: "[D]You call me [G]out upon the [A]waters\nThe [Bm]great unknown where [G]feet may [A]fail", drums: "[Half-time]You call me out upon the waters\nThe great unknown where feet may fail" },
-      { id: uid(), label: "Chorus", lyrics: "And I will call upon Your name\nAnd keep my eyes above the waves", chords: "[D]And I will [A]call upon Your [Bm]name\nAnd [G]keep my eyes a[A]bove the [D]waves", drums: "And I will call upon Your name\nAnd keep my eyes a[Double Kick]bove the waves" },
-    ],
+    lyricsText: "-Verse\nYou call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes above the waves",
+    chordsText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6m]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6m]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
+    chartText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6m]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6m]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
+    drumsText: "-Verse\n[Half-time]You call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes a[Double Kick]bove the waves",
   },
   {
     id: "seed-2", title: "Way Maker", artist: "Sinach", tempo: 68, timeSignature: "4/4", key: "E", keyQuality: "Major",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    sections: [
-      { id: uid(), label: "Chorus", lyrics: "Way maker, miracle worker, promise keeper", chords: "[E]Way maker, [A]miracle worker, [C#m]promise [B]keeper", drums: "[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper" },
-    ],
+    lyricsText: "-Chorus\nWay maker, miracle worker, promise keeper",
+    chordsText: "-Chorus\n[1]Way maker, [4]miracle worker, [6m]promise [5]keeper",
+    chartText: "-Chorus\n[1]Way maker, [4]miracle worker, [6m]promise [5]keeper",
+    drumsText: "-Chorus\n[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper",
   },
   {
     id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    sections: [{ id: uid(), label: "Verse", lyrics: "Into the darkness You shine", chords: "[A]Into the [E]darkness You [F#m]shine", drums: "Into the darkness You [Double Kick]shine" }],
+    lyricsText: "-Verse\nInto the darkness You shine",
+    chordsText: "-Verse\n[1]Into the [5]darkness You [6m]shine",
+    chartText: "-Verse\n[1]Into the [5]darkness You [6m]shine",
+    drumsText: "-Verse\nInto the darkness You [Double Kick]shine",
   },
 ];
 const SEED_SETLISTS = [{
@@ -658,7 +758,7 @@ function resyncContentWithLyrics(content, newLyricsText) {
    ========================================================================= */
 function PianoIcon({ size = 20, color }) {
   return (
-    <svg width={size} style={{ height: size, width: "auto" }} viewBox="0 0 24 24" fill="none">
+    <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
       <rect x="4" y="6" width="16" height="12" rx="2" stroke={color} strokeWidth="1.5" />
       <path d="M9.5 6v7M14.5 6v7" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
     </svg>
@@ -666,7 +766,7 @@ function PianoIcon({ size = 20, color }) {
 }
 function GaugeIcon({ size = 20, color }) {
   return (
-    <svg width={size} style={{ height: size, width: "auto" }} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 15l3.5-5.5" /><circle cx="12" cy="15" r="1.3" fill={color} stroke="none" />
       <path d="M4 15a8 8 0 1 1 16 0" />
     </svg>
@@ -1638,7 +1738,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         };
 
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)), lineHeight: `${lineHeightMult}em` }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
               if (g.type !== "word") {
                 return (
@@ -1975,7 +2075,7 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
                       onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
                       style={{ color: accent, fontWeight: lyricsBold ? 700 : 400, cursor: "pointer", userSelect: "none" }}
                     >
-                      {tagType === "chords" ? flatify(value) : value}
+                      {value}
                     </span>
                   ) : (
                     <span
@@ -2010,8 +2110,10 @@ function SectionChordEditor({ content, onChangeContent, tagType, C, accent, font
 const SECTION_TABS = [
   { id: "lyrics", label: "Lyrics" },
   { id: "chords", label: "Chords" },
+  { id: "chart", label: "Chart" },
   { id: "drums", label: "Drums" },
 ];
+const TAB_META = { lyrics: MODE_META.vocals, chords: MODE_META.chords, chart: MODE_META.chords, drums: MODE_META.drums };
 function AutoGrowTextarea({ value, onChange, style, ...rest }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -2030,24 +2132,77 @@ function AutoGrowTextarea({ value, onChange, style, ...rest }) {
     />
   );
 }
+const escapeHtml = (s) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Auto-growing textarea with a highlighted backdrop: bracketed [tags] are
+// tinted in the given accent colour as the user types. When
+// restrictToNashville is set, only tokens matching the Nashville-number
+// pattern are tinted — anything else in brackets stays plain text colour.
+function HighlightedAutoGrowTextarea({ value, onChange, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
+  const taRef = useRef(null);
+  const backdropRef = useRef(null);
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  const handleScroll = () => {
+    if (backdropRef.current && taRef.current) {
+      backdropRef.current.scrollTop = taRef.current.scrollTop;
+      backdropRef.current.scrollLeft = taRef.current.scrollLeft;
+    }
+  };
+  const raw = String(value || "");
+  const html = escapeHtml(raw).replace(/\[([^\]]*)\]/g, (m, inner) => {
+    const valid = restrictToNashville ? NUMBER_TOKEN_RE.test(inner.trim()) : true;
+    return valid ? `<span style="color:${accent}">[${escapeHtml(inner)}]</span>` : m;
+  }) + (raw.endsWith("\n") ? "&nbsp;" : "");
+  const baseTextStyle = { ...textStyle, margin: 0, border: "none", background: "transparent", boxSizing: "border-box", width: "100%" };
+  return (
+    <div style={{ position: "relative", width: "100%", boxSizing: "border-box", ...wrapperStyle }}>
+      <div
+        ref={backdropRef}
+        aria-hidden="true"
+        style={{ ...baseTextStyle, position: "absolute", inset: 0, height: "100%", color: C.text, overflow: "hidden", pointerEvents: "none" }}
+        dangerouslySetInnerHTML={{ __html: html || "" }}
+      />
+      {!raw && placeholder ? (
+        <div style={{ ...baseTextStyle, position: "absolute", inset: 0, height: "100%", color: C.textFaint, overflow: "hidden", pointerEvents: "none" }}>{placeholder}</div>
+      ) : null}
+      <textarea
+        ref={taRef}
+        value={raw}
+        onChange={onChange}
+        onScroll={handleScroll}
+        style={{ ...baseTextStyle, position: "relative", display: "block", color: "transparent", caretColor: C.text, resize: "none", overflow: "hidden" }}
+      />
+    </div>
+  );
+}
 
-function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mode, fontSize = 22, chordFontSize = 16, lyricsBold = false, notesBold = false, lineSpacing = 1.75, textAlign = "left", C }) {
+function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, songs, mode, fontSize = 22, chordFontSize = 16, lyricsBold = false, notesBold = false, lineSpacing = 1.75, textAlign = "left", C }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [artist, setArtist] = useState(initial?.artist ?? "");
-  const [tempo, setTempo] = useState(initial?.tempo ?? "");
-  const [timeSig, setTimeSig] = useState(() => (initial?.timeSignature ? parseTimeSig(initial.timeSignature) : { beats: 4, unit: 4 }));
+  const [tempo, setTempo] = useState(initial?.tempo ?? seed?.tempo ?? "");
+  const [timeSig, setTimeSig] = useState(() => {
+    if (initial?.timeSignature) return parseTimeSig(initial.timeSignature);
+    if (seed?.timeSignature) return parseTimeSig(seed.timeSignature);
+    return { beats: 4, unit: 4 };
+  });
   const initialDecomposed = decomposeKey(initial?.key ?? "C");
   const [keyNatural, setKeyNatural] = useState(initialDecomposed.natural);
   const [keyAccidental, setKeyAccidental] = useState(initialDecomposed.accidental);
   const [keyQuality, setKeyQuality] = useState(initial?.keyQuality ?? "Major");
   const [language, setLanguage] = useState(initial?.language ?? "English");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [sections, setSections] = useState(initial?.sections?.map((s) => {
-    const content = s.content ?? mergeLegacyToContent(s.lyrics ?? "", s.chords ?? "", s.drums ?? "");
-    return { id: s.id, label: s.label, content, lyrics: s.lyrics ?? "", drums: s.drums ?? "", chords: s.chords ?? "" };
-  }) ?? [{ id: uid(), label: "Verse", content: "", lyrics: "", drums: "", chords: "" }]);
-  const [accents, setAccents] = useState(initial?.accents ?? defaultAccents(4));
-  const [subdivision, setSubdivision] = useState(initial?.subdivision ?? 1);
+  const migratedInitial = initial ? migrateSongShape(initial) : null;
+  const [lyricsText, setLyricsText] = useState(migratedInitial?.lyricsText ?? "");
+  const [chordsText, setChordsText] = useState(migratedInitial?.chordsText ?? "");
+  const [chartText, setChartText] = useState(migratedInitial?.chartText ?? "");
+  const [drumsText, setDrumsText] = useState(migratedInitial?.drumsText ?? "");
+  const [accents, setAccents] = useState(initial?.accents ?? seed?.accents ?? defaultAccents(4));
+  const [subdivision, setSubdivision] = useState(initial?.subdivision ?? seed?.subdivision ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
   const [sectionTab, setSectionTab] = useState("lyrics");
@@ -2061,8 +2216,8 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
       const lines = raw.replace(/\r\n/g, "\n").split("\n");
       const fieldMap = { title: "title", artist: "artist", tempo: "tempo", "time signature": "timeSignature", key: "key", description: "description" };
       const fields = {};
-      const parsedSections = [];
-      let current = null; let inSections = false;
+      const parsedLines = [];
+      let inSections = false;
       for (const line of lines) {
         const trimmed = line.trim();
         if (!inSections && trimmed.startsWith("/")) {
@@ -2077,8 +2232,8 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
           continue;
         }
         if (!inSections) continue;
-        if (trimmed.startsWith("#")) { current = { id: uid(), label: trimmed.slice(1).trim(), lyrics: "", drums: "", chords: "" }; parsedSections.push(current); }
-        else if (trimmed) { if (!current) { current = { id: uid(), label: "", lyrics: "", drums: "", chords: "" }; parsedSections.push(current); } current.lyrics = current.lyrics ? current.lyrics + "\n" + trimmed : trimmed; }
+        if (trimmed.startsWith("#")) parsedLines.push("-" + trimmed.slice(1).trim());
+        else if (trimmed) parsedLines.push(trimmed);
       }
       if (fields.title !== undefined) setTitle(fields.title);
       if (fields.artist !== undefined) setArtist(fields.artist);
@@ -2086,7 +2241,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
       if (fields.timeSignature !== undefined) { const m = fields.timeSignature.match(/^(\d+)\s*\/\s*(\d+)$/); if (m) setTimeSig({ beats: parseInt(m[1], 10), unit: parseInt(m[2], 10) }); }
       if (fields.key !== undefined) { const pk = parseKeyPaste(fields.key); if (pk) { setKeyNatural(pk.natural); setKeyAccidental(pk.accidental); setKeyQuality(pk.quality); } }
       if (fields.description !== undefined) setDescription(fields.description);
-      if (parsedSections.length) setSections(parsedSections.map((s) => ({ ...s, content: mergeLegacyToContent(s.lyrics, s.chords, s.drums) })));
+      if (parsedLines.length) setLyricsText(parsedLines.join("\n"));
       setError("");
     } catch {
       setError("Couldn't read clipboard");
@@ -2100,18 +2255,6 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
   };
   const handleTimeSigChange = (ts) => { setTimeSig(ts); const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats; setAccents(defaultAccents(effBeats)); };
 
-  const updateSection = (id, field, value) => setSections((secs) => secs.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
-  const updateSectionLyrics = (id, newLyrics) => setSections((secs) => secs.map((s) => {
-    if (s.id !== id) return s;
-    const content = resyncContentWithLyrics(s.content, newLyrics);
-    return { ...s, content, lyrics: newLyrics, chords: contentToChordsTagged(content), drums: contentToDrumsTagged(content) };
-  }));
-  const updateSectionContent = (id, newContent) => setSections((secs) => secs.map((s) => (
-    s.id === id ? { ...s, content: newContent, lyrics: contentToLyricsPlain(newContent), chords: contentToChordsTagged(newContent), drums: contentToDrumsTagged(newContent) } : s
-  )));
-  const removeSection = (id) => setSections((secs) => secs.filter((s) => s.id !== id));
-  const addSection = () => setSections((secs) => [...secs, { id: uid(), label: "", content: "", lyrics: "", drums: "", chords: "" }]);
-
   const handleSave = () => {
     const cleanTitle = toTitleCase(title.trim());
     const cleanArtist = toTitleCase(artist.trim());
@@ -2124,10 +2267,18 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: composeKey(keyNatural, keyAccidental), keyQuality, language, description, accents, subdivision,
-      sections: sections.length ? sections : [{ id: uid(), label: "Verse", content: "", lyrics: "", drums: "", chords: "" }],
+      lyricsText, chordsText, chartText, drumsText,
     });
   };
   const canSave = title.trim().length > 0;
+  const SECTION_TAB_VALUES = { lyrics: [lyricsText, setLyricsText], chords: [chordsText, setChordsText], chart: [chartText, setChartText], drums: [drumsText, setDrumsText] };
+  const [activeSectionValue, setActiveSectionValue] = SECTION_TAB_VALUES[sectionTab];
+  const SECTION_TAB_PLACEHOLDERS = {
+    lyrics: "Type the full song lyrics…\n-Verse\nFirst line of lyrics\nSecond line\n-Chorus\n…",
+    chords: "Type chords/numbers…\n-Verse\n[1]First line [4]of lyrics\n-Chorus\n…",
+    chart: "Type lyrics with [Chord] placements…\n-Verse\n[C]First line [G]of lyrics\n-Chorus\n…",
+    drums: "Type lyrics with [Note] placements…\n-Verse\n[Kick]First line of lyrics\n-Chorus\n…",
+  };
 
   return (
     <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: "auto", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
@@ -2172,51 +2323,24 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
           <div style={{ display: "flex", gap: 6, marginBottom: 12, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4 }}>
             {SECTION_TABS.map((t) => {
               const active = sectionTab === t.id;
+              const meta = TAB_META[t.id];
               return (
-                <button key={t.id} onClick={() => setSectionTab(t.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
+                <button key={t.id} onClick={() => setSectionTab(t.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
                   {t.label}
                 </button>
               );
             })}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {sections.map((sec) => (
-              <div key={sec.id} style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <input value={sec.label} onChange={(e) => updateSection(sec.id, "label", e.target.value)} placeholder="Verse, Chorus, Bridge&hellip;"
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box" }} />
-                  <button onClick={() => removeSection(sec.id)} style={{ width: 32, height: 32, borderRadius: 8, background: "none", border: "none", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <X size={16} color={C.danger} />
-                  </button>
-                </div>
-
-                {sectionTab === "lyrics" ? (
-                  <AutoGrowTextarea value={sec.lyrics} onChange={(e) => updateSectionLyrics(sec.id, e.target.value)}
-                    placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
-                ) : (
-                  <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, overflowX: "hidden" }}>
-                    <SectionChordEditor
-                      content={sec.content}
-                      tagType={sectionTab}
-                      onChangeContent={(next) => updateSectionContent(sec.id, next)}
-                      C={C}
-                      accent={C.accent}
-                      fontSize={16}
-                      tagFontSize={13}
-                      lyricsBold={lyricsBold}
-                      notesBold={notesBold}
-                      textAlign={textAlign}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <button onClick={addSection} style={{ width: "100%", marginTop: 10, padding: "12px 0", borderRadius: 10, border: `1px dashed ${C.borderStrong}`, background: "transparent", color: C.textMuted, fontFamily: FONT, fontSize: 14, fontWeight: 600 }}>
-            + Add section
-          </button>
+          <HighlightedAutoGrowTextarea
+            value={activeSectionValue}
+            onChange={(e) => setActiveSectionValue(e.target.value)}
+            placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
+            accent={TAB_META[sectionTab].accent}
+            restrictToNashville={sectionTab === "chords"}
+            C={C}
+            wrapperStyle={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, minHeight: 140 }}
+            textStyle={{ fontFamily: MONO, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
         </Field>
 
         {error && <div style={{ color: C.danger, fontSize: 13, textAlign: "center", fontWeight: 500 }}>{error}</div>}
@@ -2443,8 +2567,9 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
 function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, chordFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
-  const [showLyrics, setShowLyrics] = useState(true);
+  const [chordsView, setChordsView] = useState("chords");
   const [nashvilleMode, setNashvilleMode] = useState(true);
+  const ms = migrateSongShape(song);
 
   const showBottomBar = mode === "drums" && !!engine;
 
@@ -2459,9 +2584,6 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const { dragX, leaving, handlers } = isInSetlist ? { dragX: setlistSwipe.dragX, leaving: false, handlers: setlistSwipe.handlers } : edgeBack;
 
   const stepKey = (delta) => { const next = transposeKey(viewKey, delta); setViewKey(next); if (onKeyChange) onKeyChange(next); };
-  const semitoneDelta = ((KEY_TO_SEMITONE[viewKey] ?? 0) - (KEY_TO_SEMITONE[song.key] ?? 0) + 1200) % 12;
-  const wrappedDelta = semitoneDelta > 6 ? semitoneDelta - 12 : semitoneDelta;
-  const useFlats = FLAT_KEYS.has(viewKey);
 
   const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const badgeStyle = { fontSize: 12.5, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap" };
@@ -2470,7 +2592,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const lyricsToggleStyle = (on) => ({ height: 30, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
 
   const isVocals = mode === "vocals";
-  const sectionField = mode === "drums" ? "drums" : mode === "chords" ? "chords" : "lyrics";
+  const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? ms.drumsText : (chordsView === "chords" ? ms.chordsText : ms.chartText);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
@@ -2491,7 +2613,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
 
       {mode === "chords" && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, flexWrap: "nowrap", overflow: "hidden" }}>
-          <button onClick={() => setShowLyrics((s) => !s)} style={lyricsToggleStyle(showLyrics)}>Lyrics</button>
+          <button onClick={() => setChordsView((v) => (v === "chords" ? "chart" : "chords"))} style={lyricsToggleStyle(true)}>{chordsView === "chords" ? "Chords" : "Chart"}</button>
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
@@ -2509,24 +2631,21 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
             {song.description}
           </div>
         )}
-        {song.sections.map((sec, idx) => {
-          const raw = sec[sectionField] || (sectionField !== "lyrics" ? sec.lyrics : "");
-          let displayText = raw;
-          if (mode === "chords") {
-            if (nashvilleMode) displayText = nashvillizeTaggedText(raw, song.key);
-            else if (wrappedDelta !== 0) displayText = transposeTaggedText(raw, wrappedDelta, useFlats);
-          }
-          return (
-            <div key={sec.id} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
-              <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{sec.label || "Section"}</div>
+        {(() => {
+          let displayText = activeRawText;
+          if (mode === "chords" && chordsView === "chords") displayText = sanitizeChordsOnlyNashville(displayText);
+          if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
+          return parseTextIntoBlocks(displayText).map((block, idx) => (
+            <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+              {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
               {isVocals ? (
-                <ChordText text={sec.lyrics} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} emptyHint="\u2014" />
+                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} emptyHint="\u2014" />
               ) : (
-                <ChordText text={displayText} editable={false} dim showLyrics={showLyrics} brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords"} C={C} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} />
               )}
             </div>
-          );
-        })}
+          ));
+        })()}
       </div>
 
       {showBottomBar && (
@@ -2823,7 +2942,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                   />
                 ) : (
                   <ChordText
-                    text={"[E]Way maker, [A]miracle worker,\n[C#m]promise keeper, [B]light in the [E]darkness"}
+                    text={numbersTaggedToChordsTagged("[1]Way maker, [4]miracle worker,\n[6m]promise keeper, [5]light in the [1]darkness", "E", "Major")}
                     editable={false} dim={true} showLyrics={true} brightTags={true} flattenTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C}
@@ -2980,6 +3099,7 @@ function AppInner() {
 
   const [tab, setTab] = useState("practice");
   const [editingSong, setEditingSong] = useState(undefined);
+  const [newSongSeed, setNewSongSeed] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [stageIndex, setStageIndex] = useState(null);
   const [stageAutoOpenPicker, setStageAutoOpenPicker] = useState(false);
@@ -3105,6 +3225,7 @@ function AppInner() {
       setViewing({ songId: newSong.id, fromSetlistId: null });
     }
     setEditingSong(undefined);
+    setNewSongSeed(null);
   };
   const handleDeleteSong = (id) => {
     saveSongs(songs.filter((s) => s.id !== id));
@@ -3118,7 +3239,7 @@ function AppInner() {
     let candidate = `${base} (${n})`;
     const nameExists = (t) => songs.some((s) => s.title.toLowerCase() === t.toLowerCase() && (s.artist || "").toLowerCase() === (song.artist || "").toLowerCase());
     while (nameExists(candidate)) { n += 1; candidate = `${base} (${n})`; }
-    const newSong = { ...song, id: uid(), title: candidate, sections: song.sections.map((sec) => ({ ...sec, id: uid() })) };
+    const newSong = { ...migrateSongShape(song), id: uid(), title: candidate };
     saveSongs([...songs, newSong]);
     setEditingSong(undefined);
     setViewing({ songId: newSong.id, fromSetlistId: null });
@@ -3233,7 +3354,7 @@ function AppInner() {
       <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box" }}>
         {tab === "practice" && (
           mode === "drums"
-            ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => setEditingSong(null)} C={C} />
+            ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
             : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
@@ -3261,7 +3382,7 @@ function AppInner() {
       <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />
 
       {editingSong !== undefined && (
-        <SongForm initial={editingSong} onSave={handleSaveSong} onCancel={() => setEditingSong(undefined)} onDelete={handleDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
+        <SongForm initial={editingSong} seed={newSongSeed} onSave={handleSaveSong} onCancel={() => { setEditingSong(undefined); setNewSongSeed(null); }} onDelete={handleDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
       )}
 
       {viewingSong && (
