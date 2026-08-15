@@ -90,7 +90,7 @@ function useLocalStorageState(key, seed) {
    into three practice modes: Vocals, Drums, Chords. Each has its own accent
    colour; everything else (surfaces, text, layout) stays shared.
    ========================================================================= */
-const MODES = ["vocals", "drums", "chords"]; // display order for the Settings tab-select
+const MODES = ["vocals", "chords", "drums"]; // display order for the Settings tab-select
 const MODE_META = {
   vocals: { label: "Vocals", accent: "#30D158", accentDim: "rgba(48,209,88,0.35)", accentSoft: "rgba(48,209,88,0.12)" },
   drums: { label: "Drums", accent: "#FFB020", accentDim: "rgba(255,176,32,0.35)", accentSoft: "rgba(255,176,32,0.12)" },
@@ -1614,6 +1614,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                 <span style={{
                   position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
                   fontSize: tagSize, fontWeight: noteWeightBold ? 800 : 600,
+                  lineHeight: 1,
                   color: brightTags ? "#FFFFFF" : accent,
                   opacity: 1,
                 }}>
@@ -1638,18 +1639,36 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
 
         return (
           <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)), lineHeight: `${lineHeightMult}em` }}>
-            {groups.map((g, gi) => (
-              g.type === "word" ? (
-                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap" }}>
+            {groups.map((g, gi) => {
+              if (g.type !== "word") {
+                return (
+                  <span key={gi}>
+                    {g.items.map(renderChar)}
+                    <wbr />
+                  </span>
+                );
+              }
+              // A word's visible box only naturally spans 1ch per character, but an
+              // attached tag can render far wider than the word underneath it
+              // (e.g. a long drum-notation label). Since the tag is absolutely
+              // positioned, it doesn't contribute to layout width on its own —
+              // so without this, a long tag can silently overflow the container
+              // instead of forcing a wrap. Give the word a minimum width (in the
+              // same "ch" units, scaled for the tag's font size) equal to its
+              // longest attached tag, so the wrapping engine always accounts for
+              // it and pushes the whole word to the next line when it doesn't fit.
+              const maxTagLen = g.items.reduce((max, it) => {
+                if (!it.tok.tag) return max;
+                const label = flattenTags ? flatify(it.tok.tag) : it.tok.tag;
+                return Math.max(max, label.length);
+              }, 0);
+              const minWidthCh = Math.max(g.items.length, maxTagLen * (tagSize / fontSize));
+              return (
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
                 </span>
-              ) : (
-                <span key={gi}>
-                  {g.items.map(renderChar)}
-                  <wbr />
-                </span>
-              )
-            ))}
+              );
+            })}
           </div>
         );
       })}
@@ -2175,7 +2194,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                 {sectionTab === "lyrics" ? (
                   <AutoGrowTextarea value={sec.lyrics} onChange={(e) => updateSectionLyrics(sec.id, e.target.value)}
                     placeholder={"Type the lyrics for this section&hellip;"}
-                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 15, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
+                    style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: MONO, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
                 ) : (
                   <div style={{ width: "100%", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, boxSizing: "border-box", padding: "12px 14px", minHeight: 90, overflowX: "hidden" }}>
                     <SectionChordEditor
@@ -2184,7 +2203,7 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
                       onChangeContent={(next) => updateSectionContent(sec.id, next)}
                       C={C}
                       accent={C.accent}
-                      fontSize={15}
+                      fontSize={16}
                       tagFontSize={13}
                       lyricsBold={lyricsBold}
                       notesBold={notesBold}
@@ -2236,18 +2255,29 @@ function SongForm({ initial, onSave, onCancel, onDelete, onDuplicate, songs, mod
    ========================================================================= */
 function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, deleteConfirmMessage = "Delete this song?", C }) {
   const MENU_WIDTH = 170;
-  const clampedX = Math.min(Math.max(x, MENU_WIDTH / 2 + 8), window.innerWidth - MENU_WIDTH / 2 - 8);
+  const rightX = window.innerWidth - MENU_WIDTH / 2 - 20;
   const openUpward = y > window.innerHeight - 160;
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 210 }} />
-      <div style={{
-        position: "fixed", left: clampedX, top: openUpward ? y - 10 : y + 10,
-        transform: openUpward ? "translate(-50%, -100%)" : "translate(-50%, 0)",
-        zIndex: 220, width: "max-content", minWidth: MENU_WIDTH,
-        background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden",
-        boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
-      }}>
+      <div
+        onClick={(e) => { stop(e); onClose(); }}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => { stop(e); onClose(); }}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ position: "fixed", inset: 0, zIndex: 210 }}
+      />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          position: "fixed", left: rightX, top: openUpward ? y - 10 : y + 10,
+          transform: openUpward ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+          zIndex: 220, width: "max-content", minWidth: MENU_WIDTH,
+          background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+        }}>
         <MenuItem icon={Pencil} label="Edit" onClick={() => { onClose(); onEdit(); }} C={C} />
         <MenuItem icon={IosShareIcon} label="Share" onClick={() => { onClose(); onShare(); }} C={C} />
         <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); if (window.confirm(deleteConfirmMessage)) onDelete(); }} C={C} />
@@ -2465,11 +2495,11 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
-          <button onClick={() => stepKey(-1)} disabled={nashvilleMode} style={{ ...chevronBtn, cursor: nashvilleMode ? "default" : "pointer" }}><ChevronLeft size={16} /></button>
+          <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={16} /></button>
           <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
             {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
           </button>
-          <button onClick={() => stepKey(1)} disabled={nashvilleMode} style={{ ...chevronBtn, cursor: nashvilleMode ? "default" : "pointer" }}><ChevronRight size={16} /></button>
+          <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={16} /></button>
         </div>
       )}
 
@@ -2919,6 +2949,16 @@ class AppErrorBoundary extends Component {
 }
 
 function AppInner() {
+  useEffect(() => {
+    let meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "viewport";
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover");
+  }, []);
+
   const [songs, setSongs] = useIndexedDbState("songs", SEED_SONGS);
   const [setlists, setSetlists] = useIndexedDbState("setlists", SEED_SETLISTS);
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 22);
@@ -3176,6 +3216,7 @@ function AppInner() {
         #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
         .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .bpm-number-input { -moz-appearance: textfield; }
+        input, textarea, select { font-size: 16px; }
         button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
         button:active { transform: scale(0.94); opacity: 0.8; }
         input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
