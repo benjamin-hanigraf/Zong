@@ -566,7 +566,7 @@ function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, typ
   );
 }
 
-function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, C }) {
+function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, subtle, C }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const btnRef = useRef(null);
@@ -580,10 +580,15 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, C }) {
     setOpen((o) => !o);
   };
   return (
-    <div style={{ position: "relative", width: fullWidth ? "100%" : undefined, boxSizing: "border-box", ...style }}>
+    <div style={{ position: "relative", width: fullWidth ? "100%" : undefined, boxSizing: "border-box", zIndex: open ? 500 : "auto", ...style }}>
       <button
         ref={btnRef} type="button" onClick={handleToggle}
-        style={{
+        style={subtle ? {
+          fontFamily: FONT, fontSize: 11, fontWeight: 600, borderRadius: 6, boxSizing: "border-box",
+          border: `1px solid ${C.border}`, background: "transparent", color: value ? C.textMuted : C.textFaint,
+          width: fullWidth ? "100%" : undefined, textAlign: "center", height, padding: "0 7px",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        } : {
           fontFamily: FONT, fontSize: 16, fontWeight: 600, borderRadius: 10, boxSizing: "border-box",
           border: `1px solid ${C.border}`, background: C.surface2, color: value ? C.text : C.textFaint,
           width: fullWidth ? "100%" : undefined, textAlign: "center", height, padding: "0 10px",
@@ -597,7 +602,7 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, C }) {
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
           <div style={{
             position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
-            left: "50%", transform: "translateX(-50%)", zIndex: 150, minWidth: 84,
+            left: "50%", transform: "translateX(-50%)", zIndex: 500, minWidth: 84,
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
             overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
@@ -914,13 +919,13 @@ function PianoIcon({ size = 20, color }) {
     </svg>
   );
 }
-function MetronomeIcon({ size = 20, color, strokeWidth = 1.6 }) {
+function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
   return (
     <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      <path d="M8 20h8L13 4h-2L8 20z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M12 17 15 6" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <circle cx="12" cy="17" r="1" fill={color} stroke="none" />
-      <circle cx="13.8" cy="11" r="1.3" fill={color} stroke="none" />
+      <path d="M7.2 20h9.6L13.4 6h-2.8L7.2 20z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
+      <path d="M12 17 14.6 7.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <circle cx="12" cy="17" r="0.9" fill={color} stroke="none" />
+      <circle cx="13.7" cy="12" r="1.15" fill={color} stroke="none" />
     </svg>
   );
 }
@@ -1055,53 +1060,11 @@ function PianoScreen({ C }) {
   const videoUnlockedRef = useRef(false);
   const isLandscapeScreen = useIsLandscapeScreen();
 
-  // "Scroll" mode: swiping across the keys slides the whole keyboard
-  // left/right (like a real scrolling keyboard strip) to reveal the
-  // previous/next octave, instead of playing notes. Off by default so the
-  // keys behave exactly as before.
-  const [scrollMode, setScrollMode] = useState(false);
-  const [scrollDragX, setScrollDragX] = useState(0);
-  const [isScrollDragging, setIsScrollDragging] = useState(false);
-  const scrollDraggingRef = useRef(false);
-  const scrollStartRef = useRef({ x: 0, y: 0 });
-  const scrollModeRef = useRef(false);
-  useEffect(() => { scrollModeRef.current = scrollMode; }, [scrollMode]);
-
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
 
   const WHITE_PRESSED = C.accent;
   const BLACK_PRESSED = C.accent;
-
-  // The whole keyboard is rendered inside LandscapeLock, which rotates the
-  // entire block 90deg on a portrait phone screen so it reads as landscape.
-  // Pointer events (clientX/clientY) are always reported in real, unrotated
-  // screen space though, so a physical vertical drag is what actually
-  // corresponds to a "horizontal swipe across the keys" once rotated — on
-  // an already-landscape screen (tablet/desktop, no rotation applied) it's
-  // the ordinary clientX delta instead.
-  const localSwipeDelta = (e) => (isLandscapeScreen ? e.clientX - scrollStartRef.current.x : e.clientY - scrollStartRef.current.y);
-  const handleScrollPointerDown = (e) => {
-    scrollStartRef.current = { x: e.clientX, y: e.clientY };
-    scrollDraggingRef.current = true;
-    setIsScrollDragging(true);
-    setScrollDragX(0);
-  };
-  const handleScrollPointerMove = (e) => {
-    if (!scrollDraggingRef.current) return;
-    e.preventDefault();
-    setScrollDragX(localSwipeDelta(e));
-  };
-  const handleScrollPointerUp = (e) => {
-    if (!scrollDraggingRef.current) return;
-    scrollDraggingRef.current = false;
-    setIsScrollDragging(false);
-    const delta = localSwipeDelta(e);
-    const SWIPE_THRESHOLD = 60;
-    if (delta <= -SWIPE_THRESHOLD && octaveStartRef.current < 5) setOctaveStart(octaveStartRef.current + 1);
-    else if (delta >= SWIPE_THRESHOLD && octaveStartRef.current > 3) setOctaveStart(octaveStartRef.current - 1);
-    setScrollDragX(0);
-  };
 
   const ensureCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
@@ -1223,7 +1186,6 @@ function PianoScreen({ C }) {
 
   useEffect(() => {
     const handleMove = (e) => {
-      if (scrollModeRef.current) { handleScrollPointerMove(e); return; }
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
       e.preventDefault();
@@ -1241,7 +1203,6 @@ function PianoScreen({ C }) {
       }
     };
     const handleUp = (e) => {
-      if (scrollModeRef.current) { handleScrollPointerUp(e); return; }
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
       stopVoice(entry.voice);
@@ -1317,14 +1278,6 @@ function PianoScreen({ C }) {
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>Piano</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={() => setScrollMode((v) => !v)} style={{
-            height: 30, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5,
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            border: `1px solid ${scrollMode ? C.accentDim : C.borderStrong}`, background: scrollMode ? C.accentSoft : C.surface2,
-            color: scrollMode ? C.accent : C.text,
-          }}>
-            Scroll
-          </button>
           <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
             color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
@@ -1343,20 +1296,10 @@ function PianoScreen({ C }) {
 
       <div
         ref={containerRef}
-        onPointerDown={(e) => { if (scrollMode) handleScrollPointerDown(e); else handlePointerDown(e); }}
+        onPointerDown={handlePointerDown}
         style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}
       >
-        {scrollMode ? (
-          <div style={{
-            position: "absolute", top: 0, bottom: 0, left: "-100%", width: "300%", display: "flex",
-            transform: `translateX(${scrollDragX}px)`,
-            transition: isScrollDragging ? "none" : "transform 180ms ease",
-          }}>
-            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
-            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
-            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
-          </div>
-        ) : renderOctaveKeys()}
+        {renderOctaveKeys()}
       </div>
     </div>
   );
@@ -3070,22 +3013,23 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
+        <div style={{ flex: 1, minWidth: 0 }} />
         <div
           onTouchStart={startTitlePress} onTouchMove={cancelTitlePress} onTouchEnd={cancelTitlePress} onTouchCancel={cancelTitlePress}
           onMouseDown={startTitlePress} onMouseUp={cancelTitlePress} onMouseLeave={cancelTitlePress}
-          style={{ flex: 1, minWidth: 0, textAlign: "center", cursor: "pointer" }}
+          style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", maxWidth: "calc(100% - 140px)", textAlign: "center", cursor: "pointer" }}
         >
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist}</div>}
         </div>
         {mode === "drums" && !!engine && (
-          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
+          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
         )}
         {song.description ? (
-          <button onClick={() => setDescOpen((o) => !o)} style={chevronBtn}>
+          <button onClick={() => setDescOpen((o) => !o)} style={{ ...chevronBtn, position: "relative", zIndex: 1 }}>
             <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
           </button>
         ) : (
@@ -3107,18 +3051,18 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
         </div>
       )}
 
-      {mode === "drums" && showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, flexWrap: "nowrap", overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} C={C} />
-            <button onClick={cycleSubdivision} style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
+      {mode === "drums" && !!engine && (
+        <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
+            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={22} subtle C={C} />
+            <button onClick={cycleSubdivision} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <SubdivisionIcon value={engine.subdivision} size={11} color={C.textMuted} />
             </button>
           </div>
-          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+          <div style={{ justifySelf: "center" }}>
             <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.textMuted, minWidth: 36, textAlign: "right", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{Math.round(engine.bpm)}</div>
+          <div style={{ ...badgeStyle, fontSize: 15.5, fontWeight: 800, flexShrink: 0, justifySelf: "end", position: "relative", zIndex: 1 }}>{Math.round(engine.bpm)}<span style={{ fontSize: 10.5, fontWeight: 700, marginLeft: 3, color: C.textFaint }}>BPM</span></div>
         </div>
       )}
 
@@ -3146,10 +3090,10 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 28, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
           <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
-          <button onClick={engine.toggle} style={{ width: 84, height: 84, borderRadius: "50%", border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {engine.playing ? <Square size={30} color={C.accent} fill={C.accent} /> : <Play size={30} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
+          <button onClick={engine.toggle} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {engine.playing ? <Square size={26} color={C.accent} fill={C.accent} /> : <Play size={26} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
           </button>
           <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
         </div>
