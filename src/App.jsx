@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, Component } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Gauge,
+  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy,
 } from "lucide-react";
 import { syncLibrary } from "./bandSync";
 
@@ -126,7 +126,7 @@ const TIME_SIGS = [
 const CLICK_TONES = [
   { id: "classic", name: "Classic" },
   { id: "digital", name: "Digital" },
-  { id: "wood", name: "Wood Block" },
+  { id: "sharp", name: "Sharp" },
   { id: "cowbell", name: "Cowbell" },
 ];
 const PAN_OPTIONS = [
@@ -304,6 +304,36 @@ function sanitizeChordsOnlyNashville(text) {
     isValidNashvilleToken(inner.trim()) ? m : `\uFF3B${inner}\uFF3D`
   ));
 }
+// Auto-brackets bare Nashville-number tokens typed in the Chords tab (e.g.
+// typing "1 4 5" becomes "[1] [4] [5]") so they behave as real chord tags
+// without the user needing to type the brackets themselves. Anything already
+// inside [] is left alone, and anything inside () is left completely
+// untouched (literal plain-number text, never turned into a tag).
+function autoBracketNumbers(text) {
+  const s = String(text || "");
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === "[") {
+      const end = s.indexOf("]", i);
+      if (end === -1) { out += s.slice(i); break; }
+      out += s.slice(i, end + 1); i = end + 1; continue;
+    }
+    if (ch === "(") {
+      const end = s.indexOf(")", i);
+      if (end === -1) { out += s.slice(i); break; }
+      out += s.slice(i, end + 1); i = end + 1; continue;
+    }
+    if (/\s/.test(ch)) { out += ch; i++; continue; }
+    let j = i;
+    while (j < s.length && !/[\s[\]()]/.test(s[j])) j++;
+    const run = s.slice(i, j);
+    out += isValidNashvilleToken(run) ? `[${run}]` : run;
+    i = j;
+  }
+  return out;
+}
 
 /* =========================================================================
    Chord/drum tag parsing — "[G]Gre[Em]at Are [C]You Lord[D]" style text.
@@ -471,8 +501,8 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     lyricsText: "-Verse\nYou call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes above the waves",
-    chordsText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6m]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6m]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
-    chartText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6m]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6m]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
+    chordsText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
+    chartText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
     drumsText: "-Verse\n[Half-time]You call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes a[Double Kick]bove the waves",
   },
   {
@@ -480,8 +510,8 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     lyricsText: "-Chorus\nWay maker, miracle worker, promise keeper",
-    chordsText: "-Chorus\n[1]Way maker, [4]miracle worker, [6m]promise [5]keeper",
-    chartText: "-Chorus\n[1]Way maker, [4]miracle worker, [6m]promise [5]keeper",
+    chordsText: "-Chorus\n[1]Way maker, [4]miracle worker, [6]promise [5]keeper",
+    chartText: "-Chorus\n[1]Way maker, [4]miracle worker, [6]promise [5]keeper",
     drumsText: "-Chorus\n[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper",
   },
   {
@@ -489,8 +519,8 @@ const SEED_SONGS = [
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     lyricsText: "-Verse\nInto the darkness You shine",
-    chordsText: "-Verse\n[1]Into the [5]darkness You [6m]shine",
-    chartText: "-Verse\n[1]Into the [5]darkness You [6m]shine",
+    chordsText: "-Verse\n[1]Into the [5]darkness You [6]shine",
+    chartText: "-Verse\n[1]Into the [5]darkness You [6]shine",
     drumsText: "-Verse\nInto the darkness You [Double Kick]shine",
   },
 ];
@@ -629,6 +659,57 @@ function NaturalDropdown({ value, onChange, C }) {
                   color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
                 }}>
                   {n}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GenericDropdown({ value, options, onChange, C }) {
+  const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
+  const btnRef = useRef(null);
+  const DROPDOWN_HEIGHT = 220;
+  const handleToggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUpward(spaceBelow < DROPDOWN_HEIGHT && rect.top > spaceBelow);
+    }
+    setOpen((o) => !o);
+  };
+  const activeOption = options.find((o) => o.id === value);
+  return (
+    <div style={{ position: "relative" }}>
+      <button type="button" ref={btnRef} onClick={handleToggle} style={{
+        width: "100%", boxSizing: "border-box", height: 44, padding: "0 14px", borderRadius: 10,
+        border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
+        fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <span>{activeOption ? activeOption.label : ""}</span>
+        <ChevronDown size={16} color={C.textMuted} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
+          <div style={{
+            position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
+            left: 0, right: 0, zIndex: 150,
+            background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
+            overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+          }}>
+            {options.map((opt) => {
+              const active = opt.id === value;
+              return (
+                <div key={opt.id} onClick={() => { onChange(opt.id); setOpen(false); }} style={{
+                  padding: "13px 14px", fontFamily: FONT, fontSize: 14.5, fontWeight: 600,
+                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
+                }}>
+                  {opt.label}
                 </div>
               );
             })}
@@ -833,11 +914,13 @@ function PianoIcon({ size = 20, color }) {
     </svg>
   );
 }
-function GaugeIcon({ size = 20, color }) {
+function MetronomeIcon({ size = 20, color, strokeWidth = 1.6 }) {
   return (
-    <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 15l3.5-5.5" /><circle cx="12" cy="15" r="1.3" fill={color} stroke="none" />
-      <path d="M4 15a8 8 0 1 1 16 0" />
+    <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
+      <path d="M8 20h8L13 4h-2L8 20z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
+      <path d="M12 17 15 6" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <circle cx="12" cy="17" r="1" fill={color} stroke="none" />
+      <circle cx="13.8" cy="11" r="1.3" fill={color} stroke="none" />
     </svg>
   );
 }
@@ -850,8 +933,13 @@ function IosShareIcon({ size = 16, color = "currentColor" }) {
     </svg>
   );
 }
-const PIANO_TONE_HARMONICS_GRAND = [0, 1, 0.55, 0.32, 0.22, 0.15, 0.1, 0.07, 0.05, 0.03];
-const PIANO_TONE_ENV_GRAND = { attack: 0.008, decayTo: 0.4, filterOpen: 9, filterSustain: 1.4, tail: 7 };
+// Softer, warmer harmonic series (less buzzy/sawtooth-like than a full
+// 1/n rolloff) plus a gentler, slower brightness sweep and a much lighter
+// compressor — the previous settings pushed the filter open very wide and
+// squashed everything through a fairly aggressive compressor, which is
+// what read as "distorted/processed" rather than an acoustic piano.
+const PIANO_TONE_HARMONICS_GRAND = [0, 1, 0.42, 0.2, 0.11, 0.065, 0.038, 0.022, 0.013, 0.007];
+const PIANO_TONE_ENV_GRAND = { attack: 0.006, decayTo: 0.42, filterOpen: 5, filterSustain: 1.8, tail: 6.5 };
 function buildPianoWave(ctx) {
   const amps = PIANO_TONE_HARMONICS_GRAND;
   const numHarmonics = amps.length - 1;
@@ -921,6 +1009,40 @@ function LandscapeLock({ children }) {
 }
 const SILENT_VIDEO_SRC = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAZWbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAwN0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAIAAAACAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAJ7bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAAMgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAACJm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAeZzdGJsAAAAunN0c2QAAAAAAAAAAQAAAKphdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAIAAgBIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAMGF2Y0MBQsAK/+EAGGdCwArZH4iIwEQAAAMABAAAAwDIPEiZIAEABWjLg8sgAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAAGuAAABrgAAAAGHN0dHMAAAAAAAAAAQAAABkAAAIAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAABMc3RzYwAAAAAAAAAFAAAAAQAAAAEAAAABAAAAAgAAAAMAAAABAAAABgAAAAQAAAABAAAABwAAAAMAAAABAAAACQAAAAIAAAABAAAAeHN0c3oAAAAAAAAAAAAAABkAAAKDAAAACQAAAAoAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAACQAAAAkAAAAJAAAANHN0Y28AAAAAAAAACQAABpsAAAkiAAAJQgAACWEAAAmAAAAJnwAACccAAAnmAAAKBQAAAn10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAA+gAAAAAAAAAAAAAAAEBAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAEAAABAAAAAAH1bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAfQAAAI0BVxAAAAAAALWhkbHIAAAAAAAAAAHNvdW4AAAAAAAAAAAAAAABTb3VuZEhhbmRsZXIAAAABoG1pbmYAAAAQc21oZAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAABZHN0YmwAAAB+c3RzZAAAAAAAAAABAAAAbm1wNGEAAAAAAAAAAQAAAAAAAAAAAAEAEAAAAAAfQAAAAAAANmVzZHMAAAAAA4CAgCUAAgAEgICAF0AVAAAAAAAfQAAAAXcFgICABRWIVuUABoCAgAECAAAAFGJ0cnQAAAAAAAAfQAAAAXcAAAAgc3R0cwAAAAAAAAACAAAACAAABAAAAAABAAADQAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAA4c3RzegAAAAAAAAAAAAAACQAAABUAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAADRzdGNvAAAAAAAAAAkAAAaGAAAJHgAACT4AAAldAAAJfAAACZsAAAnDAAAJ4gAACgEAAAAac2dwZAEAAAByb2xsAAAAAgAAAAH//wAAABxzYmdwAAAAAHJvbGwAAAABAAAACQAAAAEAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYwLjE2LjEwMAAAAAhmcmVlAAADmW1kYXTeAgBMYXZjNjAuMzEuMTAyAAIwQA4AAAJxBgX//23cRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMTA4IDMxZTE5ZjkgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIzIC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MCByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgxOjB4MTExIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0yNSBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAAApliIQM8mKAALC+ARggBwAAAAVBmjgZ6gAAAAZBmlQGeoAAAAAFQZpgM9QBGCAHAAAABUGagDPUAAAABUGaoDPUAAAABUGawDPUARggBwAAAAVBmuAz1AAAAAVBmwAz1AAAAAVBmyAz1AEYIAcAAAAFQZtAM9QAAAAFQZtgM9QAAAAFQZuAM9QBGCAHAAAABUGboDPUAAAABUGbwDPUAAAABUGb4DPUAAAABUGaADPUARggBwAAAAVBmiAz1AAAAAVBmkAz1AAAAAVBmmAz1AEYIAcAAAAFQZqAM9QAAAAFQZqgM9QAAAAFQZrAL9QBGCAHAAAABUGa4C/UAAAABUGbACvU";
 
+// Shared iOS audio-unlock hack: playing a muted silent video from within a
+// user-gesture call stack unlocks WebAudio playback for the whole page
+// (including when the ring/silent switch is on, or the app is opened
+// standalone from the home screen). Previously only PianoScreen did this
+// locally, so the metronome stayed silent until the user visited Piano and
+// pressed a key. Calling this once, from any first gesture, unlocks audio
+// for every audio-producing feature in the app.
+let __sharedSilentVideoEl = null;
+let __audioUnlocked = false;
+function unlockAudioPlayback() {
+  if (__audioUnlocked) return;
+  __audioUnlocked = true;
+  try {
+    if (!__sharedSilentVideoEl) {
+      const v = document.createElement("video");
+      v.src = SILENT_VIDEO_SRC;
+      v.muted = true;
+      v.playsInline = true;
+      v.setAttribute("playsinline", "");
+      v.setAttribute("webkit-playsinline", "");
+      v.style.position = "fixed";
+      v.style.width = "1px";
+      v.style.height = "1px";
+      v.style.opacity = "0";
+      v.style.pointerEvents = "none";
+      document.body.appendChild(v);
+      __sharedSilentVideoEl = v;
+    }
+    __sharedSilentVideoEl.play().catch(() => { __audioUnlocked = false; });
+  } catch {
+    __audioUnlocked = false;
+  }
+}
+
 function PianoScreen({ C }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
@@ -931,6 +1053,19 @@ function PianoScreen({ C }) {
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
+  const isLandscapeScreen = useIsLandscapeScreen();
+
+  // "Scroll" mode: swiping across the keys slides the whole keyboard
+  // left/right (like a real scrolling keyboard strip) to reveal the
+  // previous/next octave, instead of playing notes. Off by default so the
+  // keys behave exactly as before.
+  const [scrollMode, setScrollMode] = useState(false);
+  const [scrollDragX, setScrollDragX] = useState(0);
+  const [isScrollDragging, setIsScrollDragging] = useState(false);
+  const scrollDraggingRef = useRef(false);
+  const scrollStartRef = useRef({ x: 0, y: 0 });
+  const scrollModeRef = useRef(false);
+  useEffect(() => { scrollModeRef.current = scrollMode; }, [scrollMode]);
 
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
@@ -938,15 +1073,65 @@ function PianoScreen({ C }) {
   const WHITE_PRESSED = C.accent;
   const BLACK_PRESSED = C.accent;
 
+  // The whole keyboard is rendered inside LandscapeLock, which rotates the
+  // entire block 90deg on a portrait phone screen so it reads as landscape.
+  // Pointer events (clientX/clientY) are always reported in real, unrotated
+  // screen space though, so a physical vertical drag is what actually
+  // corresponds to a "horizontal swipe across the keys" once rotated — on
+  // an already-landscape screen (tablet/desktop, no rotation applied) it's
+  // the ordinary clientX delta instead.
+  const localSwipeDelta = (e) => (isLandscapeScreen ? e.clientX - scrollStartRef.current.x : e.clientY - scrollStartRef.current.y);
+  const handleScrollPointerDown = (e) => {
+    scrollStartRef.current = { x: e.clientX, y: e.clientY };
+    scrollDraggingRef.current = true;
+    setIsScrollDragging(true);
+    setScrollDragX(0);
+  };
+  const handleScrollPointerMove = (e) => {
+    if (!scrollDraggingRef.current) return;
+    e.preventDefault();
+    setScrollDragX(localSwipeDelta(e));
+  };
+  const handleScrollPointerUp = (e) => {
+    if (!scrollDraggingRef.current) return;
+    scrollDraggingRef.current = false;
+    setIsScrollDragging(false);
+    const delta = localSwipeDelta(e);
+    const SWIPE_THRESHOLD = 60;
+    if (delta <= -SWIPE_THRESHOLD && octaveStartRef.current < 5) setOctaveStart(octaveStartRef.current + 1);
+    else if (delta >= SWIPE_THRESHOLD && octaveStartRef.current > 3) setOctaveStart(octaveStartRef.current - 1);
+    setScrollDragX(0);
+  };
+
   const ensureCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+      // Pin a fixed sample rate rather than letting the browser pick
+      // whatever the current audio route happens to be running at (e.g.
+      // 48kHz over Bluetooth vs 44.1kHz on the built-in speaker, or a
+      // different rate after a call/other app changed the device's audio
+      // session). A varying sample rate doesn't change the harmonic
+      // content of the PeriodicWave itself, but it does change exactly
+      // where the lowpass filter's cutoff and envelope timings land
+      // relative to Nyquist and to the audio callback's block size, which
+      // is audible as the tone sounding subtly different from session to
+      // session even though nothing in the code changed. Some browsers
+      // reject an explicit sampleRate on certain devices, so fall back to
+      // the default if construction throws.
+      const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+      let ctx;
+      try {
+        ctx = new AudioCtxCls({ latencyHint: "interactive", sampleRate: 44100 });
+      } catch {
+        ctx = new AudioCtxCls({ latencyHint: "interactive" });
+      }
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.setValueAtTime(-18, ctx.currentTime);
-      comp.knee.setValueAtTime(24, ctx.currentTime);
-      comp.ratio.setValueAtTime(6, ctx.currentTime);
-      comp.attack.setValueAtTime(0.003, ctx.currentTime);
-      comp.release.setValueAtTime(0.15, ctx.currentTime);
+      // Light "safety" limiter rather than a tone-shaping compressor —
+      // only steps in on loud chord stacks, doesn't squash single notes.
+      comp.threshold.setValueAtTime(-8, ctx.currentTime);
+      comp.knee.setValueAtTime(6, ctx.currentTime);
+      comp.ratio.setValueAtTime(2.5, ctx.currentTime);
+      comp.attack.setValueAtTime(0.006, ctx.currentTime);
+      comp.release.setValueAtTime(0.2, ctx.currentTime);
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
       audioCtxRef.current = ctx;
@@ -971,26 +1156,37 @@ function PianoScreen({ C }) {
     const freq = freqFor(semitone);
     const env = PIANO_TONE_ENV_GRAND;
     const gain = ctx.createGain();
-    const peak = 0.62;
+    const peak = 0.6;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(peak, now + env.attack);
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak * env.decayTo), now + 0.4);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + env.tail);
     const t = Math.min(1, Math.max(0, (freq - 130) / (2000 - 130)));
-    const openMult = env.filterOpen - t * (env.filterOpen * 0.65);
-    const sustainMult = Math.max(1.4, openMult * env.filterSustain / env.filterOpen * 0.3 + env.filterSustain * 0.15);
+    const openMult = env.filterOpen - t * (env.filterOpen * 0.55);
+    const sustainMult = Math.max(1.6, openMult * env.filterSustain / env.filterOpen * 0.3 + env.filterSustain * 0.15);
     const filter = ctx.createBiquadFilter();
     filter.type = "lowpass";
-    filter.Q.value = 0.6;
-    filter.frequency.setValueAtTime(Math.min(9000, freq * openMult), now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(500, freq * sustainMult), now + 2.2);
-    const osc = ctx.createOscillator();
-    osc.setPeriodicWave(pianoWaveRef.current);
-    osc.frequency.value = freq;
-    osc.connect(filter); filter.connect(gain); gain.connect(masterCompRef.current || ctx.destination);
-    osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch { } };
-    osc.start(now);
-    return { osc, gain };
+    filter.Q.value = 0.4;
+    filter.frequency.setValueAtTime(Math.min(6500, freq * openMult), now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(600, freq * sustainMult), now + 2.6);
+    // Two slightly-detuned oscillators per note (a cheap stand-in for a
+    // piano's multiple unison strings) mixed together give the tone body
+    // and a subtle natural beating instead of a single flat synth tone.
+    const oscA = ctx.createOscillator();
+    oscA.setPeriodicWave(pianoWaveRef.current);
+    oscA.frequency.value = freq;
+    oscA.detune.value = -3;
+    const oscB = ctx.createOscillator();
+    oscB.setPeriodicWave(pianoWaveRef.current);
+    oscB.frequency.value = freq;
+    oscB.detune.value = 4;
+    const mix = ctx.createGain();
+    mix.gain.value = 0.5;
+    oscA.connect(mix); oscB.connect(mix);
+    mix.connect(filter); filter.connect(gain); gain.connect(masterCompRef.current || ctx.destination);
+    oscA.onended = () => { try { oscA.disconnect(); oscB.disconnect(); mix.disconnect(); filter.disconnect(); gain.disconnect(); } catch { } };
+    oscA.start(now); oscB.start(now);
+    return { osc: oscA, oscB, gain };
   };
   const stopVoice = (voice) => {
     if (!voice || !audioCtxRef.current) return;
@@ -1001,6 +1197,7 @@ function PianoScreen({ C }) {
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
       voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
       voice.osc.stop(now + 0.09);
+      if (voice.oscB) voice.oscB.stop(now + 0.09);
     } catch { }
   };
   const keyAt = (x, y) => {
@@ -1026,6 +1223,7 @@ function PianoScreen({ C }) {
 
   useEffect(() => {
     const handleMove = (e) => {
+      if (scrollModeRef.current) { handleScrollPointerMove(e); return; }
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
       e.preventDefault();
@@ -1043,6 +1241,7 @@ function PianoScreen({ C }) {
       }
     };
     const handleUp = (e) => {
+      if (scrollModeRef.current) { handleScrollPointerUp(e); return; }
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
       stopVoice(entry.voice);
@@ -1082,11 +1281,50 @@ function PianoScreen({ C }) {
     };
   }, []);
 
+  const renderOctaveKeys = () => (
+    <>
+      <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+        {WHITE_KEYS.map((k) => (
+          <div key={k.semitone} data-semitone={k.semitone} data-black="0" style={{
+            flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
+            display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(0,0,0,0.35)" }}>{k.name}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        {BLACK_KEYS.map((k) => {
+          const boundaryPct = ((k.afterWhiteIndex + 1) / 7) * 100;
+          const widthPct = (0.62 / 7) * 100;
+          const leftPct = boundaryPct - widthPct / 2;
+          return (
+            <div key={k.semitone} data-semitone={k.semitone} data-black="1" style={{
+              position: "absolute", top: 0, height: "58%", left: `${leftPct}%`, width: `${widthPct}%`,
+              background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
+              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 8, boxSizing: "border-box",
+            }}>
+              <span style={{ fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}>{k.name}</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>Piano</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setScrollMode((v) => !v)} style={{
+            height: 30, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5,
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            border: `1px solid ${scrollMode ? C.accentDim : C.borderStrong}`, background: scrollMode ? C.accentSoft : C.surface2,
+            color: scrollMode ? C.accent : C.text,
+          }}>
+            Scroll
+          </button>
           <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
             width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
             color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
@@ -1103,33 +1341,22 @@ function PianoScreen({ C }) {
         </div>
       </div>
 
-      <div ref={containerRef} onPointerDown={handlePointerDown} style={{ flex: 1, position: "relative", touchAction: "none" }}>
-        <div style={{ position: "absolute", inset: 0, display: "flex" }}>
-          {WHITE_KEYS.map((k) => (
-            <div key={k.semitone} data-semitone={k.semitone} data-black="0" style={{
-              flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
-              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
-            }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(0,0,0,0.35)" }}>{k.name}</span>
-            </div>
-          ))}
-        </div>
-        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-          {BLACK_KEYS.map((k) => {
-            const boundaryPct = ((k.afterWhiteIndex + 1) / 7) * 100;
-            const widthPct = (0.62 / 7) * 100;
-            const leftPct = boundaryPct - widthPct / 2;
-            return (
-              <div key={k.semitone} data-semitone={k.semitone} data-black="1" style={{
-                position: "absolute", top: 0, height: "58%", left: `${leftPct}%`, width: `${widthPct}%`,
-                background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
-                display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 8, boxSizing: "border-box",
-              }}>
-                <span style={{ fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}>{k.name}</span>
-              </div>
-            );
-          })}
-        </div>
+      <div
+        ref={containerRef}
+        onPointerDown={(e) => { if (scrollMode) handleScrollPointerDown(e); else handlePointerDown(e); }}
+        style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}
+      >
+        {scrollMode ? (
+          <div style={{
+            position: "absolute", top: 0, bottom: 0, left: "-100%", width: "300%", display: "flex",
+            transform: `translateX(${scrollDragX}px)`,
+            transition: isScrollDragging ? "none" : "transform 180ms ease",
+          }}>
+            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
+            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
+            <div style={{ position: "relative", width: "33.3334%", flexShrink: 0 }}>{renderOctaveKeys()}</div>
+          </div>
+        ) : renderOctaveKeys()}
       </div>
     </div>
   );
@@ -1282,20 +1509,30 @@ function useMetronomeEngine(settings) {
       });
       return;
     }
-    if (tone === "wood") {
-      const dur = 0.045;
+    if (tone === "sharp") {
+      // Loud, sharp click: a very short high-passed noise transient (the
+      // "crack") layered with a brief high-pitched tone (the "click"),
+      // both with fast decays so it stays punchy rather than ringing.
+      const dur = 0.05;
       const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * dur));
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
       const noise = ctx.createBufferSource(); noise.buffer = buffer;
-      const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass"; bp.frequency.value = isAccent ? 1600 : 1100; bp.Q.value = 6;
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.7, time);
-      gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
-      noise.connect(bp); bp.connect(gain); gain.connect(dest);
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = isAccent ? 3200 : 2600;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(isAccent ? 0.9 : 0.65, time);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+      noise.connect(hp); hp.connect(noiseGain); noiseGain.connect(dest);
       noise.start(time); noise.stop(time + dur);
+
+      const osc = ctx.createOscillator(); const oscGain = ctx.createGain();
+      osc.type = "triangle"; osc.frequency.value = isAccent ? 2600 : 2000;
+      oscGain.gain.setValueAtTime(isAccent ? 0.55 : 0.38, time);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.025);
+      osc.connect(oscGain); oscGain.connect(dest);
+      osc.start(time); osc.stop(time + 0.025);
       return;
     }
     if (tone === "digital") {
@@ -1343,6 +1580,7 @@ function useMetronomeEngine(settings) {
   };
 
   const start = async () => {
+    unlockAudioPlayback();
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -1672,12 +1910,12 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
 
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 320 }}>
-        <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ flex: 1, alignSelf: "stretch" }} C={C} />
-        <button onClick={cycleSubdivision} style={{ flex: 1, height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%", maxWidth: 320 }}>
+        <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ width: "100%" }} C={C} />
+        <button onClick={cycleSubdivision} style={{ width: "100%", height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <SubdivisionIcon value={subdivision} size={19} color={C.text} />
         </button>
-        <button onPointerDown={tapTempo} style={{ flex: 1, height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onPointerDown={tapTempo} style={{ width: "100%", height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
           TAP
         </button>
       </div>
@@ -1715,8 +1953,18 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
       const label = flattenTags ? flatify(tok.tag) : tok.tag;
       const labelWidthCh = (label ? label.length : 0) * ratio;
       if (reservedUntil !== null && pos < reservedUntil) {
+        // A single hyphen only buys one extra character of width. When the
+        // overlap is wider than that (e.g. a long chord/number crowding the
+        // next tag), pad extra plain spaces around the hyphen so the total
+        // gap actually clears the previous tag's label instead of still
+        // overlapping it.
+        const totalNeeded = Math.max(1, Math.ceil(reservedUntil - pos));
+        const before = Math.floor((totalNeeded - 1) / 2);
+        const after = Math.ceil((totalNeeded - 1) / 2);
+        for (let i = 0; i < before; i++) { out.push({ ch: " ", tag: null }); pos += 1; }
         out.push({ ch: "-", tag: null });
         pos += 1;
+        for (let i = 0; i < after; i++) { out.push({ ch: " ", tag: null }); pos += 1; }
       }
       out.push(tok);
       reservedUntil = pos + labelWidthCh;
@@ -1763,7 +2011,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   };
 
   if (!hasAnyContent && !editable) {
-    return <div style={{ color: C.textFaint, fontSize, fontFamily: MONO }}>{emptyHint || "\u2014"}</div>;
+    return emptyHint ? <div style={{ color: C.textFaint, fontSize, fontFamily: MONO }}>{emptyHint}</div> : null;
   }
 
   return (
@@ -1784,6 +2032,17 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
           const isSpace = tok.ch === " " || tok.ch === null;
           if (isSpace) {
             if (current.length) { groups.push({ type: "word", items: current }); current = []; }
+            // Collapse a run of consecutive spaces into a single flexible
+            // slot instead of one box per literal space character. Source
+            // text sometimes has several manually-typed spaces baked in to
+            // make room for a wide drum/chord tag — with the tag-driven
+            // minWidth below, that manual padding is no longer needed, so
+            // we render the run as one slot and let width come from the
+            // tag, not from how many spaces happen to be in the text.
+            if (!editable) {
+              const last = groups[groups.length - 1];
+              if (last && last.type === "space") { last.items.push({ tok, ti }); return; }
+            }
             groups.push({ type: "space", items: [{ tok, ti }] });
           } else {
             current.push({ tok, ti });
@@ -1855,29 +2114,35 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         return (
           <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
-              if (g.type !== "word") {
-                return (
-                  <span key={gi}>
-                    {g.items.map(renderChar)}
-                    <wbr />
-                  </span>
-                );
-              }
-              // A word's visible box only naturally spans 1ch per character, but an
-              // attached tag can render far wider than the word underneath it
+              // A word/space's visible box only naturally spans 1ch per character,
+              // but an attached tag can render far wider than what's underneath it
               // (e.g. a long drum-notation label). Since the tag is absolutely
-              // positioned, it doesn't contribute to layout width on its own —
-              // so without this, a long tag can silently overflow the container
-              // instead of forcing a wrap. Give the word a minimum width (in the
-              // same "ch" units, scaled for the tag's font size) equal to its
-              // longest attached tag, so the wrapping engine always accounts for
-              // it and pushes the whole word to the next line when it doesn't fit.
+              // positioned, it doesn't contribute to layout width on its own — so
+              // without this, a long tag can silently overflow the container
+              // instead of pushing the following text over. Give the group a
+              // minimum width (in "ch" units, scaled for the tag's font size)
+              // equal to its longest attached tag, so the tag always has room and
+              // wrapping accounts for it correctly.
               const maxTagLen = g.items.reduce((max, it) => {
                 if (!it.tok.tag) return max;
                 const label = flattenTags ? flatify(it.tok.tag) : it.tok.tag;
                 return Math.max(max, label.length);
               }, 0);
-              const minWidthCh = Math.max(g.items.length, maxTagLen * (tagSize / fontSize));
+              const tagDrivenWidth = maxTagLen * (tagSize / fontSize);
+              if (g.type !== "word") {
+                // Space run: floor of 1 slot regardless of how many literal
+                // spaces are in the source text — width comes from the tag,
+                // not from manual padding.
+                const repItem = g.items.find((it) => it.tok.tag) || g.items[0];
+                const minWidthCh = Math.max(1, tagDrivenWidth);
+                return (
+                  <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
+                    {renderChar(repItem)}
+                    <wbr />
+                  </span>
+                );
+              }
+              const minWidthCh = Math.max(g.items.length, tagDrivenWidth);
               return (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
@@ -1898,25 +2163,36 @@ function useEdgeSwipeBack(onBack) {
   const touchStartRef = useRef(null);
   const [dragX, setDragX] = useState(0);
   const [leaving, setLeaving] = useState(false);
-  const handleTouchStart = (e) => {
+  const mouseActiveRef = useRef(false);
+  const start = (x, y) => {
     if (leaving) return;
-    const x = e.touches[0].clientX;
     if (x > 24) { touchStartRef.current = null; return; }
-    touchStartRef.current = { x, y: e.touches[0].clientY };
+    touchStartRef.current = { x, y };
   };
-  const handleTouchMove = (e) => {
+  const move = (x, y) => {
     if (!touchStartRef.current || leaving) return;
-    const dx = e.touches[0].clientX - touchStartRef.current.x;
-    const dy = e.touches[0].clientY - touchStartRef.current.y;
+    const dx = x - touchStartRef.current.x;
+    const dy = y - touchStartRef.current.y;
     if (dx > 0 && dx > Math.abs(dy)) setDragX(dx);
   };
-  const handleTouchEnd = () => {
+  const end = () => {
     if (!touchStartRef.current) return;
     touchStartRef.current = null;
     if (dragX > 30) { setLeaving(true); setDragX(window.innerWidth); setTimeout(onBack, 200); }
     else setDragX(0);
   };
-  return { dragX, leaving, dragging: dragX > 0, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd } };
+  const handleTouchStart = (e) => start(e.touches[0].clientX, e.touches[0].clientY);
+  const handleTouchMove = (e) => move(e.touches[0].clientX, e.touches[0].clientY);
+  const handleTouchEnd = () => end();
+  const handleMouseDown = (e) => { mouseActiveRef.current = true; start(e.clientX, e.clientY); };
+  useEffect(() => {
+    const onMouseMove = (e) => { if (mouseActiveRef.current) move(e.clientX, e.clientY); };
+    const onMouseUp = () => { if (mouseActiveRef.current) { mouseActiveRef.current = false; end(); } };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
+  });
+  return { dragX, leaving, dragging: dragX > 0, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown } };
 }
 
 function useSetlistSongSwipe(onPrev, onNext) {
@@ -1924,16 +2200,16 @@ function useSetlistSongSwipe(onPrev, onNext) {
   const startRef = useRef({ x: 0, y: 0 });
   const dxRef = useRef(0);
   const directionRef = useRef(null);
+  const mouseActiveRef = useRef(false);
   const [swipeDragging, setSwipeDragging] = useState(false);
-  const handleTouchStart = (e) => {
-    if (e.touches.length !== 1) return;
-    startRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  const start = (x, y) => {
+    startRef.current = { x, y };
     directionRef.current = null; dxRef.current = 0; draggingRef.current = true;
   };
-  const handleTouchMove = (e) => {
+  const move = (x, y) => {
     if (!draggingRef.current) return;
-    const dx = e.touches[0].clientX - startRef.current.x;
-    const dy = e.touches[0].clientY - startRef.current.y;
+    const dx = x - startRef.current.x;
+    const dy = y - startRef.current.y;
     if (directionRef.current === null) {
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
       directionRef.current = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
@@ -1942,7 +2218,7 @@ function useSetlistSongSwipe(onPrev, onNext) {
     dxRef.current = dx;
     setSwipeDragging(true);
   };
-  const handleTouchEnd = () => {
+  const end = () => {
     const wasHorizontal = directionRef.current === "x";
     const dx = dxRef.current;
     draggingRef.current = false; directionRef.current = null; dxRef.current = 0;
@@ -1952,7 +2228,18 @@ function useSetlistSongSwipe(onPrev, onNext) {
       else if (dx < -140 && onNext) onNext();
     }
   };
-  return { dragX: 0, dragging: swipeDragging, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd } };
+  const handleTouchStart = (e) => { if (e.touches.length !== 1) return; start(e.touches[0].clientX, e.touches[0].clientY); };
+  const handleTouchMove = (e) => move(e.touches[0].clientX, e.touches[0].clientY);
+  const handleTouchEnd = () => end();
+  const handleMouseDown = (e) => { mouseActiveRef.current = true; start(e.clientX, e.clientY); };
+  useEffect(() => {
+    const onMouseMove = (e) => { if (mouseActiveRef.current) move(e.clientX, e.clientY); };
+    const onMouseUp = () => { if (mouseActiveRef.current) { mouseActiveRef.current = false; end(); } };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
+  });
+  return { dragX: 0, dragging: swipeDragging, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown } };
 }
 
 /* =========================================================================
@@ -1974,53 +2261,65 @@ function Modal({ title, onClose, children, C }) {
 }
 
 const SWIPE_REVEAL = 76;
-function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, C }) {
+function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, elevated = false, C }) {
   const [translateX, setTranslateX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const startXRef = useRef(0); const startYRef = useRef(0); const startTranslateRef = useRef(0);
   const movedRef = useRef(false); const directionRef = useRef(null);
   const isOpen = openId === id;
   useEffect(() => { if (!isOpen) setTranslateX(0); }, [isOpen]);
-  const handleTouchStart = (e) => {
+  const mouseActiveRef = useRef(false);
+  const startDrag = (x, y) => {
     if (openId !== null && openId !== id) onOpenIdChange(null);
-    startXRef.current = e.touches[0].clientX; startYRef.current = e.touches[0].clientY;
+    startXRef.current = x; startYRef.current = y;
     startTranslateRef.current = translateX; movedRef.current = false; directionRef.current = null;
     setDragging(true);
   };
-  const handleTouchMove = (e) => {
-    const dx = e.touches[0].clientX - startXRef.current;
-    const dy = e.touches[0].clientY - startYRef.current;
+  const moveDrag = (x, y, stopFn) => {
+    const dx = x - startXRef.current;
+    const dy = y - startYRef.current;
     if (directionRef.current === null) {
       if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
       directionRef.current = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
     }
     if (directionRef.current === "y") return;
-    e.stopPropagation();
+    if (stopFn) stopFn();
     if (Math.abs(dx) > 6) movedRef.current = true;
     setTranslateX(Math.min(0, Math.max(-SWIPE_REVEAL, startTranslateRef.current + dx)));
   };
-  const handleTouchEnd = (e) => {
+  const endDrag = (stopFn) => {
     setDragging(false);
     if (directionRef.current === "y") { directionRef.current = null; return; }
-    e.stopPropagation();
+    if (stopFn) stopFn();
     const shouldOpen = translateX < -SWIPE_REVEAL / 2;
     setTranslateX(shouldOpen ? -SWIPE_REVEAL : 0);
     onOpenIdChange(shouldOpen ? id : null);
     directionRef.current = null;
   };
+  const handleTouchStart = (e) => startDrag(e.touches[0].clientX, e.touches[0].clientY);
+  const handleTouchMove = (e) => moveDrag(e.touches[0].clientX, e.touches[0].clientY, () => e.stopPropagation());
+  const handleTouchEnd = (e) => endDrag(() => e.stopPropagation());
+  const handleMouseDown = (e) => { mouseActiveRef.current = true; startDrag(e.clientX, e.clientY); };
+  useEffect(() => {
+    const onMouseMove = (e) => { if (mouseActiveRef.current) moveDrag(e.clientX, e.clientY); };
+    const onMouseUp = () => { if (mouseActiveRef.current) { mouseActiveRef.current = false; endDrag(); } };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
+  });
   const handleContentClickCapture = (e) => {
     if (movedRef.current) { e.stopPropagation(); return; }
     if (isOpen) { e.stopPropagation(); setTranslateX(0); onOpenIdChange(null); }
   };
   return (
-    <div style={{ position: "relative", overflow: "hidden" }}>
+    <div style={{ position: "relative", overflow: elevated ? "visible" : "hidden", zIndex: elevated ? 100 : "auto" }}>
       <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: SWIPE_REVEAL, display: "flex", alignItems: "stretch", justifyContent: "center", background: "#161618" }}>
         <button onClick={() => { onDelete(); setTranslateX(0); onOpenIdChange(null); }} style={{ width: "100%", background: "none", border: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <RevealIcon size={18} color={C.danger} />
         </button>
       </div>
-      <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onClickCapture={handleContentClickCapture}
-        style={{ transform: `translateX(${translateX}px)`, transition: dragging ? "none" : "transform 200ms ease", background: C.bg, touchAction: "pan-y" }}>
+      <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} onMouseDown={handleMouseDown} onClickCapture={handleContentClickCapture}
+        style={{ transform: `translateX(${translateX}px)`, transition: dragging ? "none" : "transform 200ms ease", background: C.bg, touchAction: "pan-y", cursor: "grab" }}>
         {children}
       </div>
     </div>
@@ -2231,7 +2530,6 @@ const SECTION_TABS = [
   { id: "chart", label: "Chart" },
   { id: "drums", label: "Drums" },
 ];
-const TAB_META = { lyrics: MODE_META.vocals, chords: MODE_META.chords, chart: MODE_META.chords, drums: MODE_META.drums };
 function AutoGrowTextarea({ value, onChange, style, ...rest }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -2256,7 +2554,7 @@ const escapeHtml = (s) => String(s ?? "")
 // tinted in the given accent colour as the user types. When
 // restrictToNashville is set, only tokens matching the Nashville-number
 // pattern are tinted — anything else in brackets stays plain text colour.
-function HighlightedAutoGrowTextarea({ value, onChange, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
+function HighlightedAutoGrowTextarea({ value, onChange, onBlur, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
   const taRef = useRef(null);
   const backdropRef = useRef(null);
   useEffect(() => {
@@ -2293,6 +2591,7 @@ function HighlightedAutoGrowTextarea({ value, onChange, placeholder, wrapperStyl
         className="no-ring"
         value={raw}
         onChange={onChange}
+        onBlur={onBlur}
         onScroll={handleScroll}
         style={{ ...baseTextStyle, position: "relative", display: "block", color: "transparent", caretColor: C.text, resize: "none", overflow: "hidden", outline: "none", boxShadow: "none" }}
       />
@@ -2384,7 +2683,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     if (!cleanTitle) return;
     if (isDuplicate) { setError("Song already exists"); return; }
     const savedKey = composeKey(keyNatural, keyAccidental);
-    const normalizedChordsText = chordsTaggedToNumbersTagged(chordsText, savedKey, keyQuality);
+    const normalizedChordsText = chordsTaggedToNumbersTagged(autoBracketNumbers(chordsText), savedKey, keyQuality);
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: savedKey, keyQuality, language, description, accents, subdivision,
@@ -2395,10 +2694,10 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const SECTION_TAB_VALUES = { lyrics: [lyricsText, setLyricsText], chords: [chordsText, setChordsText], chart: [chartText, setChartText], drums: [drumsText, setDrumsText] };
   const [activeSectionValue, setActiveSectionValue] = SECTION_TAB_VALUES[sectionTab];
   const SECTION_TAB_PLACEHOLDERS = {
-    lyrics: "Type the full song lyrics…\n-Verse\nFirst line of lyrics\nSecond line\n-Chorus\n…",
-    chords: "Type chords/numbers…\n-Verse\n[1]First line [4]of lyrics\n-Chorus\n…",
-    chart: "Type lyrics with [Chord] placements…\n-Verse\n[C]First line [G]of lyrics\n-Chorus\n…",
-    drums: "Type lyrics with [Note] placements…\n-Verse\n[Kick]First line of lyrics\n-Chorus\n…",
+    lyrics: "-Verse\nFirst line\nSecond line\n-Chorus\n…",
+    chords: "-Verse\n1 4 5\n-Chorus\n…",
+    chart: "-Verse\n[C]First line [G]of lyrics\n-Chorus\n…",
+    drums: "-Verse\n[Kick]First line of lyrics\n-Chorus\n…",
   };
 
   return (
@@ -2444,9 +2743,8 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           <div style={{ display: "flex", gap: 6, marginBottom: 12, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4 }}>
             {SECTION_TABS.map((t) => {
               const active = sectionTab === t.id;
-              const meta = TAB_META[t.id];
               return (
-                <button key={t.id} onClick={() => setSectionTab(t.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
+                <button key={t.id} onClick={() => setSectionTab(t.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
                   {t.label}
                 </button>
               );
@@ -2456,12 +2754,13 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           <HighlightedAutoGrowTextarea
             value={activeSectionValue}
             onChange={(e) => setActiveSectionValue(e.target.value)}
+            onBlur={() => { if (sectionTab === "chords") setChordsText((t) => autoBracketNumbers(t)); }}
             placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
-            accent={TAB_META[sectionTab].accent}
+            accent={C.accent}
             restrictToNashville={sectionTab === "chords"}
             C={C}
             wrapperStyle={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, minHeight: 140 }}
-            textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
+            textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.4, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
         </Field>
 
         {error && <div style={{ color: C.danger, fontSize: 13, textAlign: "center", fontWeight: 500 }}>{error}</div>}
@@ -2500,7 +2799,11 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
    ========================================================================= */
 function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, deleteConfirmMessage = "Delete this song?", C }) {
   const MENU_WIDTH = 170;
-  const rightX = window.innerWidth - MENU_WIDTH / 2 - 20;
+  // Anchor to the actual long-press point, clamped so the menu stays fully
+  // on screen — it was previously pinned to a fixed right-edge x regardless
+  // of where the press happened, so it always showed up near the bottom
+  // right corner.
+  const clampedX = Math.min(Math.max(x, MENU_WIDTH / 2 + 12), window.innerWidth - MENU_WIDTH / 2 - 12);
   const openUpward = y > window.innerHeight - 160;
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
   return (
@@ -2517,7 +2820,7 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
         onTouchStart={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         style={{
-          position: "fixed", left: rightX, top: openUpward ? y - 10 : y + 10,
+          position: "fixed", left: clampedX, top: openUpward ? y - 10 : y + 10,
           transform: openUpward ? "translate(-50%, -100%)" : "translate(-50%, 0)",
           zIndex: 220, width: "max-content", minWidth: MENU_WIDTH,
           background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden",
@@ -2552,6 +2855,10 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
   };
   const movePress = (e) => {
     if (!swipeStartRef.current || firedLongPressRef.current) return;
+    // Swipe-to-load-into-metronome only does anything in Drums mode; in
+    // Lyrics/Chords mode there's no onLoadToMetronome handler, so don't
+    // let the row drag around for a gesture that has no effect.
+    if (!onLoadToMetronome) return;
     const point = e.touches ? e.touches[0] : e;
     const dx = point.clientX - swipeStartRef.current.x;
     const dy = point.clientY - swipeStartRef.current.y;
@@ -2633,7 +2940,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
   );
 }
 
-function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, C }) {
+function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, mode, C }) {
   const [query, setQuery] = useState("");
   const [nameDraft, setNameDraft] = useState(setlistName ?? "");
   const filtered = songs.filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()));
@@ -2664,7 +2971,9 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
                 {checked && <Check size={14} color="#fff" />}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{s.title}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{s.artist || "Unknown"}</div></div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{keyLabel(s)}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>
+                {mode === "drums" ? (s.tempo !== "" && s.tempo != null ? `${s.tempo}` : "—") : keyLabel(s)}
+              </div>
             </div>
           );
         })}
@@ -2717,7 +3026,7 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
-function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
+function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [chordsView, setChordsView] = useState("chords");
@@ -2749,11 +3058,11 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   };
   const cancelTitlePress = () => { if (titleLongPressRef.current) { clearTimeout(titleLongPressRef.current); titleLongPressRef.current = null; } };
 
-  const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
+  const labelFontSize = sectionFontSize != null ? sectionFontSize : Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const badgeStyle = { fontSize: 12.5, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap" };
   const chevronBtn = { width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0 };
   const keyButtonStyle = { minWidth: 56, height: 30, padding: "0 10px", borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.border}`, background: C.surface2, color: C.text };
-  const lyricsToggleStyle = (on) => ({ height: 30, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
+  const lyricsToggleStyle = (on) => ({ height: 30, minWidth: 64, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
 
   const isVocals = mode === "vocals";
   const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? ms.drumsText : (chordsView === "chords" ? ms.chordsText : ms.chartText);
@@ -2772,7 +3081,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
         </div>
         {mode === "drums" && !!engine && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
-            <Gauge size={16} />
+            <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
         )}
         {song.description ? (
@@ -2798,6 +3107,21 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
         </div>
       )}
 
+      {mode === "drums" && showBottomBar && (
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, flexWrap: "nowrap", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} C={C} />
+            <button onClick={cycleSubdivision} style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
+            </button>
+          </div>
+          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.textMuted, minWidth: 36, textAlign: "right", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{Math.round(engine.bpm)}</div>
+        </div>
+      )}
+
       <div className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y" }}>
         {descOpen && song.description && (
           <div style={{ marginBottom: 18, padding: "11px 13px", background: C.surface2, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 8, fontSize: 13.5, color: C.textMuted, whiteSpace: "pre-wrap" }}>
@@ -2812,7 +3136,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
               {isVocals ? (
-                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} emptyHint="\u2014" />
+                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} />
               ) : (
                 <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} />
               )}
@@ -2822,26 +3146,12 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: 8, padding: "10px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} openUpwardOnly size={7} C={C} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "start" }}>
-              <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={40} C={C} />
-              <button onClick={cycleSubdivision} style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <SubdivisionIcon value={engine.subdivision} size={16} color={C.text} />
-              </button>
-            </div>
-            <button onClick={engine.toggle} style={{ width: 56, height: 44, borderRadius: 12, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, justifySelf: "center" }}>
-              {engine.playing ? <Square size={20} color={C.accent} fill={C.accent} /> : <Play size={20} color={C.accent} fill={C.accent} style={{ marginLeft: 2 }} />}
-            </button>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, justifySelf: "end" }}>
-              <button {...decBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-              <div style={{ fontSize: 17, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: C.text, minWidth: 32, textAlign: "center" }}>{Math.round(engine.bpm)}</div>
-              <button {...incBpmHold} style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 18, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
-            </div>
-          </div>
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 28, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
+          <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
+          <button onClick={engine.toggle} style={{ width: 84, height: 84, borderRadius: "50%", border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            {engine.playing ? <Square size={30} color={C.accent} fill={C.accent} /> : <Play size={30} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
+          </button>
+          <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
         </div>
       )}
     </div>
@@ -2900,18 +3210,16 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
     onUpdateSetlist({ ...setlist, entries: has ? setlist.entries.filter((e) => e.songId !== songId) : [...setlist.entries, { songId, keyOverride: null }] });
   };
 
-  const handleSongTouchStart = (idx, e) => {
-    if (e.touches.length !== 1) return;
-    startYRef.current = e.touches[0].clientY;
+  const mouseDragIdxRef = useRef(null);
+  const startSongDrag = (idx, clientY) => {
+    startYRef.current = clientY;
     if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
     dragTimerRef.current = setTimeout(() => { setActiveDragIndex(idx); setDragY(0); if (navigator.vibrate) navigator.vibrate(15); }, 400);
   };
-  const handleSongTouchMove = (idx, e) => {
-    if (e.touches.length !== 1) return;
-    const clientY = e.touches[0].clientY;
+  const moveSongDrag = (idx, clientY, preventDefault) => {
     if (activeDragIndex === null) { if (Math.abs(clientY - startYRef.current) > 10) clearTimeout(dragTimerRef.current); }
     else {
-      e.preventDefault(); e.stopPropagation();
+      if (preventDefault) preventDefault();
       const deltaY = clientY - startYRef.current;
       setDragY(deltaY);
       const rowHeight = 60; const total = setlistSongs.length;
@@ -2919,14 +3227,27 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
         const next = [...setlist.entries];[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current += rowHeight; setActiveDragIndex(idx + 1); setDragY(clientY - startYRef.current);
+        mouseDragIdxRef.current = idx + 1;
       } else if (deltaY < -rowHeight / 2 && idx > 0) {
         const next = [...setlist.entries];[next[idx], next[idx - 1]] = [next[idx - 1], next[idx]];
         onUpdateSetlist({ ...setlist, entries: next });
         startYRef.current -= rowHeight; setActiveDragIndex(idx - 1); setDragY(clientY - startYRef.current);
+        mouseDragIdxRef.current = idx - 1;
       }
     }
   };
-  const handleSongTouchEnd = () => { if (dragTimerRef.current) clearTimeout(dragTimerRef.current); if (activeDragIndex !== null) justDraggedRef.current = true; setActiveDragIndex(null); setDragY(0); };
+  const endSongDrag = () => { if (dragTimerRef.current) clearTimeout(dragTimerRef.current); if (activeDragIndex !== null) justDraggedRef.current = true; setActiveDragIndex(null); setDragY(0); mouseDragIdxRef.current = null; };
+  const handleSongTouchStart = (idx, e) => { if (e.touches.length !== 1) return; startSongDrag(idx, e.touches[0].clientY); };
+  const handleSongTouchMove = (idx, e) => { if (e.touches.length !== 1) return; moveSongDrag(idx, e.touches[0].clientY, () => { e.preventDefault(); e.stopPropagation(); }); };
+  const handleSongTouchEnd = () => endSongDrag();
+  const handleSongMouseDown = (idx, e) => { mouseDragIdxRef.current = idx; startSongDrag(idx, e.clientY); };
+  useEffect(() => {
+    const onMouseMove = (e) => { if (mouseDragIdxRef.current !== null) moveSongDrag(mouseDragIdxRef.current, e.clientY); };
+    const onMouseUp = () => { if (mouseDragIdxRef.current !== null) endSongDrag(); };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
+  });
 
   const bottomInset = "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))";
 
@@ -2953,7 +3274,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
         ) : setlistSongs.map(({ song: s, keyOverride }, idx) => {
           const isDraggingThis = activeDragIndex === idx;
           return (
-            <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => removeFromStage(s.id)} icon={X} C={C}>
+            <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => removeFromStage(s.id)} icon={X} C={C} elevated={isDraggingThis}>
               <SetlistSongRow
                 song={s} keyOverride={keyOverride} mode={mode} C={C}
                 onClick={() => {
@@ -2965,6 +3286,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
                   onTouchMove: (e) => handleSongTouchMove(idx, e),
                   onTouchEnd: handleSongTouchEnd,
                   onTouchCancel: handleSongTouchEnd,
+                  onMouseDown: (e) => handleSongMouseDown(idx, e),
                 }}
                 style={{
                   transform: isDraggingThis ? `translateY(${dragY}px)` : "none", zIndex: isDraggingThis ? 100 : 1,
@@ -2978,7 +3300,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       </div>
 
       {pickerOpen && (
-        <SongPickerScreen songs={songs} selectedIds={setlist.entries.map((e) => e.songId)} onToggle={toggleSong} onClose={() => setPickerOpen(false)} setlistName={setlist.name} onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })} C={C} />
+        <SongPickerScreen songs={songs} selectedIds={setlist.entries.map((e) => e.songId)} onToggle={toggleSong} onClose={() => setPickerOpen(false)} setlistName={setlist.name} onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })} mode={mode} C={C} />
       )}
     </div>
   );
@@ -3017,12 +3339,21 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
-  const labelFontSize = Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
+  const labelFontSize = sectionFontSize;
   const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
+
+  // Which display target the Font Size / Bold / Spacing controls below the
+  // dropdown currently affect.
+  const [displayTarget, setDisplayTarget] = useState("lyrics");
+  const DISPLAY_TARGETS = [
+    { id: "lyrics", label: "Song Lyrics" },
+    { id: "chords", label: "Chords / Notes" },
+    { id: "headers", label: "Section Headers" },
+  ];
 
   const cycleTone = (dir) => {
     const next = (toneIndex + dir + CLICK_TONES.length) % CLICK_TONES.length;
@@ -3033,6 +3364,25 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   const incLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.min(80, f + 1)));
   const decNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.max(8, f - 1)));
   const incNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.min(80, f + 1)));
+  const decSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.max(9, f - 1)));
+  const incSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.min(30, f + 1)));
+  const decLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100)));
+  const incLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100)));
+  const decNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.max(0.3, Math.round((f - 0.1) * 100) / 100)));
+  const incNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.min(2.5, Math.round((f + 0.1) * 100) / 100)));
+
+  // Font Size / Bold / Spacing all delegate to whichever target is picked
+  // in the dropdown above them.
+  const targetSize = displayTarget === "lyrics" ? fontSize : displayTarget === "chords" ? chordFontSize : sectionFontSize;
+  const targetSizeHold = displayTarget === "lyrics" ? { dec: decLyricsSizeHold, inc: incLyricsSizeHold }
+    : displayTarget === "chords" ? { dec: decNotesSizeHold, inc: incNotesSizeHold }
+      : { dec: decSectionSizeHold, inc: incSectionSizeHold };
+  const targetBold = displayTarget === "lyrics" ? lyricsBold : displayTarget === "chords" ? notesBold : null;
+  const targetSetBold = displayTarget === "lyrics" ? setLyricsBold : displayTarget === "chords" ? setNotesBold : null;
+  const targetSpacing = displayTarget === "lyrics" ? lineSpacing : displayTarget === "chords" ? noteSpacing : null;
+  const targetSpacingHold = displayTarget === "lyrics" ? { dec: decLineSpacingHold, inc: incLineSpacingHold }
+    : displayTarget === "chords" ? { dec: decNoteSpacingHold, inc: incNoteSpacingHold }
+      : null;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -3057,39 +3407,27 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
 
           <SectionLabel>DISPLAY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-            <Field label="LYRICS SIZE">
+            <Field label="APPLY TO">
+              <GenericDropdown value={displayTarget} options={DISPLAY_TARGETS} onChange={setDisplayTarget} C={C} />
+            </Field>
+            <Field label="FONT SIZE">
               <div style={{ display: "flex", gap: 8 }}>
                 <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...decLyricsSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fontSize}px</div>
-                  <button {...incLyricsSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button {...targetSizeHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSize}px</div>
+                  <button {...targetSizeHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
-                <button onClick={() => setLyricsBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${lyricsBold ? C.accent : C.border}`, background: lyricsBold ? C.accentSoft : C.surface3, color: lyricsBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
+                {targetSetBold && (
+                  <button onClick={() => targetSetBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${targetBold ? C.accent : C.border}`, background: targetBold ? C.accentSoft : C.surface3, color: targetBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
+                )}
               </div>
             </Field>
-            <Field label="NOTES SIZE">
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...decNotesSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{chordFontSize}px</div>
-                  <button {...incNotesSizeHold} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-                </div>
-                <button onClick={() => setNotesBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${notesBold ? C.accent : C.border}`, background: notesBold ? C.accentSoft : C.surface3, color: notesBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
-              </div>
-            </Field>
-            <Field label="LINE SPACING">
-              <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                <button onClick={() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{lineSpacing.toFixed(2)}</div>
-                <button onClick={() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-              </div>
-            </Field>
-            {mode !== "vocals" && (
-              <Field label="NOTE SPACING">
+            {targetSpacingHold && (
+              <Field label="SPACING">
                 <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button onClick={() => setNoteSpacing((f) => Math.max(0.3, Math.round((f - 0.1) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{noteSpacing.toFixed(2)}</div>
-                  <button onClick={() => setNoteSpacing((f) => Math.min(2.5, Math.round((f + 0.1) * 100) / 100))} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button {...targetSpacingHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSpacing.toFixed(2)}</div>
+                  <button {...targetSpacingHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
               </Field>
             )}
@@ -3124,7 +3462,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                   />
                 ) : (
                   <ChordText
-                    text={numbersTaggedToChordsTagged("[1]Way maker, [4]miracle worker,\n[6m]promise keeper, [5]light in the [1]darkness", "E", "Major")}
+                    text={numbersTaggedToChordsTagged("[1]Way maker, [4]miracle worker,\n[6]promise keeper, [5]light in the [1]darkness", "E", "Major")}
                     editable={false} dim={true} showLyrics={true} brightTags={true} flattenTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
@@ -3162,16 +3500,12 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           ) : null}
 
           <SectionLabel>LIBRARY</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => fileRef.current?.click()} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Download size={16} color={C.accent} /> Import</button>
               <input ref={fileRef} type="file" accept="application/json" onChange={(e) => { if (e.target.files[0]) onImportFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
               <button onClick={onExportOpen} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Upload size={16} color={C.accent} /> Export</button>
             </div>
-          </div>
-
-          <SectionLabel>BAND SYNC</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
             <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Shared library</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
           </div>
 
@@ -3192,16 +3526,16 @@ function Toast({ message, C }) {
 }
 
 function BottomNav({ active, onChange, mode, C }) {
-  const firstTab = mode === "drums" ? { id: "practice", label: "Metronome", icon: GaugeIcon } : { id: "practice", label: "Piano", icon: PianoIcon };
-  const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
+  const firstTab = mode === "drums" ? { id: "practice", label: "Metronome", icon: MetronomeIcon, size: 23 } : { id: "practice", label: "Piano", icon: PianoIcon, size: 23 };
+  const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic, size: 18 }, { id: "setlists", label: "Setlists", icon: Layers, size: 18 }, { id: "settings", label: "Settings", icon: SettingsIcon, size: 18 }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
       <div style={{ display: "flex", background: "#000000", paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, label, icon: Icon, size }) => {
           const isActive = active === id;
           return (
             <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
-              <Icon size={18} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
+              <Icon size={size} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
               <span style={{ fontSize: 8, color: isActive ? C.accent : C.textMuted, fontWeight: isActive ? 600 : 400 }}>{label}</span>
             </button>
           );
@@ -3229,6 +3563,7 @@ function AppInner() {
   const [setlists, setSetlists] = useIndexedDbState("setlists", SEED_SETLISTS);
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 22);
   const [chordFontSize, setChordFontSize] = useLocalStorageState("altar:chord-font-size", 16);
+  const [sectionFontSize, setSectionFontSize] = useLocalStorageState("altar:section-font-size", 14);
   const [textAlign, setTextAlign] = useLocalStorageState("altar:text-align", "left");
   const [lyricsBold, setLyricsBold] = useLocalStorageState("altar:lyrics-bold", false);
   const [notesBold, setNotesBold] = useLocalStorageState("altar:notes-bold", false);
@@ -3244,6 +3579,14 @@ function AppInner() {
 
   const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
+
+  // Metronome only belongs to Drums mode — stop it whenever the person
+  // switches to Chords or Vocals so it doesn't keep clicking in the
+  // background while they're reading lyrics or chords.
+  useEffect(() => {
+    if (mode !== "drums" && engine.playing) engine.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   const [tab, setTab] = useState(() => (mode === "vocals" ? "songs" : "practice"));
   const [editingSong, setEditingSong] = useState(undefined);
@@ -3506,7 +3849,7 @@ function AppInner() {
             : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => setEditingSong(null)} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} C={C} />
         )}
         {tab === "setlists" && (
           <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
@@ -3516,6 +3859,7 @@ function AppInner() {
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
+            sectionFontSize={sectionFontSize} setSectionFontSize={setSectionFontSize}
             textAlign={textAlign} setTextAlign={setTextAlign}
             lyricsBold={lyricsBold} setLyricsBold={setLyricsBold}
             notesBold={notesBold} setNotesBold={setNotesBold}
@@ -3547,7 +3891,7 @@ function AppInner() {
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
-          fontSize={fontSize} textAlign={textAlign} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} noteSpacing={noteSpacing} chordFontSize={chordFontSize}
+          fontSize={fontSize} textAlign={textAlign} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} noteSpacing={noteSpacing} chordFontSize={chordFontSize} sectionFontSize={sectionFontSize}
           mode={mode} engine={engine}
           C={C}
         />
@@ -3575,59 +3919,8 @@ function AppInner() {
   );
 }
 
-/* On-screen crash reporter — shows JS errors directly on the page so they
-   can be read without any dev tools (e.g. on a phone). Catches both React
-   render errors and any other uncaught runtime/promise errors. */
-class CrashReporter extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { error };
-  }
-  componentDidCatch(error, info) {
-    console.error("Altar crashed:", error, info);
-  }
-  componentDidMount() {
-    window.addEventListener("error", this.handleWindowError);
-    window.addEventListener("unhandledrejection", this.handleRejection);
-  }
-  componentWillUnmount() {
-    window.removeEventListener("error", this.handleWindowError);
-    window.removeEventListener("unhandledrejection", this.handleRejection);
-  }
-  handleWindowError = (e) => {
-    this.setState({ error: e.error || new Error(e.message) });
-  };
-  handleRejection = (e) => {
-    this.setState({ error: e.reason instanceof Error ? e.reason : new Error(String(e.reason)) });
-  };
-  render() {
-    if (this.state.error) {
-      const err = this.state.error;
-      return (
-        <div style={{
-          position: "fixed", inset: 0, background: "#1a0000", color: "#ffb3b3",
-          fontFamily: "monospace", fontSize: 13, padding: 20, overflow: "auto",
-          whiteSpace: "pre-wrap", boxSizing: "border-box", zIndex: 999999,
-        }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#ff6b6b", marginBottom: 12 }}>
-            Altar crashed — copy this text to fix it:
-          </div>
-          <div>{String(err && err.message ? err.message : err)}</div>
-          <div style={{ marginTop: 12, fontSize: 11, opacity: 0.8 }}>{err && err.stack}</div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 export default function App() {
   return (
-    <CrashReporter>
-      <AppInner />
-    </CrashReporter>
+    <AppInner />
   );
 }
