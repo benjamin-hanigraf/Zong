@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
@@ -318,7 +319,7 @@ const TANGLISH_VOICED = {
 // (in a nasal+stop cluster, e.g. ன்ப, ம்ப, ந்த, ங்க) voices reliably.
 const TANGLISH_NASALS = new Set(["\u0B99", "\u0B9E", "\u0BA3", "\u0BA8", "\u0BAE", "\u0BA9"]);
 const TANGLISH_VOWEL_SIGNS = {
-  "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ee", "\u0BC1": "u", "\u0BC2": "uu",
+  "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ee", "\u0BC1": "u", "\u0BC2": "oo",
   "\u0BC6": "e", "\u0BC7": "ae", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "o", "\u0BCC": "au",
 };
 const TANGLISH_DIGITS = {
@@ -343,6 +344,10 @@ const TANGLISH_EXCEPTIONS = {
   "நன்றி": "Nandri", "மகிழ்ச்சி": "Magizhchi", "சமாதானம்": "Samaadhaanam",
   "நித்தியம்": "Nithiyam", "பாடுவோம்": "Paaduvom", "பாராட்டு": "Paaraattu",
 };
+// Runtime-mutable copy — replaced by the persisted user dictionary at startup
+// and kept in sync whenever the user edits the Spelling Chart.
+let activeTanglishExceptions = { ...TANGLISH_EXCEPTIONS };
+function setActiveTanglishExceptions(map) { activeTanglishExceptions = map; }
 // Transliterates one clean (tag-free) Tamil word into Tanglish, while also
 // recording — for every input character index — the output-string offset
 // at that exact point. That lets a tag anchored to a specific input
@@ -416,9 +421,9 @@ function transliterateTaggedTokens(tokens) {
       // to use the curated dictionary spelling if one exists, since there's
       // nowhere ambiguous to splice.
       const onlyLeadingTag = tagHits.length === 0 || (tagHits.length === 1 && tagHits[0].index === 0);
-      if (onlyLeadingTag && TANGLISH_EXCEPTIONS[rawWord]) {
+      if (onlyLeadingTag && activeTanglishExceptions[rawWord]) {
         const lead = tagHits.length ? `[${tagHits[0].tag}]` : "";
-        result += lead + TANGLISH_EXCEPTIONS[rawWord];
+        result += lead + activeTanglishExceptions[rawWord];
         continue;
       }
 
@@ -2341,7 +2346,7 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
       return;
     }
     if (tok.tag) {
-      const label = flattenTags ? flatify(tok.tag) : tok.tag;
+      const label = flatify(tok.tag);
       const labelWidthCh = (label ? label.length : 0) * ratio;
       if (reservedUntil !== null && pos < reservedUntil) {
         // A single hyphen only buys one extra character of width. When the
@@ -2371,6 +2376,33 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
 function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
+  const rootRef = useRef(null);
+  // Collapse "space" groups that land at the very start of a browser-wrapped
+  // visual row. Real line-start spaces are already stripped from the raw
+  // text below, so any space-group measured at offsetLeft 0 inside its row
+  // is by definition a wrap-introduced leading space, not an intentional
+  // one — hide it so wrapped continuation lines don't show indentation.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const collapseWrapLeadingSpaces = () => {
+      const spaceEls = root.querySelectorAll('[data-space-group="1"]');
+      spaceEls.forEach((el) => { el.style.width = ""; el.style.minWidth = el.dataset.origMinWidth || ""; el.style.overflow = ""; el.style.visibility = ""; });
+      spaceEls.forEach((el) => {
+        if (el.offsetLeft === 0) {
+          el.style.width = "0px";
+          el.style.minWidth = "0px";
+          el.style.overflow = "hidden";
+          el.style.visibility = "hidden";
+        }
+      });
+    };
+    collapseWrapLeadingSpaces();
+    const ro = new ResizeObserver(collapseWrapLeadingSpaces);
+    ro.observe(root);
+    window.addEventListener("resize", collapseWrapLeadingSpaces);
+    return () => { ro.disconnect(); window.removeEventListener("resize", collapseWrapLeadingSpaces); };
+  });
   const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
@@ -2406,7 +2438,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div ref={rootRef} style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -2468,7 +2500,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
               style={{
                 position: "relative", display: "inline-block", paddingTop: topPad,
-                cursor: editable ? "pointer" : "default", width: tok.ch && tok.ch.length > 1 ? undefined : "1ch",
+                cursor: editable ? "pointer" : "default", width: tok.ch && (tok.ch.length > 1 || TAMIL_RANGE_RE.test(tok.ch)) ? undefined : "1ch",
                 lineHeight: `${lineHeightMult}em`,
               }}
             >
@@ -2502,7 +2534,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   color: brightTags ? C.text : accent,
                   opacity: 1,
                 }}>
-                  {flattenTags ? flatify(tok.tag) : tok.tag}
+                  {flatify(tok.tag)}
                 </span>
               ) : editable ? (
                 /* Empty slot tap target — shows a faint + when in edit mode */
@@ -2535,7 +2567,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               // wrapping accounts for it correctly.
               const maxTagLen = g.items.reduce((max, it) => {
                 if (!it.tok.tag) return max;
-                const label = flattenTags ? flatify(it.tok.tag) : it.tok.tag;
+                const label = flatify(it.tok.tag);
                 return Math.max(max, label.length);
               }, 0);
               const tagDrivenWidth = maxTagLen * (tagSize / fontSize);
@@ -2545,8 +2577,9 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                 // not from manual padding.
                 const repItem = g.items.find((it) => it.tok.tag) || g.items[0];
                 const minWidthCh = Math.max(1, tagDrivenWidth);
+                const minWidthVal = showTags ? `${minWidthCh}ch` : undefined;
                 return (
-                  <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
+                  <span key={gi} data-space-group="1" data-orig-min-width={minWidthVal || ""} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: minWidthVal }}>
                     {renderChar(repItem)}
                     <wbr />
                   </span>
@@ -3219,7 +3252,14 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
   const clampedX = Math.min(Math.max(x, MENU_WIDTH / 2 + 12), window.innerWidth - MENU_WIDTH / 2 - 12);
   const openUpward = y > window.innerHeight - 160;
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  return (
+  // Portaled to document.body: a `position: fixed` descendant is positioned
+  // relative to the nearest ancestor that has a CSS transform (any
+  // transform, including translateX(0)), not the viewport — and list rows
+  // set an inline transform for swipe-to-load. Without the portal, the menu
+  // was anchoring to that row's transformed box instead of the screen,
+  // landing in a different spot depending on which row/scroll position it
+  // opened from.
+  return createPortal(
     <>
       <div
         onClick={(e) => { stop(e); onClose(); }}
@@ -3243,7 +3283,8 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
         <MenuItem icon={IosShareIcon} label="Share" onClick={() => { onClose(); onShare(); }} C={C} />
         <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); if (window.confirm(deleteConfirmMessage)) onDelete(); }} C={C} />
       </div>
-    </>
+    </>,
+    document.body
   );
 }
 function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, mode, tanglishMode, C, dimmed, onMenuOpenChange }) {
@@ -3291,11 +3332,22 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
     if (swipeFiredRef.current) { swipeFiredRef.current = false; return; }
     onOpen(song);
   };
+  // Right-click opens the same action menu as a long-press, since holding
+  // down a mouse button for 500ms isn't a discoverable gesture on
+  // laptop/PC — right-click is the standard desktop convention for a
+  // context/action menu.
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    firedLongPressRef.current = true;
+    setMenuPos({ x: e.clientX, y: e.clientY });
+    if (onMenuOpenChange) onMenuOpenChange(song.id);
+  };
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", opacity: dimmed ? 0.3 : 1, transition: dimmed ? "opacity 150ms ease" : "transform 120ms ease", transform: `translateX(${swipeDx}px)`, background: C.bg, zIndex: menuPos ? 130 : 1 }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
-      onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress}>
+      onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
@@ -3773,7 +3825,151 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+/* =========================================================================
+   SpellingChartScreen — full-screen overlay listing every TANGLISH_EXCEPTIONS
+   entry as a Tamil → Tanglish table, with add / delete support.
+   ========================================================================= */
+function SpellingChartScreen({ chart, onSave, onBack, C }) {
+  // chart is an object { tamilWord: tanglishSpelling, ... }
+  const [adding, setAdding] = useState(false);
+  const [newTamil, setNewTamil] = useState("");
+  const [newLatin, setNewLatin] = useState("");
+  const [editError, setEditError] = useState("");
+
+  // Keep seed entries in declaration order, user-added entries appended alphabetically.
+  const seedKeys = Object.keys(TANGLISH_EXCEPTIONS);
+  const userKeys = Object.keys(chart).filter((k) => !seedKeys.includes(k)).sort();
+  const rows = [
+    ...seedKeys.filter((k) => k in chart),
+    ...userKeys,
+  ];
+
+  const handleDelete = (key) => {
+    const next = { ...chart };
+    delete next[key];
+    onSave(next);
+  };
+
+  const handleAdd = () => {
+    const tamil = newTamil.trim();
+    const latin = newLatin.trim();
+    if (!tamil) { setEditError("Enter a Tamil word."); return; }
+    if (!latin) { setEditError("Enter the Tanglish spelling."); return; }
+    if (chart[tamil]) { setEditError("That word already exists."); return; }
+    onSave({ ...chart, [tamil]: latin });
+    setNewTamil("");
+    setNewLatin("");
+    setAdding(false);
+    setEditError("");
+  };
+
+  const inputStyle = (C) => ({
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    border: `1px solid ${C.border}`,
+    background: C.surface3,
+    color: C.text,
+    fontFamily: FONT,
+    fontSize: 15,
+    fontWeight: 500,
+    padding: "0 10px",
+    outline: "none",
+    boxSizing: "border-box",
+    minWidth: 0,
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
+      {/* Header */}
+      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6 }}>
+          <ChevronLeft size={22} />
+        </button>
+        <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
+      </div>
+
+      {/* Subtitle */}
+      <div style={{ flex: "0 0 auto", padding: "10px 20px 6px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+        Words where the algorithm's default output is wrong. These always override the automatic transliteration.
+      </div>
+
+      {/* Table */}
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px", boxSizing: "border-box" }}>
+        {/* Column headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 0, marginBottom: 4, padding: "8px 12px" }}>
+          <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tamil</div>
+          <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
+          <div style={{ width: 30 }} />
+        </div>
+
+        {/* Rows */}
+        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+          {rows.length === 0 && !adding && (
+            <div style={{ padding: "24px 16px", textAlign: "center", color: C.textMuted, fontSize: 14 }}>No entries. Tap + Add to create one.</div>
+          )}
+          {rows.map((key, i) => (
+            <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{key}</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: C.textMuted, paddingRight: 8 }}>{chart[key]}</div>
+              <button
+                onClick={() => handleDelete(key)}
+                style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textFaint, flexShrink: 0, borderRadius: 6, padding: 0 }}
+                aria-label={`Delete ${key}`}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+
+          {/* Add row inline */}
+          {adding && (
+            <div style={{ borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", padding: "12px 12px" }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: editError ? 6 : 0 }}>
+                <input
+                  autoFocus
+                  placeholder="தமிழ்"
+                  value={newTamil}
+                  onChange={(e) => { setNewTamil(e.target.value); setEditError(""); }}
+                  style={inputStyle(C)}
+                />
+                <input
+                  placeholder="Tanglish"
+                  value={newLatin}
+                  onChange={(e) => { setNewLatin(e.target.value); setEditError(""); }}
+                  style={inputStyle(C)}
+                />
+              </div>
+              {editError && <div style={{ fontSize: 12, color: "#FF453A", marginBottom: 6, paddingLeft: 2 }}>{editError}</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={handleAdd}
+                  style={{ flex: 1, height: 38, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700 }}
+                >Save</button>
+                <button
+                  onClick={() => { setAdding(false); setNewTamil(""); setNewLatin(""); setEditError(""); }}
+                  style={{ flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600 }}
+                >Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Add button */}
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            style={{ marginTop: 14, width: "100%", height: 44, borderRadius: 11, border: `1px solid ${C.border}`, background: C.surface2, color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+          >
+            <Plus size={16} /> Add word
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
@@ -3840,9 +4036,18 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           </div>
 
           <SectionLabel>TAMIL</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: 26, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Tamil Transliteration</span>
-            <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 26 }}>
+            <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Tamil Transliteration</span>
+              <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
+            </div>
+            <button
+              onClick={onOpenSpellingChart}
+              style={{ width: "100%", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text, cursor: "pointer", boxSizing: "border-box" }}
+            >
+              <span>Spelling Chart</span>
+              <ChevronRight size={16} color={C.textMuted} />
+            </button>
           </div>
 
           <SectionLabel>DISPLAY</SectionLabel>
@@ -4015,6 +4220,10 @@ function AppInner() {
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
   const [tanglishMode, setTanglishMode] = useLocalStorageState("altar:tanglish", false);
+  const [spellingChart, setSpellingChart] = useIndexedDbState("tanglish-spelling-chart", TANGLISH_EXCEPTIONS);
+  const [spellingChartOpen, setSpellingChartOpen] = useState(false);
+  // Keep the runtime transliteration dictionary in sync with persisted edits.
+  useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Not connected");
   const syncRevision = useRef(Number(localStorage.getItem("zong:revision") || 0));
@@ -4334,6 +4543,7 @@ function AppInner() {
             lineSpacing={lineSpacing} setLineSpacing={setLineSpacing} noteSpacing={noteSpacing} setNoteSpacing={setNoteSpacing}
             clickSettings={clickSettings} setClickSettings={setClickSettings}
             tanglishMode={tanglishMode} setTanglishMode={setTanglishMode}
+            onOpenSpellingChart={() => setSpellingChartOpen(true)}
             onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={configureSync} syncStatus={syncStatus}
             C={C}
           />
@@ -4383,6 +4593,10 @@ function AppInner() {
 
       {exportPickerOpen && (
         <SongExportPicker songs={songs} onClose={() => setExportPickerOpen(false)} onExport={(ids) => { exportSongsByIds(ids); setExportPickerOpen(false); }} tanglishMode={tanglishMode} C={C} />
+      )}
+
+      {spellingChartOpen && (
+        <SpellingChartScreen chart={spellingChart} onSave={setSpellingChart} onBack={() => setSpellingChartOpen(false)} C={C} />
       )}
 
       <Toast message={toastMsg} C={C} />
