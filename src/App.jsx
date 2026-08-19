@@ -54,8 +54,20 @@ function useIndexedDbState(key, seed) {
     let cancelled = false;
     idbGet(key).then((stored) => {
       if (cancelled) return;
-      if (stored !== undefined) setValue(stored);
-      else idbSet(key, seed).catch(() => { });
+      if (stored !== undefined) {
+        if (key === "songs" && Array.isArray(stored) && !stored.some((s) => s.id === "seed-4")) {
+          const tamilSeed = Array.isArray(seed) ? seed.find((s) => s.id === "seed-4") : null;
+          if (tamilSeed) {
+            const updated = [...stored, tamilSeed];
+            setValue(updated);
+            idbSet(key, updated).catch(() => { });
+            return;
+          }
+        }
+        setValue(stored);
+      } else {
+        idbSet(key, seed).catch(() => { });
+      }
     }).catch(() => { });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -825,13 +837,22 @@ const SEED_SONGS = [
     drumsText: "-Chorus\n[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper",
   },
   {
-    id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major",
+    id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major", language: "English",
     description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
     accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
     lyricsText: "-Verse\nInto the darkness You shine",
     chordsText: "-Verse\n[1]Into the [5]darkness You [6]shine",
     chartText: "-Verse\n[1]Into the [5]darkness You [6]shine",
     drumsText: "-Verse\nInto the darkness You [Double Kick]shine",
+  },
+  {
+    id: "seed-4", title: "தூயவரே", artist: "Gersson Edinbaro", tempo: 75, timeSignature: "4/4", key: "D", keyQuality: "Major", language: "Tamil",
+    description: "Original key: D",
+    accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
+    lyricsText: "-Chorus\nதூயவரே தூயவரே\nதுதிக்கு பாத்திரரே\n-Verse\nஉம்மைப் போல ஒரு தெய்வம் இல்லை\nஉம்மைப் போல ஒரு ராஜா இல்லை",
+    chordsText: "-Chorus\n[1]தூயவரே [4]தூயவரே\n[5]துதிக்கு [1]பாத்திரரே\n-Verse\n[1]உம்மைப் போல ஒரு [4]தெய்வம் இல்லை\n[5]உம்மைப் போல ஒரு [1]ராஜா இல்லை",
+    chartText: "-Chorus\n[1]தூயவரே [4]தூயவரே\n[5]துதிக்கு [1]பாத்திரரே\n-Verse\n[1]உம்மைப் போல ஒரு [4]தெய்வம் இல்லை\n[5]உம்மைப் போல ஒரு [1]ராஜா இல்லை",
+    drumsText: "-Chorus\n[Half-time]தூயவரே தூயவரே\nதுதிக்கு பாத்திரரே\n-Verse\nஉம்மைப் போல ஒரு தெய்வம் இல்லை\nஉம்மைப் போல ஒரு ராஜா இல்லை",
   },
 ];
 const SEED_SETLISTS = [{
@@ -2412,48 +2433,6 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
 function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
-  const rootRef = useRef(null);
-  // Collapse space groups that land at the very start of any visual line (both
-  // initial lines and browser-wrapped continuation lines), across all text alignments
-  // (left, center, right), font sizes, and line spacings.
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const collapseWrapLeadingSpaces = () => {
-      const lineRows = root.querySelectorAll('[data-chord-line="1"]');
-      lineRows.forEach((row) => {
-        const groups = Array.from(row.querySelectorAll('[data-group="1"]'));
-        groups.forEach((el) => {
-          if (el.dataset.spaceGroup === "1") {
-            el.style.display = "";
-            el.style.width = "";
-            el.style.minWidth = el.dataset.origMinWidth || "";
-            el.style.overflow = "";
-            el.style.visibility = "";
-          }
-        });
-        let lastTop = null;
-        groups.forEach((el) => {
-          const top = Math.round(el.offsetTop);
-          const isFirstOnLine = lastTop === null || Math.abs(top - lastTop) > 4;
-          if (isFirstOnLine) {
-            lastTop = top;
-            if (el.dataset.spaceGroup === "1") {
-              el.style.display = "none";
-              el.style.width = "0px";
-              el.style.minWidth = "0px";
-              el.style.visibility = "hidden";
-            }
-          }
-        });
-      });
-    };
-    collapseWrapLeadingSpaces();
-    const ro = new ResizeObserver(collapseWrapLeadingSpaces);
-    ro.observe(root);
-    window.addEventListener("resize", collapseWrapLeadingSpaces);
-    return () => { ro.disconnect(); window.removeEventListener("resize", collapseWrapLeadingSpaces); };
-  });
   const lines = String(text || "").split("\n").map((l) => l.replace(/^\s+/, ""));
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
@@ -2489,7 +2468,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div ref={rootRef} style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -2525,13 +2504,6 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
           const isSpace = tok.ch === " " || tok.ch === null;
           if (isSpace) {
             if (current.length) { groups.push({ type: "word", items: current }); current = []; }
-            // Collapse a run of consecutive spaces into a single flexible
-            // slot instead of one box per literal space character. Source
-            // text sometimes has several manually-typed spaces baked in to
-            // make room for a wide drum/chord tag — with the tag-driven
-            // minWidth below, that manual padding is no longer needed, so
-            // we render the run as one slot and let width come from the
-            // tag, not from how many spaces happen to be in the text.
             if (!editable) {
               const last = groups[groups.length - 1];
               if (last && last.type === "space") { last.items.push({ tok, ti }); return; }
@@ -2620,17 +2592,8 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         };
 
         return (
-          <div key={li} data-chord-line="1" style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
-              // A word/space's visible box only naturally spans 1ch per character,
-              // but an attached tag can render far wider than what's underneath it
-              // (e.g. a long drum-notation label). Since the tag is absolutely
-              // positioned, it doesn't contribute to layout width on its own — so
-              // without this, a long tag can silently overflow the container
-              // instead of pushing the following text over. Give the group a
-              // minimum width (in "ch" units, scaled for the tag's font size)
-              // equal to its longest attached tag, so the tag always has room and
-              // wrapping accounts for it correctly.
               const maxTagLen = g.items.reduce((max, it) => {
                 if (!it.tok.tag) return max;
                 const label = flatify(it.tok.tag);
@@ -2638,22 +2601,26 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               }, 0);
               const tagDrivenWidth = maxTagLen * (tagSize / fontSize);
               if (g.type !== "word") {
-                // Space run: floor of 1 slot regardless of how many literal
-                // spaces are in the source text — width comes from the tag,
-                // not from manual padding.
                 const repItem = g.items.find((it) => it.tok.tag) || g.items[0];
+                const hasTag = Boolean(repItem?.tok?.tag);
+                if (!hasTag && !editable) {
+                  return (
+                    <span key={gi} style={{ display: "inline", whiteSpace: "normal" }}>
+                      {" "}
+                    </span>
+                  );
+                }
                 const minWidthCh = Math.max(1, tagDrivenWidth);
                 const minWidthVal = showTags ? `${minWidthCh}ch` : undefined;
                 return (
-                  <span key={gi} data-group="1" data-space-group="1" data-orig-min-width={minWidthVal || ""} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: minWidthVal }}>
+                  <span key={gi} style={{ display: "inline-block", minWidth: minWidthVal }}>
                     {renderChar(repItem)}
-                    <wbr />
                   </span>
                 );
               }
               const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
-                <span key={gi} data-group="1" data-space-group="0" style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
                 </span>
               );
@@ -3437,7 +3404,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{songs.length} songs</div></div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-              {langFilter === "All" ? "All" : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter)}
+              {langFilter === "All" ? "All" : (langFilter === "Tamil" ? (tanglishMode ? "Tamil" : "தமிழ்") : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter))}
             </button>
             <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
           </div>
@@ -4198,11 +4165,17 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   // Which display target the Font Size / Bold / Spacing controls below the
   // dropdown currently affect.
   const [displayTarget, setDisplayTarget] = useState("lyrics");
-  const DISPLAY_TARGETS = [
+  const ALL_DISPLAY_TARGETS = [
     { id: "lyrics", label: "Song Lyrics" },
     { id: "chords", label: "Chords / Notes" },
     { id: "headers", label: "Section Headers" },
   ];
+  const DISPLAY_TARGETS = mode === "vocals"
+    ? ALL_DISPLAY_TARGETS.filter((t) => t.id !== "chords")
+    : ALL_DISPLAY_TARGETS;
+  // If the selected target isn't available in this mode, reset to lyrics
+  const effectiveDisplayTarget = DISPLAY_TARGETS.some((t) => t.id === displayTarget) ? displayTarget : "lyrics";
+  const setEffectiveDisplayTarget = (v) => setDisplayTarget(v);
 
   const cycleTone = (dir) => {
     const next = (toneIndex + dir + CLICK_TONES.length) % CLICK_TONES.length;
@@ -4222,15 +4195,15 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
 
   // Font Size / Bold / Spacing all delegate to whichever target is picked
   // in the dropdown above them.
-  const targetSize = displayTarget === "lyrics" ? fontSize : displayTarget === "chords" ? chordFontSize : sectionFontSize;
-  const targetSizeHold = displayTarget === "lyrics" ? { dec: decLyricsSizeHold, inc: incLyricsSizeHold }
-    : displayTarget === "chords" ? { dec: decNotesSizeHold, inc: incNotesSizeHold }
+  const targetSize = effectiveDisplayTarget === "lyrics" ? fontSize : effectiveDisplayTarget === "chords" ? chordFontSize : sectionFontSize;
+  const targetSizeHold = effectiveDisplayTarget === "lyrics" ? { dec: decLyricsSizeHold, inc: incLyricsSizeHold }
+    : effectiveDisplayTarget === "chords" ? { dec: decNotesSizeHold, inc: incNotesSizeHold }
       : { dec: decSectionSizeHold, inc: incSectionSizeHold };
-  const targetBold = displayTarget === "lyrics" ? lyricsBold : displayTarget === "chords" ? notesBold : null;
-  const targetSetBold = displayTarget === "lyrics" ? setLyricsBold : displayTarget === "chords" ? setNotesBold : null;
-  const targetSpacing = displayTarget === "lyrics" ? lineSpacing : displayTarget === "chords" ? noteSpacing : null;
-  const targetSpacingHold = displayTarget === "lyrics" ? { dec: decLineSpacingHold, inc: incLineSpacingHold }
-    : displayTarget === "chords" ? { dec: decNoteSpacingHold, inc: incNoteSpacingHold }
+  const targetBold = effectiveDisplayTarget === "lyrics" ? lyricsBold : effectiveDisplayTarget === "chords" ? notesBold : null;
+  const targetSetBold = effectiveDisplayTarget === "lyrics" ? setLyricsBold : effectiveDisplayTarget === "chords" ? setNotesBold : null;
+  const targetSpacing = effectiveDisplayTarget === "lyrics" ? lineSpacing : effectiveDisplayTarget === "chords" ? noteSpacing : null;
+  const targetSpacingHold = effectiveDisplayTarget === "lyrics" ? { dec: decLineSpacingHold, inc: incLineSpacingHold }
+    : effectiveDisplayTarget === "chords" ? { dec: decNoteSpacingHold, inc: incNoteSpacingHold }
       : null;
 
   return (
@@ -4275,7 +4248,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           <SectionLabel>DISPLAY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
             <Field label="APPLY TO">
-              <GenericDropdown value={displayTarget} options={DISPLAY_TARGETS} onChange={setDisplayTarget} C={C} />
+              <GenericDropdown value={effectiveDisplayTarget} options={DISPLAY_TARGETS} onChange={setEffectiveDisplayTarget} C={C} />
             </Field>
             <Field label="FONT SIZE">
               <div style={{ display: "flex", gap: 8 }}>
