@@ -264,17 +264,41 @@ function dedupeTitle(candidateTitle, artist, existingSongs) {
 
 /* =========================================================================
    Tanglish transliteration engine — offline Tamil-script → Latin-script
-   conversion, driven character-by-character so it can run on any raw song
-   text (lyrics/chords/drums, including "-Section" headers and [Tag]/<Tag>
-   markers) without disturbing anything outside the Tamil Unicode block.
+   conversion. Works at the tokenized [Tag]/character level (reusing the
+   same tokenizeTaggedLine parser the chord/drum renderer uses), so every
+   [Chord]/[Note] tag gets re-anchored to the exact transliterated position
+   of the Tamil character it was originally attached to — including tags
+   planted mid-word (e.g. a chord change mid-syllable), not just ones
+   sitting before a whole word.
+
+   Tamil script under-specifies pronunciation: க/ச/ட/த/ப each cover BOTH an
+   unvoiced sound (k/ch/t/th/p) and a voiced one (g/j/d/dh/b) depending on
+   position — the letter alone can't tell you which. We resolve this with:
+     1. A reliable positional rule: these consonants voice when they follow
+        their own class of nasal in the same cluster (அன்பு "anbu",
+        தம்பி "thambi", சொந்தம் "sondham") — this pattern is consistent and
+        safe to automate. Elsewhere (word-start, between plain vowels) they
+        default to unvoiced, matching how most Tamil hymn/song sheets are
+        conventionally transliterated (e.g. "Paavam", "Thuthi", "Parisutha").
+     2. An exception dictionary (TANGLISH_EXCEPTIONS) for common words whose
+        real pronunciation doesn't follow that default (பயம் "Bayam",
+        தேவன் "Devan", தயவு "Dhayavu") — checked whole-word, before the
+        positional rule runs. Extend this list any time a specific word
+        comes out wrong; it always wins over the algorithm. It only applies
+        when the word carries no internal tag (or at most one right at the
+        very start) — a tag genuinely mid-word bypasses the dictionary in
+        favour of the algorithm, which can always place a tag exactly.
    ========================================================================= */
 const TAMIL_RANGE_RE = /[\u0B80-\u0BFF]/;
+const TAMIL_COMBINING_RE = /[\u0BBE-\u0BCD]/;
 const TANGLISH_PULLI = "\u0BCD";
 const TANGLISH_VOWELS = {
   "\u0B85": "a", "\u0B86": "aa", "\u0B87": "i", "\u0B88": "ii", "\u0B89": "u", "\u0B8A": "uu",
   "\u0B8E": "e", "\u0B8F": "ee", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "oo", "\u0B94": "au",
   "\u0B83": "h",
 };
+// Base (unvoiced) forms — used at word-start, when geminated (doubled), and
+// anywhere the voicing rule below doesn't apply.
 const TANGLISH_CONSONANTS = {
   "\u0B95": "k", "\u0B99": "ng", "\u0B9A": "ch", "\u0B9C": "j", "\u0B9E": "nj",
   "\u0B9F": "t", "\u0BA3": "n", "\u0BA4": "th", "\u0BA8": "n", "\u0BA9": "n",
@@ -282,6 +306,13 @@ const TANGLISH_CONSONANTS = {
   "\u0BB5": "v", "\u0BB4": "zh", "\u0BB3": "l", "\u0BB1": "r",
   "\u0BB7": "sh", "\u0BB8": "s", "\u0BB9": "h",
 };
+// Voiced counterparts for the five consonants that actually alternate.
+const TANGLISH_VOICED = {
+  "\u0B95": "g", "\u0B9A": "j", "\u0B9F": "d", "\u0BA4": "dh", "\u0BAA": "b",
+};
+// Nasal consonants — a voicing-capable consonant right after one of these
+// (in a nasal+stop cluster, e.g. ன்ப, ம்ப, ந்த, ங்க) voices reliably.
+const TANGLISH_NASALS = new Set(["\u0B99", "\u0B9E", "\u0BA3", "\u0BA8", "\u0BAE", "\u0BA9"]);
 const TANGLISH_VOWEL_SIGNS = {
   "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ii", "\u0BC1": "u", "\u0BC2": "uu",
   "\u0BC6": "e", "\u0BC7": "ee", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "oo", "\u0BCC": "au",
@@ -290,28 +321,144 @@ const TANGLISH_DIGITS = {
   "\u0BE6": "0", "\u0BE7": "1", "\u0BE8": "2", "\u0BE9": "3", "\u0BEA": "4",
   "\u0BEB": "5", "\u0BEC": "6", "\u0BED": "7", "\u0BEE": "8", "\u0BEF": "9",
 };
-function transliterateTanglish(input) {
-  const str = String(input || "");
+// Common worship-song words whose everyday spelling doesn't follow the
+// positional rule above (mostly word-initial voicing). Extend freely.
+const TANGLISH_EXCEPTIONS = {
+  "தேவன்": "Devan", "தேவனே": "Devaney", "தேவா": "Deva", "தேவனுடைய": "Devanudaiya",
+  "தேவனை": "Devanai", "தேவனிடம்": "Devanidam", "தேவனுக்கு": "Devanukku", "தேவி": "Devi",
+  "இயேசு": "Yesu", "இயேசுவே": "Yesuve", "இயேசுவின்": "Yesuvin", "கிறிஸ்து": "Kiristhu",
+  "கர்த்தர்": "Karthar", "கர்த்தாவே": "Karthave", "கர்த்தரே": "Karthare",
+  "பரிசுத்த": "Parisutha", "ஆவியானவர்": "Aaviyaanavar",
+  "பயம்": "Bayam", "பயமே": "Bayame", "பயந்து": "Bayandhu",
+  "தயவு": "Dhayavu", "தயவாய்": "Dhayavaai", "தயவுடன்": "Dhayavudan",
+  "கிருபை": "Kirubai", "கிருபையால்": "Kirubaiyaal", "கிருபையே": "Kirubaiye",
+  "ஸ்தோத்திரம்": "Sthothiram", "ஸ்தோத்திரிப்போம்": "Sthothirippom",
+  "மகிமை": "Mahimai", "மகிமையே": "Mahimaiye", "வல்லமை": "Vallamai",
+  "துதி": "Thuthi", "துதிப்பாய்": "Thuthippaai", "துதிப்போம்": "Thuthippom",
+  "ஆராதனை": "Aaraadhanai", "ஆராதிக்கிறோம்": "Aaraadhikkirom",
+  "நன்றி": "Nandri", "மகிழ்ச்சி": "Magizhchi", "சமாதானம்": "Samaadhaanam",
+  "நித்தியம்": "Nithiyam", "பாடுவோம்": "Paaduvom", "பாராட்டு": "Paaraattu",
+};
+// Transliterates one clean (tag-free) Tamil word into Tanglish, while also
+// recording — for every input character index — the output-string offset
+// at that exact point. That lets a tag anchored to a specific input
+// character later be spliced into the precise corresponding spot in the
+// transliterated output, even mid-syllable (between a consonant and its
+// own vowel sign).
+function transliterateTamilWordWithOffsets(word) {
   let out = "";
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i];
+  let prevKind = "start"; // "start" | "vowel" | "nasal" | "other"
+  const offsets = new Array(word.length + 1);
+  let i = 0;
+  while (i < word.length) {
+    offsets[i] = out.length;
+    const ch = word[i];
     if (TANGLISH_CONSONANTS[ch]) {
-      const next = str[i + 1];
-      if (next === TANGLISH_PULLI) { out += TANGLISH_CONSONANTS[ch]; i++; }
-      else if (next && TANGLISH_VOWEL_SIGNS[next]) { out += TANGLISH_CONSONANTS[ch] + TANGLISH_VOWEL_SIGNS[next]; i++; }
-      else out += TANGLISH_CONSONANTS[ch] + "a";
-    } else if (TANGLISH_VOWELS[ch]) out += TANGLISH_VOWELS[ch];
-    else if (TANGLISH_DIGITS[ch]) out += TANGLISH_DIGITS[ch];
-    else out += ch;
+      const next = word[i + 1];
+      const isGeminate = next === TANGLISH_PULLI && word[i + 2] === ch;
+      const voiced = TANGLISH_VOICED[ch] && !isGeminate && prevKind === "nasal";
+      const base = voiced ? TANGLISH_VOICED[ch] : TANGLISH_CONSONANTS[ch];
+      const isNasal = TANGLISH_NASALS.has(ch);
+      if (next === TANGLISH_PULLI) {
+        out += base;
+        offsets[i + 1] = out.length;
+        prevKind = isNasal ? "nasal" : "other";
+        i += 2;
+      } else if (next && TANGLISH_VOWEL_SIGNS[next]) {
+        out += base;
+        offsets[i + 1] = out.length;
+        out += TANGLISH_VOWEL_SIGNS[next];
+        prevKind = "vowel";
+        i += 2;
+      } else {
+        out += base + "a";
+        prevKind = "vowel";
+        i += 1;
+      }
+    } else if (TANGLISH_VOWELS[ch]) { out += TANGLISH_VOWELS[ch]; prevKind = "vowel"; i += 1; }
+    else if (TANGLISH_DIGITS[ch]) { out += TANGLISH_DIGITS[ch]; prevKind = "other"; i += 1; }
+    else { out += ch; prevKind = "start"; i += 1; }
   }
-  return out;
+  offsets[word.length] = out.length;
+  return { out, offsets };
+}
+// Transliterates one already-tokenized line (tokenizeTaggedLine's output),
+// re-anchoring every tag to the exact output position of the Tamil
+// character it was attached to.
+function transliterateTaggedTokens(tokens) {
+  let result = "";
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (tok.ch != null && TAMIL_RANGE_RE.test(tok.ch)) {
+      // Gather the full run of consecutive Tamil-script tokens as one word.
+      const wordTokens = [];
+      while (i < tokens.length && tokens[i].ch != null && TAMIL_RANGE_RE.test(tokens[i].ch)) {
+        wordTokens.push(tokens[i]);
+        i++;
+      }
+      const rawWord = wordTokens.map((t) => t.ch).join("");
+      const tagHits = [];
+      wordTokens.forEach((t, idx) => { if (t.tag) tagHits.push({ index: idx, tag: t.tag }); });
+
+      // Fast path: no tag, or a single tag right at the word's start — safe
+      // to use the curated dictionary spelling if one exists, since there's
+      // nowhere ambiguous to splice.
+      const onlyLeadingTag = tagHits.length === 0 || (tagHits.length === 1 && tagHits[0].index === 0);
+      if (onlyLeadingTag && TANGLISH_EXCEPTIONS[rawWord]) {
+        const lead = tagHits.length ? `[${tagHits[0].tag}]` : "";
+        result += lead + TANGLISH_EXCEPTIONS[rawWord];
+        continue;
+      }
+
+      // General path: algorithmic transliteration with exact per-character
+      // output offsets, so every tag (however many, wherever placed) lands
+      // precisely on the syllable it was attached to.
+      const { out, offsets } = transliterateTamilWordWithOffsets(rawWord);
+      let spliced = out;
+      let shift = 0;
+      tagHits.forEach(({ index, tag }) => {
+        const insertAt = offsets[index] + shift;
+        const marker = `[${tag}]`;
+        spliced = spliced.slice(0, insertAt) + marker + spliced.slice(insertAt);
+        shift += marker.length;
+      });
+      result += spliced;
+      continue;
+    }
+    // Non-Tamil token (space, punctuation, English letter, digit, or a
+    // trailing tag with no following character) — passes through as-is,
+    // tag and all, in its original position.
+    result += (tok.tag ? `[${tok.tag}]` : "") + (tok.ch ?? "");
+    i++;
+  }
+  return result;
+}
+function transliterateTanglishLine(line) {
+  const leading = (line.match(/^ +/) || [""])[0];
+  return leading + transliterateTaggedTokens(tokenizeTaggedLine(line.slice(leading.length)));
+}
+function transliterateTanglish(input) {
+  return String(input || "").split("\n").map(transliterateTanglishLine).join("\n");
+}
+// Capitalises the first Latin letter of every line — conventional for
+// Tanglish song-sheet display.
+function capitalizeTanglishLines(text) {
+  return String(text || "").split("\n").map((line) => line.replace(/[a-z]/, (c) => c.toUpperCase())).join("\n");
 }
 // Runs transliteration only when Tanglish mode is on and the text actually
 // contains Tamil script; otherwise passes the original text through
 // untouched (English/mixed text, or Tanglish mode off).
 function maybeTanglish(text, tanglishMode) {
   if (!tanglishMode || !text) return text;
-  return TAMIL_RANGE_RE.test(text) ? transliterateTanglish(text) : text;
+  return TAMIL_RANGE_RE.test(text) ? capitalizeTanglishLines(transliterateTanglish(text)) : text;
+}
+// Tanglish (Latin transliteration of Tamil) is harder to read letter-by-
+// letter than either script alone, so we tighten tracking slightly whenever
+// a given piece of text was actually transliterated. Checked against the
+// original (pre-transliteration) source text.
+function tanglishLetterSpacing(sourceText, tanglishMode) {
+  return tanglishMode && sourceText && TAMIL_RANGE_RE.test(sourceText) ? "-0.02em" : "normal";
 }
 // Lets a Latin/Tanglish search query match Tamil-script song titles/artists
 // by comparing the query against a transliterated version of the text too.
@@ -833,6 +980,25 @@ function ToggleSwitch({ checked, onChange, offLabel, onLabel, C }) {
         <span style={{ position: "absolute", top: 2, left: checked ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.4)", transition: "left 150ms ease" }} />
       </span>
       <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 700, color: checked ? C.accent : C.textFaint }}>{onLabel}</span>
+    </div>
+  );
+}
+// Plain iOS-style switch — a single toggle knob with no embedded text
+// labels, for rows where the label already lives outside the control
+// (e.g. "Tamil Transliteration" ...... [ o--]).
+function IosSwitch({ checked, onChange, C }) {
+  return (
+    <div
+      role="switch" aria-checked={checked} tabIndex={0}
+      onClick={() => onChange(!checked)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onChange(!checked); } }}
+      style={{
+        position: "relative", width: 51, height: 31, borderRadius: 16, flexShrink: 0, cursor: "pointer",
+        boxSizing: "border-box", background: checked ? C.accent : C.surface3,
+        border: `1px solid ${checked ? C.accent : C.borderStrong}`, transition: "background 150ms ease, border-color 150ms ease",
+      }}
+    >
+      <span style={{ position: "absolute", top: 2, left: checked ? 22 : 2, width: 25, height: 25, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.4)", transition: "left 150ms ease" }} />
     </div>
   );
 }
@@ -2158,7 +2324,7 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
   return out;
 }
 
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true }) {
+function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
@@ -2196,11 +2362,30 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing: "normal", hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
         if (hyphenateOverlaps && !editable) tokens = insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags);
+
+        // Merge Tamil vowel-sign/pulli combining marks into the preceding
+        // base consonant so each syllable shapes as one connected grapheme
+        // instead of exploding into per-character boxes — a combining mark
+        // rendered in visual isolation (its own box) has no base to attach
+        // to, so the browser draws a dotted-circle placeholder instead of
+        // shaping it onto the consonant. Editing/tagging still targets the
+        // base token's original index (ti), so commitTag's independent
+        // tokenizeTaggedLine indexing is unaffected. Non-Tamil text never
+        // matches, so this is a no-op for English/other-script lyrics.
+        const clustered = [];
+        tokens.forEach((tok, ti) => {
+          if (clustered.length && tok.ch != null && TAMIL_COMBINING_RE.test(tok.ch) && !tok.tag) {
+            const base = clustered[clustered.length - 1];
+            base.tok = { ...base.tok, ch: base.tok.ch + tok.ch };
+          } else {
+            clustered.push({ tok, ti });
+          }
+        });
 
         // Group tokens into words (runs of non-space characters) and
         // individual space units, so each word can be wrapped in a
@@ -2209,7 +2394,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         // <pre> text-flow behaviour used in Vocals mode exactly.
         const groups = [];
         let current = [];
-        tokens.forEach((tok, ti) => {
+        clustered.forEach(({ tok, ti }) => {
           const isSpace = tok.ch === " " || tok.ch === null;
           if (isSpace) {
             if (current.length) { groups.push({ type: "word", items: current }); current = []; }
@@ -2239,7 +2424,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
               style={{
                 position: "relative", display: "inline-block", paddingTop: topPad,
-                cursor: editable ? "pointer" : "default", width: "1ch",
+                cursor: editable ? "pointer" : "default", width: tok.ch && tok.ch.length > 1 ? undefined : "1ch",
                 lineHeight: `${lineHeightMult}em`,
               }}
             >
@@ -3329,14 +3514,15 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
           let displayText = activeRawText;
           if (mode === "chords" && chordsView === "chords") displayText = sanitizeChordsOnlyNashville(displayText);
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
+          const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
           return parseTextIntoBlocks(displayText).map((block, idx) => (
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
               {isVocals ? (
-                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} />
+                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
               ) : (
-                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} letterSpacing={letterSpacing} />
               )}
             </div>
           ));
@@ -3605,10 +3791,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           </div>
 
           <SectionLabel>TAMIL</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
-            <Field label="TANGLISH TRANSLITERATION">
-              <ToggleSwitch checked={tanglishMode} onChange={setTanglishMode} offLabel="Tamil" onLabel="Tanglish" C={C} />
-            </Field>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: 26, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Tamil Transliteration</span>
+            <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
           </div>
 
           <SectionLabel>DISPLAY</SectionLabel>
@@ -3873,6 +4058,27 @@ function AppInner() {
       el.removeEventListener("gesturestart", preventGesture);
       el.removeEventListener("gesturechange", preventGesture);
       el.removeEventListener("touchmove", preventMultiTouch);
+    };
+  }, []);
+
+  // iOS Safari quirk: focusing a text input (e.g. the search bar) makes the
+  // browser scroll the whole layout viewport to keep the input above the
+  // on-screen keyboard — even though html/body are position:fixed, this
+  // still drags every fixed-position element (including the bottom nav)
+  // upward with it. The app never actually uses window/document scrolling
+  // itself (all real scrolling happens inside internal .scroll-list divs,
+  // whose scroll events don't bubble to window), so pinning any window-level
+  // scroll straight back to the top neutralises this without touching any
+  // legitimate scrolling in the app.
+  useEffect(() => {
+    const pinScroll = () => { if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0); };
+    window.addEventListener("scroll", pinScroll, { passive: true });
+    window.visualViewport?.addEventListener("scroll", pinScroll);
+    window.visualViewport?.addEventListener("resize", pinScroll);
+    return () => {
+      window.removeEventListener("scroll", pinScroll);
+      window.visualViewport?.removeEventListener("scroll", pinScroll);
+      window.visualViewport?.removeEventListener("resize", pinScroll);
     };
   }, []);
 
