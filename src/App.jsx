@@ -96,8 +96,35 @@ const MODE_META = {
   drums: { label: "Drums", accent: "#FFB020", accentDim: "rgba(255,176,32,0.35)", accentSoft: "rgba(255,176,32,0.12)" },
   chords: { label: "Chords", accent: "#0A84FF", accentDim: "rgba(10,132,255,0.35)", accentSoft: "rgba(10,132,255,0.12)" },
 };
-function colorsFor(mode) {
+// Light-mode accent shades — kept as close as possible to the dark-mode
+// accents (same hue family, same "vocals=green / drums=amber / chords=blue"
+// identity), but pulled darker/more saturated where the dark-mode value
+// doesn't clear readable contrast as text/icon colour on a white surface.
+const LIGHT_MODE_ACCENTS = {
+  vocals: { accent: "#248A3D", accentDim: "rgba(36,138,61,0.35)", accentSoft: "rgba(36,138,61,0.12)" },
+  drums: { accent: "#B36B00", accentDim: "rgba(179,107,0,0.35)", accentSoft: "rgba(179,107,0,0.12)" },
+  chords: { accent: "#0058CC", accentDim: "rgba(0,88,204,0.35)", accentSoft: "rgba(0,88,204,0.12)" },
+};
+function colorsFor(mode, theme = "dark") {
   const m = MODE_META[mode] || MODE_META.vocals;
+  if (theme === "light") {
+    const la = LIGHT_MODE_ACCENTS[mode] || LIGHT_MODE_ACCENTS.vocals;
+    return {
+      bg: "#F4F4F6",
+      surface: "#FFFFFF",
+      surface2: "#FFFFFF",
+      surface3: "#ECECEF",
+      border: "rgba(0,0,0,0.09)",
+      borderStrong: "rgba(0,0,0,0.18)",
+      text: "#1C1C1E",
+      textMuted: "#6E6E73",
+      textFaint: "#AEAEB2",
+      accent: la.accent,
+      accentDim: la.accentDim,
+      accentSoft: la.accentSoft,
+      danger: "#D70015",
+    };
+  }
   return {
     bg: "#000000",
     surface: "#121212",
@@ -717,7 +744,7 @@ function GenericDropdown({ value, options, onChange, C }) {
               const active = opt.id === value;
               return (
                 <div key={opt.id} onClick={() => { onChange(opt.id); setOpen(false); }} style={{
-                  padding: "13px 14px", fontFamily: FONT, fontSize: 14.5, fontWeight: 600,
+                  padding: "13px 14px", fontFamily: FONT, fontSize: 14.5, fontWeight: 400,
                   color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
                 }}>
                   {opt.label}
@@ -927,16 +954,23 @@ function PianoIcon({ size = 20, color }) {
 }
 function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
   // Callers (e.g. the bottom nav) pass a bolder strokeWidth for the active
-  // tab, matching the lucide icons alongside it — but this glyph's solid
-  // triangle body reads as too heavy at those weights, so its own stroke
-  // is capped well below whatever's passed in.
-  const sw = Math.min(strokeWidth, 1.4);
+  // tab, matching the lucide icons alongside it. Match that weight (instead
+  // of capping it far below) so the glyph doesn't read as thin/washed-out
+  // next to the lucide icons beside it, and give the case a light fill so
+  // it has real visual mass rather than being an outline sliver.
+  const sw = Math.min(strokeWidth + 0.2, 1.9);
   return (
     <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      <path d="M7.2 20h9.6L13.4 6h-2.8L7.2 20z" stroke={color} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M12 17 14.6 7.5" stroke={color} strokeWidth={sw} strokeLinecap="round" />
-      <circle cx="12" cy="17" r="0.9" fill={color} stroke="none" />
-      <circle cx="13.7" cy="12" r="1.15" fill={color} stroke="none" />
+      {/* Pyramid case */}
+      <path d="M8.4 5h7.2l3.1 14.2a1.1 1.1 0 0 1-1.07 1.3H6.37a1.1 1.1 0 0 1-1.07-1.3L8.4 5z" fill={color} fillOpacity="0.16" stroke={color} strokeWidth={sw} strokeLinejoin="round" />
+      {/* Top crossbar the pendulum pivots from */}
+      <path d="M9.3 7.4h5.4" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      {/* Pendulum rod */}
+      <path d="M12 8.6v9.6" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      {/* Sliding weight */}
+      <rect x="10.5" y="12.1" width="3" height="2" rx="0.5" fill={color} stroke="none" />
+      {/* Base */}
+      <path d="M6.1 19.4h11.8" stroke={color} strokeWidth={sw} strokeLinecap="round" />
     </svg>
   );
 }
@@ -969,9 +1003,13 @@ function IosShareIcon({ size = 16, color = "currentColor" }) {
 const PIANO_PARTIALS = 7; // fundamental + 6 overtones
 function pianoInharmonicity(freq) {
   // Falls off from a stiff, thick bass string (larger B, more stretch) to a
-  // thin, near-ideal treble string (B close to 0).
+  // thin, near-ideal treble string (B close to 0). Real grand-piano B
+  // values run roughly 0.0002 (treble) to ~0.002-0.004 (lowest bass) — the
+  // previous coefficient here (0.022) was an order of magnitude too large,
+  // stretching partials so far off the harmonic series that they read as
+  // an inharmonic FM/bell tone rather than a struck string.
   const t = Math.min(1, Math.max(0, (freq - 30) / (1500 - 30)));
-  return 0.022 * Math.pow(1 - t, 2.2) + 0.00015;
+  return 0.0032 * Math.pow(1 - t, 2.4) + 0.00004;
 }
 function pianoPartialAmp(n, freq) {
   // Bass strings carry more energy in their upper partials (bright,
@@ -1072,7 +1110,9 @@ function unlockAudioPlayback() {
       // the root cause of audio sometimes not playing.
       v.muted = false;
       v.volume = 0.01;
+      v.loop = true;
       v.playsInline = true;
+      v.setAttribute("loop", "");
       v.setAttribute("playsinline", "");
       v.setAttribute("webkit-playsinline", "");
       v.style.position = "fixed";
@@ -1080,9 +1120,18 @@ function unlockAudioPlayback() {
       v.style.height = "1px";
       v.style.opacity = "0";
       v.style.pointerEvents = "none";
+      // Belt-and-braces: if the loop attribute ever fails to hold (some
+      // WebViews drop it after backgrounding/foregrounding), explicitly
+      // restart on "ended" so the audio session never silently drops back
+      // to a category the hardware mute switch can interrupt mid-session.
+      v.addEventListener("ended", () => {
+        v.currentTime = 0;
+        v.play().catch(() => { });
+      });
       document.body.appendChild(v);
       __sharedSilentVideoEl = v;
     }
+    __sharedSilentVideoEl.loop = true;
     __sharedSilentVideoEl.play().catch(() => { __audioUnlocked = false; });
   } catch {
     __audioUnlocked = false;
@@ -1604,16 +1653,29 @@ function useMetronomeEngine(settings) {
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      // iOS can drop the context to "interrupted" mid-playback (incoming
+      // call, Siri, another app grabbing the audio session) without ever
+      // firing visibilitychange. Resume automatically whenever the context
+      // reports itself as anything other than running, so a click stream
+      // doesn't just go silent until the user backgrounds/foregrounds the
+      // app to trigger the visibility handler.
+      audioCtxRef.current.onstatechange = () => {
+        const ctx = audioCtxRef.current;
+        if (ctx && (ctx.state === "suspended" || ctx.state === "interrupted") && schedulerRef.current) {
+          ctx.resume().catch(() => { });
+        }
+      };
     }
     if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
       await audioCtxRef.current.resume();
     }
     beatRef.current = 0;
     nextNoteTimeRef.current = audioCtxRef.current.currentTime + 0.05;
+    clearInterval(schedulerRef.current);
     schedulerRef.current = setInterval(scheduler, 25);
     setPlaying(true);
   };
-  const stop = () => { clearInterval(schedulerRef.current); setPlaying(false); setFlashBeat(-1); };
+  const stop = () => { clearInterval(schedulerRef.current); schedulerRef.current = null; setPlaying(false); setFlashBeat(-1); };
   const toggle = () => (playing ? stop() : start());
 
   const tapTempo = () => {
@@ -2098,7 +2160,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                     position: "absolute", top: 0, left: 0,
                     width: Math.max(tagSize * 3, 40), fontSize: tagSize,
                     fontFamily: MONO, fontWeight: 800,
-                    color: brightTags ? "#FFFFFF" : accent,
+                    color: brightTags ? C.text : accent,
                     background: "transparent", border: "none", outline: "none",
                     padding: 0, margin: 0, lineHeight: 1,
                     caretColor: accent,
@@ -2109,7 +2171,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
                   fontSize: tagSize, fontWeight: noteWeightBold ? 800 : 600,
                   lineHeight: 1,
-                  color: brightTags ? "#FFFFFF" : accent,
+                  color: brightTags ? C.text : accent,
                   opacity: 1,
                 }}>
                   {flattenTags ? flatify(tok.tag) : tok.tag}
@@ -2124,7 +2186,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   userSelect: "none",
                 }}>+</span>
               ) : null}
-              <span style={{ color: showLyrics ? (dim ? "rgba(255,255,255,0.4)" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
+              <span style={{ color: showLyrics ? (dim ? C.textMuted : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
                 {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
               </span>
             </span>
@@ -3376,7 +3438,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, theme, setTheme, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
@@ -3434,8 +3496,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             {MODES.map((m) => {
               const active = mode === m;
               const meta = MODE_META[m];
+              const mc = colorsFor(m, theme);
               return (
-                <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
+                <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? mc.accentSoft : "transparent", color: active ? mc.accent : C.textMuted }}>
                   {meta.label}
                 </button>
               );
@@ -3481,7 +3544,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
               </div>
             </Field>
             <Field label="PREVIEW">
-              <div style={{ background: "#000000", border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
                 <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
                 {mode === "vocals" ? (
                   <ChordText
@@ -3537,6 +3600,22 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             </>
           ) : null}
 
+          <SectionLabel>APPEARANCE</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
+            <Field label="THEME">
+              <div style={{ display: "flex", gap: 8, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4 }}>
+                {[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }].map((t) => {
+                  const active = theme === t.id;
+                  return (
+                    <button key={t.id} onClick={() => setTheme(t.id)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          </div>
+
           <SectionLabel>LIBRARY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 10 }}>
@@ -3568,7 +3647,7 @@ function BottomNav({ active, onChange, mode, C }) {
   const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
-      <div style={{ display: "flex", background: "#000000", paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
+      <div style={{ display: "flex", background: C.bg, borderTop: `1px solid ${C.border}`, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
         {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
           return (
@@ -3610,6 +3689,7 @@ function AppInner() {
   const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.75);
   const [noteSpacing, setNoteSpacing] = useLocalStorageState("altar:note-spacing", 1);
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
+  const [theme, setTheme] = useLocalStorageState("altar:theme", "dark");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Not connected");
@@ -3617,7 +3697,7 @@ function AppInner() {
   const syncDirty = useRef(false);
   const syncing = useRef(false);
 
-  const C = colorsFor(mode);
+  const C = colorsFor(mode, theme);
   const engine = useMetronomeEngine(clickSettings);
 
   // Metronome only belongs to Drums mode — stop it whenever the person
@@ -3900,6 +3980,7 @@ function AppInner() {
         {tab === "settings" && (
           <SettingsScreen
             mode={mode} setMode={setMode}
+            theme={theme} setTheme={setTheme}
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
             sectionFontSize={sectionFontSize} setSectionFontSize={setSectionFontSize}
