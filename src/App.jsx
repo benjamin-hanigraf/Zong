@@ -566,16 +566,22 @@ function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, typ
   );
 }
 
-function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, subtle, C }) {
+function TimeSigPicker({ value, onChange, fullWidth, height = 44, fontSize, style, subtle, C }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
+  const [openLeft, setOpenLeft] = useState(false);
   const btnRef = useRef(null);
   const DROPDOWN_HEIGHT = 220;
+  const DROPDOWN_WIDTH = 70; // sized to the text it contains ("6/8" etc. plus padding), not a fixed min-width
   const handleToggle = () => {
     if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       setOpenUpward(spaceBelow < DROPDOWN_HEIGHT && rect.top > spaceBelow);
+      // If centering the dropdown under the button would push its left edge
+      // past the screen edge, anchor it to the button's left edge instead.
+      const centerLeft = rect.left + rect.width / 2 - DROPDOWN_WIDTH / 2;
+      setOpenLeft(centerLeft < 4);
     }
     setOpen((o) => !o);
   };
@@ -584,12 +590,12 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, subtle,
       <button
         ref={btnRef} type="button" onClick={handleToggle}
         style={subtle ? {
-          fontFamily: FONT, fontSize: 11, fontWeight: 600, borderRadius: 6, boxSizing: "border-box",
+          fontFamily: FONT, fontSize: fontSize ?? 11, fontWeight: 600, borderRadius: 6, boxSizing: "border-box",
           border: `1px solid ${C.border}`, background: "transparent", color: value ? C.textMuted : C.textFaint,
           width: fullWidth ? "100%" : undefined, textAlign: "center", height, padding: "0 7px",
           display: "flex", alignItems: "center", justifyContent: "center",
         } : {
-          fontFamily: FONT, fontSize: 16, fontWeight: 600, borderRadius: 10, boxSizing: "border-box",
+          fontFamily: FONT, fontSize: fontSize ?? 16, fontWeight: 600, borderRadius: 10, boxSizing: "border-box",
           border: `1px solid ${C.border}`, background: C.surface2, color: value ? C.text : C.textFaint,
           width: fullWidth ? "100%" : undefined, textAlign: "center", height, padding: "0 10px",
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -602,7 +608,7 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, style, subtle,
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
           <div style={{
             position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
-            left: "50%", transform: "translateX(-50%)", zIndex: 500, minWidth: 84,
+            ...(openLeft ? { left: 0 } : { left: "50%", transform: "translateX(-50%)" }), zIndex: 500, width: DROPDOWN_WIDTH,
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
             overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
@@ -920,10 +926,15 @@ function PianoIcon({ size = 20, color }) {
   );
 }
 function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
+  // Callers (e.g. the bottom nav) pass a bolder strokeWidth for the active
+  // tab, matching the lucide icons alongside it — but this glyph's solid
+  // triangle body reads as too heavy at those weights, so its own stroke
+  // is capped well below whatever's passed in.
+  const sw = Math.min(strokeWidth, 1.4);
   return (
     <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      <path d="M7.2 20h9.6L13.4 6h-2.8L7.2 20z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M12 17 14.6 7.5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path d="M7.2 20h9.6L13.4 6h-2.8L7.2 20z" stroke={color} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />
+      <path d="M12 17 14.6 7.5" stroke={color} strokeWidth={sw} strokeLinecap="round" />
       <circle cx="12" cy="17" r="0.9" fill={color} stroke="none" />
       <circle cx="13.7" cy="12" r="1.15" fill={color} stroke="none" />
     </svg>
@@ -938,20 +949,43 @@ function IosShareIcon({ size = 16, color = "currentColor" }) {
     </svg>
   );
 }
-// Softer, warmer harmonic series (less buzzy/sawtooth-like than a full
-// 1/n rolloff) plus a gentler, slower brightness sweep and a much lighter
-// compressor — the previous settings pushed the filter open very wide and
-// squashed everything through a fairly aggressive compressor, which is
-// what read as "distorted/processed" rather than an acoustic piano.
-const PIANO_TONE_HARMONICS_GRAND = [0, 1, 0.42, 0.2, 0.11, 0.065, 0.038, 0.022, 0.013, 0.007];
-const PIANO_TONE_ENV_GRAND = { attack: 0.006, decayTo: 0.42, filterOpen: 5, filterSustain: 1.8, tail: 6.5 };
-function buildPianoWave(ctx) {
-  const amps = PIANO_TONE_HARMONICS_GRAND;
-  const numHarmonics = amps.length - 1;
-  const real = new Float32Array(numHarmonics + 1);
-  const imag = new Float32Array(numHarmonics + 1);
-  for (let n = 1; n <= numHarmonics; n++) imag[n] = amps[n];
-  return ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+// ---- Acoustic grand-piano voice -----------------------------------------
+// A single fixed-harmonic PeriodicWave — the same exact spectral shape at
+// every pitch, decaying uniformly under one lowpass filter — is what reads
+// as "electronic"; it's the textbook organ/synth-pad giveaway. A struck
+// piano string instead does three things a single wave can't:
+//   1. Inharmonicity — a stiff string's overtones aren't exact integer
+//      multiples of the fundamental, they stretch sharp (more so in the
+//      bass): f_n = n * f0 * sqrt(1 + B * n^2).
+//   2. Independent partial decay — upper partials die out far faster than
+//      the fundamental, so the *color* visibly darkens as the note rings on
+//      instead of just getting quieter at a fixed timbre.
+//   3. Two or three lightly-detuned unison strings per note (bass notes on
+//      a real grand only have one, mid/treble have two or three), each with
+//      its own tiny random detune, producing the natural chorus-like
+//      beating a single oscillator per note can never produce.
+// Each note is therefore built from individual sine oscillators per partial
+// per unison string, rather than one shared PeriodicWave.
+const PIANO_PARTIALS = 7; // fundamental + 6 overtones
+function pianoInharmonicity(freq) {
+  // Falls off from a stiff, thick bass string (larger B, more stretch) to a
+  // thin, near-ideal treble string (B close to 0).
+  const t = Math.min(1, Math.max(0, (freq - 30) / (1500 - 30)));
+  return 0.022 * Math.pow(1 - t, 2.2) + 0.00015;
+}
+function pianoPartialAmp(n, freq) {
+  // Bass strings carry more energy in their upper partials (bright,
+  // metallic sustain); treble strings are close to a pure tone. Falls off
+  // roughly like 1/n^k, with k rising (purer) as pitch rises.
+  const t = Math.min(1, Math.max(0, (freq - 60) / (1400 - 60)));
+  const rolloff = 1.05 + t * 0.95;
+  return 1 / Math.pow(n, rolloff);
+}
+function pianoPartialDecay(n, freq) {
+  // Upper partials ring out much faster than the fundamental — bass notes
+  // hold their tail far longer than treble notes.
+  const base = freq < 200 ? 6 : freq < 700 ? 3.4 : 1.9; // fundamental's own tail, seconds
+  return Math.max(0.12, base / Math.pow(n, 1.3));
 }
 const WHITE_KEY_BG = "#F2F1EC";
 const WHITE_KEY_BG_PRESSED = null; // filled in per-mode below (needs accent colour)
@@ -1030,7 +1064,14 @@ function unlockAudioPlayback() {
     if (!__sharedSilentVideoEl) {
       const v = document.createElement("video");
       v.src = SILENT_VIDEO_SRC;
-      v.muted = true;
+      // Deliberately NOT muted: iOS only promotes the page's audio session
+      // to the "playback" category (which ignores the hardware silent
+      // switch) for an actually-playing, unmuted video element. A muted
+      // video doesn't trigger that promotion, so the metronome/piano would
+      // stay silent whenever the phone's silent switch was on — this was
+      // the root cause of audio sometimes not playing.
+      v.muted = false;
+      v.volume = 0.01;
       v.playsInline = true;
       v.setAttribute("playsinline", "");
       v.setAttribute("webkit-playsinline", "");
@@ -1053,7 +1094,6 @@ function PianoScreen({ C }) {
   const octaveStartRef = useRef(4);
   const audioCtxRef = useRef(null);
   const masterCompRef = useRef(null);
-  const pianoWaveRef = useRef(null);
   const activeRef = useRef(new Map());
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
@@ -1099,9 +1139,6 @@ function PianoScreen({ C }) {
       masterCompRef.current = comp;
       audioCtxRef.current = ctx;
     }
-    if (!pianoWaveRef.current) {
-      pianoWaveRef.current = buildPianoWave(audioCtxRef.current);
-    }
     if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => { });
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
@@ -1117,39 +1154,81 @@ function PianoScreen({ C }) {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const freq = freqFor(semitone);
-    const env = PIANO_TONE_ENV_GRAND;
+    const dest = masterCompRef.current || ctx.destination;
+
+    // Overall note envelope — release (stopVoice) fades this, independent
+    // of each partial's own longer natural decay below.
     const gain = ctx.createGain();
-    const peak = 0.6;
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(peak, now + env.attack);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak * env.decayTo), now + 0.4);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + env.tail);
-    const t = Math.min(1, Math.max(0, (freq - 130) / (2000 - 130)));
-    const openMult = env.filterOpen - t * (env.filterOpen * 0.55);
-    const sustainMult = Math.max(1.6, openMult * env.filterSustain / env.filterOpen * 0.3 + env.filterSustain * 0.15);
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.Q.value = 0.4;
-    filter.frequency.setValueAtTime(Math.min(6500, freq * openMult), now);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(600, freq * sustainMult), now + 2.6);
-    // Two slightly-detuned oscillators per note (a cheap stand-in for a
-    // piano's multiple unison strings) mixed together give the tone body
-    // and a subtle natural beating instead of a single flat synth tone.
-    const oscA = ctx.createOscillator();
-    oscA.setPeriodicWave(pianoWaveRef.current);
-    oscA.frequency.value = freq;
-    oscA.detune.value = -3;
-    const oscB = ctx.createOscillator();
-    oscB.setPeriodicWave(pianoWaveRef.current);
-    oscB.frequency.value = freq;
-    oscB.detune.value = 4;
-    const mix = ctx.createGain();
-    mix.gain.value = 0.5;
-    oscA.connect(mix); oscB.connect(mix);
-    mix.connect(filter); filter.connect(gain); gain.connect(masterCompRef.current || ctx.destination);
-    oscA.onended = () => { try { oscA.disconnect(); oscB.disconnect(); mix.disconnect(); filter.disconnect(); gain.disconnect(); } catch { } };
-    oscA.start(now); oscB.start(now);
-    return { osc: oscA, oscB, gain };
+    gain.gain.setValueAtTime(1, now);
+
+    // A gentle register-scaled lowpass on the whole voice, standing in for
+    // a soundboard's own natural top-end rolloff.
+    const bodyFilter = ctx.createBiquadFilter();
+    bodyFilter.type = "lowpass";
+    bodyFilter.Q.value = 0.3;
+    bodyFilter.frequency.setValueAtTime(Math.min(11000, freq * 13), now);
+    bodyFilter.connect(gain); gain.connect(dest);
+
+    const peak = 0.62;
+    const B = pianoInharmonicity(freq);
+    // Real grands taper from a single string in the deep bass to two, then
+    // three, unison strings per note going up the keyboard.
+    const unisonDetunes = freq < 90 ? [0] : freq < 400 ? [-4, 4] : [-6, 0.5, 6];
+    const oscillators = [];
+
+    unisonDetunes.forEach((detuneCents) => {
+      for (let n = 1; n <= PIANO_PARTIALS; n++) {
+        const stretch = Math.sqrt(1 + B * n * n);
+        const partialFreq = freq * n * stretch;
+        if (partialFreq > 15000) continue;
+        const amp = pianoPartialAmp(n, freq) * (peak / unisonDetunes.length);
+        const tau = pianoPartialDecay(n, freq);
+        const stopAt = now + tau + 0.15;
+
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = partialFreq;
+        // Tiny per-string random wobble on top of the unison spread is what
+        // keeps multiple notes/strings from beating in a perfectly regular,
+        // machine-like pattern.
+        osc.detune.value = detuneCents + (Math.random() * 2 - 1);
+
+        const pg = ctx.createGain();
+        const attack = n === 1 ? 0.006 : 0.001; // fundamental has a hair of hammer-strike rise; overtones snap on with the hammer impact itself
+        pg.gain.setValueAtTime(0, now);
+        pg.gain.linearRampToValueAtTime(amp, now + attack);
+        pg.gain.exponentialRampToValueAtTime(Math.max(0.00005, amp * 0.001), now + tau);
+
+        osc.connect(pg); pg.connect(bodyFilter);
+        osc.start(now);
+        osc.stop(stopAt);
+        osc.onended = () => { try { osc.disconnect(); pg.disconnect(); } catch { } };
+        oscillators.push(osc);
+      }
+    });
+
+    // Hammer-strike transient: a very brief burst of filtered noise adds
+    // the percussive "thock" a bank of pure sines can't produce alone.
+    const noiseDur = 0.018;
+    const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = "bandpass";
+    noiseFilter.frequency.value = Math.min(6000, freq * 3);
+    noiseFilter.Q.value = 0.7;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.045, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
+    noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(gain);
+    noise.start(now); noise.stop(now + noiseDur);
+    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); } catch { } };
+    oscillators.push(noise);
+
+    return { oscillators, bodyFilter, gain };
   };
   const stopVoice = (voice) => {
     if (!voice || !audioCtxRef.current) return;
@@ -1158,9 +1237,8 @@ function PianoScreen({ C }) {
     try {
       voice.gain.gain.cancelScheduledValues(now);
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
-      voice.osc.stop(now + 0.09);
-      if (voice.oscB) voice.oscB.stop(now + 0.09);
+      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      voice.oscillators.forEach((node) => { try { node.stop(now + 0.24); } catch { } });
     } catch { }
   };
   const keyAt = (x, y) => {
@@ -1237,7 +1315,6 @@ function PianoScreen({ C }) {
         try { audioCtxRef.current.close(); } catch { }
         audioCtxRef.current = null;
         masterCompRef.current = null;
-        pianoWaveRef.current = null;
       }
     };
   }, []);
@@ -1751,7 +1828,7 @@ function SubdivisionIcon({ value, size = 18, color }) {
   }
   return (
     <svg width={size * 1.5} height={size} viewBox="0 0 40 24" fill="none">
-      <text x="20" y="5.5" fontSize="7" fontWeight="700" fill={color} textAnchor="middle" fontFamily={FONT}>3</text>
+      <text x="20" y="6" fontSize="9" fontWeight="700" fill={color} textAnchor="middle" fontFamily={FONT}>3</text>
       <ellipse cx="6" cy="19" rx="3" ry="2.3" fill={color} /><ellipse cx="20" cy="19" rx="3" ry="2.3" fill={color} /><ellipse cx="34" cy="19" rx="3" ry="2.3" fill={color} />
       <line x1="9" y1="19" x2="9" y2="8" stroke={color} strokeWidth="1.8" strokeLinecap="round" /><line x1="23" y1="19" x2="23" y2="8" stroke={color} strokeWidth="1.8" strokeLinecap="round" /><line x1="37" y1="19" x2="37" y2="8" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
       <line x1="9" y1="8" x2="37" y2="8" stroke={color} strokeWidth="2" strokeLinecap="round" />
@@ -1920,7 +1997,7 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
   return out;
 }
 
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false }) {
+function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
@@ -2085,7 +2162,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   </span>
                 );
               }
-              const minWidthCh = Math.max(g.items.length, tagDrivenWidth);
+              const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
@@ -2969,7 +3046,7 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
-function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
+function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [chordsView, setChordsView] = useState("chords");
@@ -2980,13 +3057,22 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
   const showBottomBar = mode === "drums" && !!engine && metroBarVisible;
 
   useEffect(() => { setViewKey(contextKey ?? song.key); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (mode === "drums" && engine) engine.loadSong(song); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mode === "drums" && engine) engine.loadSong({ ...song, tempo: contextTempo ?? song.tempo }); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const cycleSubdivision = () => engine && engine.setSubdivision((engine.subdivision % 3) + 1);
   const wasPlayingBeforeAdjustRef = useRef(false);
   const pauseForAdjust = () => { if (engine) { wasPlayingBeforeAdjustRef.current = engine.playing; if (engine.playing) engine.stop(); } };
   const resumeAfterAdjust = () => { if (engine && wasPlayingBeforeAdjustRef.current) engine.start(); };
-  const decBpmHold = useHoldRepeat(() => engine && engine.setBpm(engine.bpm - 1, true), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
-  const incBpmHold = useHoldRepeat(() => engine && engine.setBpm(engine.bpm + 1, true), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
+  // Tempo changes made here (within a setlist) are saved back onto that
+  // setlist's entry as a tempoOverride, mirroring how key changes are
+  // scoped to the setlist rather than overwriting the song's own tempo.
+  const stepBpm = (delta) => {
+    if (!engine) return;
+    const next = Math.min(300, Math.max(30, Math.round(engine.bpm + delta)));
+    engine.setBpm(next, true);
+    if (onTempoChange) onTempoChange(next);
+  };
+  const decBpmHold = useHoldRepeat(() => stepBpm(-1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
+  const incBpmHold = useHoldRepeat(() => stepBpm(1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
 
   const edgeBack = useEdgeSwipeBack(onBack);
   const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
@@ -3023,7 +3109,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist}</div>}
         </div>
-        {mode === "drums" && !!engine && (
+        {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
@@ -3031,6 +3117,12 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
         {song.description ? (
           <button onClick={() => setDescOpen((o) => !o)} style={{ ...chevronBtn, position: "relative", zIndex: 1 }}>
             <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
+          </button>
+        ) : mode === "drums" && !!engine ? (
+          // No description to toggle, so the metronome bottom-bar toggle
+          // takes over this slot instead of leaving it an empty spacer.
+          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
+            <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
         ) : (
           <div style={{ width: 30, height: 30, flexShrink: 0 }} />
@@ -3052,17 +3144,17 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       )}
 
       {mode === "drums" && !!engine && (
-        <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
-            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={22} subtle C={C} />
-            <button onClick={cycleSubdivision} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <SubdivisionIcon value={engine.subdivision} size={11} color={C.textMuted} />
+        <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
+            <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} fontSize={12.5} C={C} />
+            <button onClick={cycleSubdivision} style={chevronBtn}>
+              <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
             </button>
           </div>
           <div style={{ justifySelf: "center" }}>
             <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
           </div>
-          <div style={{ ...badgeStyle, fontSize: 15.5, fontWeight: 800, flexShrink: 0, justifySelf: "end", position: "relative", zIndex: 1 }}>{Math.round(engine.bpm)}<span style={{ fontSize: 10.5, fontWeight: 700, marginLeft: 3, color: C.textFaint }}>BPM</span></div>
+          <div style={{ ...badgeStyle, height: 30, boxSizing: "border-box", flexShrink: 0, justifySelf: "end", position: "relative", zIndex: 1 }}>{Math.round(engine.bpm)} BPM</div>
         </div>
       )}
 
@@ -3082,7 +3174,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
               {isVocals ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} />
               ) : (
-                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} />
               )}
             </div>
           ));
@@ -3090,12 +3182,12 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C", borderTop: `1px solid ${C.border}` }}>
-          <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C" }}>
+          <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
           <button onClick={engine.toggle} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {engine.playing ? <Square size={26} color={C.accent} fill={C.accent} /> : <Play size={26} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
           </button>
-          <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
+          <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
         </div>
       )}
     </div>
@@ -3105,9 +3197,10 @@ function SongDetailScreen({ song, contextKey, onKeyChange, onBack, onEdit, onDel
 /* =========================================================================
    Setlist song row
    ========================================================================= */
-function SetlistSongRow({ song, keyOverride, style, handlers, onClick, mode, C }) {
+function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onClick, mode, C }) {
+  const effectiveTempo = tempoOverride ?? song.tempo;
   const badgeText = mode === "drums"
-    ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—")
+    ? (effectiveTempo !== "" && effectiveTempo != null ? `${effectiveTempo}` : "—")
     : flatify(`${keyOverride || song.key}${song.keyQuality === "Minor" ? "m" : ""}`);
   return (
     <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
@@ -3140,18 +3233,18 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
   const justDraggedRef = useRef(false);
 
   const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed) onUpdateSetlist({ ...setlist, name: trimmed }); setEditingName(false); };
-  const startNameLongPress = () => { if (nameLongPressTimerRef.current) clearTimeout(nameLongPressTimerRef.current); nameLongPressTimerRef.current = setTimeout(() => { setNameDraft(setlist.name); setEditingName(true); }, 500); };
+  const startNameLongPress = () => { if (nameLongPressTimerRef.current) clearTimeout(nameLongPressTimerRef.current); nameLongPressTimerRef.current = setTimeout(() => { setPickerOpen(true); }, 500); };
   const cancelNameLongPress = () => { if (nameLongPressTimerRef.current) { clearTimeout(nameLongPressTimerRef.current); nameLongPressTimerRef.current = null; } };
 
   const setlistSongs = setlist.entries.map((e) => {
     const song = songs.find((s) => s.id === e.songId);
-    return song ? { song, keyOverride: e.keyOverride } : null;
+    return song ? { song, keyOverride: e.keyOverride, tempoOverride: e.tempoOverride } : null;
   }).filter(Boolean);
 
   const removeFromStage = (songId) => onUpdateSetlist({ ...setlist, entries: setlist.entries.filter((e) => e.songId !== songId) });
   const toggleSong = (songId) => {
     const has = setlist.entries.some((e) => e.songId === songId);
-    onUpdateSetlist({ ...setlist, entries: has ? setlist.entries.filter((e) => e.songId !== songId) : [...setlist.entries, { songId, keyOverride: null }] });
+    onUpdateSetlist({ ...setlist, entries: has ? setlist.entries.filter((e) => e.songId !== songId) : [...setlist.entries, { songId, keyOverride: null, tempoOverride: null }] });
   };
 
   const mouseDragIdxRef = useRef(null);
@@ -3215,12 +3308,12 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       <div className="scroll-list" style={{ flex: 1, overflowY: (activeDragIndex !== null || dragging) ? "hidden" : "auto", padding: "0 20px 14px", boxSizing: "border-box", touchAction: (activeDragIndex !== null || dragging) ? "none" : "pan-y" }}>
         {setlistSongs.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>No songs added yet.</div>
-        ) : setlistSongs.map(({ song: s, keyOverride }, idx) => {
+        ) : setlistSongs.map(({ song: s, keyOverride, tempoOverride }, idx) => {
           const isDraggingThis = activeDragIndex === idx;
           return (
             <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => removeFromStage(s.id)} icon={X} C={C} elevated={isDraggingThis}>
               <SetlistSongRow
-                song={s} keyOverride={keyOverride} mode={mode} C={C}
+                song={s} keyOverride={keyOverride} tempoOverride={tempoOverride} mode={mode} C={C}
                 onClick={() => {
                   if (justDraggedRef.current) { justDraggedRef.current = false; return; }
                   if (activeDragIndex === null) onOpenSong(s);
@@ -3305,9 +3398,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
   };
   const decLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.max(14, f - 1)));
-  const incLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.min(80, f + 1)));
+  const incLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.min(100, f + 1)));
   const decNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.max(8, f - 1)));
-  const incNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.min(80, f + 1)));
+  const incNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.min(100, f + 1)));
   const decSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.max(9, f - 1)));
   const incSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.min(30, f + 1)));
   const decLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100)));
@@ -3403,6 +3496,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
+                    padWordForTag={false}
                   />
                 ) : (
                   <ChordText
@@ -3470,16 +3564,18 @@ function Toast({ message, C }) {
 }
 
 function BottomNav({ active, onChange, mode, C }) {
-  const firstTab = mode === "drums" ? { id: "practice", label: "Metronome", icon: MetronomeIcon, size: 23 } : { id: "practice", label: "Piano", icon: PianoIcon, size: 23 };
-  const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic, size: 18 }, { id: "setlists", label: "Setlists", icon: Layers, size: 18 }, { id: "settings", label: "Settings", icon: SettingsIcon, size: 18 }];
+  const firstTab = mode === "drums" ? { id: "practice", label: "Metronome", icon: MetronomeIcon } : { id: "practice", label: "Piano", icon: PianoIcon };
+  const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
       <div style={{ display: "flex", background: "#000000", paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
-        {items.map(({ id, label, icon: Icon, size }) => {
+        {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
           return (
-            <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
-              <Icon size={size} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
+            <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
+              <div style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon size={18} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
+              </div>
               <span style={{ fontSize: 8, color: isActive ? C.accent : C.textMuted, fontWeight: isActive ? 600 : 400 }}>{label}</span>
             </button>
           );
@@ -3697,6 +3793,9 @@ function AppInner() {
   const handleKeyOverrideChange = (setlistId, songId, newKey) => {
     saveSetlists(setlists.map((sl) => (sl.id !== setlistId ? sl : { ...sl, entries: sl.entries.map((e) => (e.songId === songId ? { ...e, keyOverride: newKey } : e)) })));
   };
+  const handleTempoOverrideChange = (setlistId, songId, newTempo) => {
+    saveSetlists(setlists.map((sl) => (sl.id !== setlistId ? sl : { ...sl, entries: sl.entries.map((e) => (e.songId === songId ? { ...e, tempoOverride: newTempo } : e)) })));
+  };
   const handleUpdateSongAccents = (songId, accents) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, accents } : s)));
   const handleUpdateSongSubdivision = (songId, subdivision) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, subdivision } : s)));
 
@@ -3712,7 +3811,7 @@ function AppInner() {
     flash(result === "shared" ? "Shared song" : "Downloaded song");
   };
   const exportSetlist = async (setlist) => {
-    const entries = setlist.entries.map((e) => ({ song: songs.find((s) => s.id === e.songId), keyOverride: e.keyOverride })).filter((e) => e.song);
+    const entries = setlist.entries.map((e) => ({ song: songs.find((s) => s.id === e.songId), keyOverride: e.keyOverride, tempoOverride: e.tempoOverride })).filter((e) => e.song);
     const result = await shareOrDownloadJSON(`${setlist.name}.json`, { type: "setlist", exportedAt: new Date().toISOString(), setlist: { name: setlist.name, entries } });
     if (result === "cancelled") return;
     flash(result === "shared" ? `Shared setlist "${setlist.name}"` : `Downloaded setlist "${setlist.name}"`);
@@ -3741,7 +3840,7 @@ function AppInner() {
       let songId;
       if (existing) songId = existing.id;
       else { const finalTitle = dedupeTitle(title, artist, working); const song = { ...raw, id: uid(), title: finalTitle, artist }; working.push(song); songId = song.id; }
-      newEntries.push({ songId, keyOverride: e.keyOverride ?? null });
+      newEntries.push({ songId, keyOverride: e.keyOverride ?? null, tempoOverride: e.tempoOverride ?? null });
     });
     saveSongs(working);
     saveSetlists([...setlists, { id: uid(), name: pkg.name || "Imported Setlist", entries: newEntries }]);
@@ -3827,6 +3926,8 @@ function AppInner() {
           song={viewingSong}
           contextKey={viewingEntry ? (viewingEntry.keyOverride ?? viewingSong.key) : viewingSong.key}
           onKeyChange={viewing?.fromSetlistId ? (newKey) => handleKeyOverrideChange(viewing.fromSetlistId, viewingSong.id, newKey) : null}
+          contextTempo={viewingEntry ? (viewingEntry.tempoOverride ?? viewingSong.tempo) : viewingSong.tempo}
+          onTempoChange={viewing?.fromSetlistId ? (newTempo) => handleTempoOverrideChange(viewing.fromSetlistId, viewingSong.id, newTempo) : null}
           onBack={() => setViewing(null)}
           onEdit={(s) => { setViewing(null); setEditingSong(s); }}
           onDelete={handleDeleteSong}
