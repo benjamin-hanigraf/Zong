@@ -292,15 +292,19 @@ function dedupeTitle(candidateTitle, artist, existingSongs) {
 const TAMIL_RANGE_RE = /[\u0B80-\u0BFF]/;
 const TAMIL_COMBINING_RE = /[\u0BBE-\u0BCD]/;
 const TANGLISH_PULLI = "\u0BCD";
+// ஈ -> "ee" (not "ii"), ஏ -> "ae" (not "ee"), ஓ -> "o" (single letter, not
+// "oo"), ஊ -> "oo" (not "uu" — e.g. பூமி -> "Boomi", not "Buumi").
 const TANGLISH_VOWELS = {
-  "\u0B85": "a", "\u0B86": "aa", "\u0B87": "i", "\u0B88": "ii", "\u0B89": "u", "\u0B8A": "uu",
-  "\u0B8E": "e", "\u0B8F": "ee", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "oo", "\u0B94": "au",
+  "\u0B85": "a", "\u0B86": "aa", "\u0B87": "i", "\u0B88": "ee", "\u0B89": "u", "\u0B8A": "oo",
+  "\u0B8E": "e", "\u0B8F": "ae", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "o", "\u0B94": "au",
   "\u0B83": "h",
 };
 // Base (unvoiced) forms — used at word-start, when geminated (doubled), and
 // anywhere the voicing rule below doesn't apply.
+// ச defaults to the "s" sound ("s" is the norm; "ch" is only an exception,
+// handled via TANGLISH_EXCEPTIONS for the specific words that need it).
 const TANGLISH_CONSONANTS = {
-  "\u0B95": "k", "\u0B99": "ng", "\u0B9A": "ch", "\u0B9C": "j", "\u0B9E": "nj",
+  "\u0B95": "k", "\u0B99": "ng", "\u0B9A": "s", "\u0B9C": "j", "\u0B9E": "nj",
   "\u0B9F": "t", "\u0BA3": "n", "\u0BA4": "th", "\u0BA8": "n", "\u0BA9": "n",
   "\u0BAA": "p", "\u0BAE": "m", "\u0BAF": "y", "\u0BB0": "r", "\u0BB2": "l",
   "\u0BB5": "v", "\u0BB4": "zh", "\u0BB3": "l", "\u0BB1": "r",
@@ -314,8 +318,8 @@ const TANGLISH_VOICED = {
 // (in a nasal+stop cluster, e.g. ன்ப, ம்ப, ந்த, ங்க) voices reliably.
 const TANGLISH_NASALS = new Set(["\u0B99", "\u0B9E", "\u0BA3", "\u0BA8", "\u0BAE", "\u0BA9"]);
 const TANGLISH_VOWEL_SIGNS = {
-  "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ii", "\u0BC1": "u", "\u0BC2": "uu",
-  "\u0BC6": "e", "\u0BC7": "ee", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "oo", "\u0BCC": "au",
+  "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ee", "\u0BC1": "u", "\u0BC2": "uu",
+  "\u0BC6": "e", "\u0BC7": "ae", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "o", "\u0BCC": "au",
 };
 const TANGLISH_DIGITS = {
   "\u0BE6": "0", "\u0BE7": "1", "\u0BE8": "2", "\u0BE9": "3", "\u0BEA": "4",
@@ -357,7 +361,14 @@ function transliterateTamilWordWithOffsets(word) {
       const next = word[i + 1];
       const isGeminate = next === TANGLISH_PULLI && word[i + 2] === ch;
       const voiced = TANGLISH_VOICED[ch] && !isGeminate && prevKind === "nasal";
-      const base = voiced ? TANGLISH_VOICED[ch] : TANGLISH_CONSONANTS[ch];
+      // ற்ற (geminate ற) carries a "t" sound, not "rr" — e.g. ற்றி -> "tri"
+      // (the first ற becomes "t", the second ற plus its vowel becomes "ri").
+      const isGeminateRa = isGeminate && ch === "\u0BB1";
+      // ங்க never doubles its "g" — the nasal ங் drops its own "ng" spelling
+      // down to a bare "n" whenever it's immediately voicing a following க,
+      // so the pair reads as "nga" instead of "ngga".
+      const isNgaCluster = ch === "\u0B99" && next === TANGLISH_PULLI && word[i + 2] === "\u0B95";
+      const base = isGeminateRa ? "t" : isNgaCluster ? "n" : voiced ? TANGLISH_VOICED[ch] : TANGLISH_CONSONANTS[ch];
       const isNasal = TANGLISH_NASALS.has(ch);
       if (next === TANGLISH_PULLI) {
         out += base;
@@ -1258,6 +1269,39 @@ function useIsLandscapeScreen() {
   }, []);
   return isLandscape;
 }
+
+// Tracks how much of the bottom of the layout viewport is currently covered
+// by the on-screen keyboard (0 when the keyboard is closed). Scroll-list
+// containers add this as extra bottom padding so there's always room to
+// scroll focused fields / bottom-of-list items up above the keyboard,
+// since the app's fixed-height layout never natively shrinks for it.
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const kb = window.innerHeight - vv.height - vv.offsetTop;
+      setInset(kb > 60 ? Math.round(kb) : 0);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+  return inset;
+}
+
+// On focus, nudges a field into view above the keyboard once it has finished
+// animating open. Needed because the app's own scroll-pinning effect
+// neutralises the browser's native "scroll focused input into view" step.
+const scrollFieldIntoView = (e) => {
+  const el = e.currentTarget;
+  setTimeout(() => { el.scrollIntoView({ block: "center", behavior: "smooth" }); }, 320);
+};
 function LandscapeLock({ children }) {
   const outerRef = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -2920,7 +2964,7 @@ const escapeHtml = (s) => String(s ?? "")
 // tinted in the given accent colour as the user types. When
 // restrictToNashville is set, only tokens matching the Nashville-number
 // pattern are tinted — anything else in brackets stays plain text colour.
-function HighlightedAutoGrowTextarea({ value, onChange, onBlur, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
+function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
   const taRef = useRef(null);
   const backdropRef = useRef(null);
   useEffect(() => {
@@ -2958,6 +3002,7 @@ function HighlightedAutoGrowTextarea({ value, onChange, onBlur, placeholder, wra
         value={raw}
         onChange={onChange}
         onBlur={onBlur}
+        onFocus={onFocus}
         onScroll={handleScroll}
         style={{ ...baseTextStyle, position: "relative", display: "block", color: "transparent", caretColor: C.text, resize: "none", overflow: "hidden", outline: "none", boxShadow: "none" }}
       />
@@ -2992,6 +3037,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const [sectionTab, setSectionTab] = useState("lyrics");
 
   const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
+  const keyboardInset = useKeyboardInset();
 
   const handlePasteFromClipboard = async () => {
     try {
@@ -3067,7 +3113,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   };
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
@@ -3101,7 +3147,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
         <Field label="LANGUAGE"><TabSelect options={LANGUAGES} value={language} onChange={setLanguage} C={C} /></Field>
 
         <Field label="DESCRIPTION">
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={"Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle"}
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} onFocus={scrollFieldIntoView} placeholder={"Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle"}
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", height: "auto", padding: "12px 14px", minHeight: 62, resize: "vertical" }} />
         </Field>
 
@@ -3120,6 +3166,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           <HighlightedAutoGrowTextarea
             value={activeSectionValue}
             onChange={(e) => setActiveSectionValue(e.target.value)}
+            onFocus={scrollFieldIntoView}
             onBlur={() => { if (sectionTab === "chords") setChordsText((t) => autoBracketNumbers(t)); }}
             placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
             accent={C.accent}
@@ -3271,6 +3318,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
   const [query, setQuery] = useState("");
   const [langFilter, setLangFilter] = useState("All");
   const [activeMenuId, setActiveMenuId] = useState(null);
+  const keyboardInset = useKeyboardInset();
   const filtered = songs
     .filter((s) => songMatchesQuery(s, query))
     .filter((s) => langFilter === "All" || s.language === langFilter)
@@ -3294,7 +3342,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
       </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: activeMenuId != null ? "hidden" : "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: activeMenuId != null ? "hidden" : "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
         ) : filtered.map((s) => (
@@ -3694,6 +3742,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
 function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   const [query, setQuery] = useState("");
   const [openSwipeId, setOpenSwipeId] = useState(null);
+  const keyboardInset = useKeyboardInset();
   const filtered = setlists.filter((sl) => sl.name.toLowerCase().includes(query.toLowerCase()));
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -3708,7 +3757,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
       </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 14px", boxSizing: "border-box" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
         {filtered.length === 0 && (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{setlists.length === 0 ? "No setlists yet." : "No matches."}</div>
         )}
