@@ -354,9 +354,19 @@ function setActiveTanglishExceptions(map) { activeTanglishExceptions = map; }
 // character later be spliced into the precise corresponding spot in the
 // transliterated output, even mid-syllable (between a consonant and its
 // own vowel sign).
-function transliterateTamilWordWithOffsets(word) {
+const SA = "\u0B9A"; // ச
+const TA_RETROFLEX = "\u0B9F"; // ட
+const THA = "\u0BA4"; // த
+const YA = "\u0BAF"; // ய
+// Returns true if the word ends with ச் (ச + pulli, with nothing after).
+function wordEndsWithSachPulli(word) {
+  const len = word.length;
+  return len >= 2 && word[len - 2] === SA && word[len - 1] === TANGLISH_PULLI;
+}
+function transliterateTamilWordWithOffsets(word, prevWordEndedWithSach = false) {
   let out = "";
   let prevKind = "start"; // "start" | "vowel" | "nasal" | "other"
+  let prevCh = ""; // actual previous consonant character (before its pulli)
   const offsets = new Array(word.length + 1);
   let i = 0;
   while (i < word.length) {
@@ -373,37 +383,71 @@ function transliterateTamilWordWithOffsets(word) {
       // down to a bare "n" whenever it's immediately voicing a following க,
       // so the pair reads as "nga" instead of "ngga".
       const isNgaCluster = ch === "\u0B99" && next === TANGLISH_PULLI && word[i + 2] === "\u0B95";
-      const base = isGeminateRa ? "t" : isNgaCluster ? "n" : voiced ? TANGLISH_VOICED[ch] : TANGLISH_CONSONANTS[ch];
+      // த்த geminate: the doubled த produces a single "th" (not "thth").
+      // Suppress the leading த் entirely; the following த will carry the "th" + vowel.
+      const isGeminateTha = isGeminate && ch === THA;
+      // ட்ச cluster: ச after ட் is always "ch" (retroflex stop + sibilant assimilation).
+      const isDotaSa = ch === SA && prevCh === TA_RETROFLEX && prevKind === "other";
+      // ச at word-start when previous word ended with ச் — treat as "cha"-initial.
+      const isSaAfterSach = ch === SA && i === 0 && prevWordEndedWithSach;
+      // ச் at word-end (ச followed by pulli as the very last two chars) → "ch".
+      const isSaWordFinal = ch === SA && next === TANGLISH_PULLI && i + 2 === word.length;
+      // ய followed by pulli: the /y/ offglide becomes an "i" vowel (e.g. -ஆய் → -aai).
+      const isYaPulli = ch === YA && next === TANGLISH_PULLI;
+
+      let base;
+      if (isGeminateRa) base = "t";
+      else if (isNgaCluster) base = "n";
+      else if (isGeminateTha) base = ""; // suppressed — second த does the work
+      else if (isDotaSa || isSaAfterSach) base = "ch";
+      else if (isSaWordFinal) base = "ch";
+      else if (isYaPulli) base = "i";
+      else if (voiced) base = TANGLISH_VOICED[ch];
+      else base = TANGLISH_CONSONANTS[ch];
+
       const isNasal = TANGLISH_NASALS.has(ch);
-      if (next === TANGLISH_PULLI) {
+      if (isYaPulli) {
+        // ய் → "i" (no separate pulli output, consumed here)
+        out += base;
+        offsets[i + 1] = out.length;
+        prevKind = "vowel";
+        prevCh = ch;
+        i += 2;
+      } else if (next === TANGLISH_PULLI) {
         out += base;
         offsets[i + 1] = out.length;
         prevKind = isNasal ? "nasal" : "other";
+        prevCh = ch;
         i += 2;
       } else if (next && TANGLISH_VOWEL_SIGNS[next]) {
+        // For ட்ச + vowel sign: base is already "ch", add vowel normally.
         out += base;
         offsets[i + 1] = out.length;
         out += TANGLISH_VOWEL_SIGNS[next];
         prevKind = "vowel";
+        prevCh = ch;
         i += 2;
       } else {
-        out += base + "a";
+        out += base + (base === "" ? "" : "a"); // suppressed geminate emits nothing
         prevKind = "vowel";
+        prevCh = ch;
         i += 1;
       }
-    } else if (TANGLISH_VOWELS[ch]) { out += TANGLISH_VOWELS[ch]; prevKind = "vowel"; i += 1; }
-    else if (TANGLISH_DIGITS[ch]) { out += TANGLISH_DIGITS[ch]; prevKind = "other"; i += 1; }
-    else { out += ch; prevKind = "start"; i += 1; }
+    } else if (TANGLISH_VOWELS[ch]) { out += TANGLISH_VOWELS[ch]; prevKind = "vowel"; prevCh = ""; i += 1; }
+    else if (TANGLISH_DIGITS[ch]) { out += TANGLISH_DIGITS[ch]; prevKind = "other"; prevCh = ""; i += 1; }
+    else { out += ch; prevKind = "start"; prevCh = ""; i += 1; }
   }
   offsets[word.length] = out.length;
   return { out, offsets };
 }
 // Transliterates one already-tokenized line (tokenizeTaggedLine's output),
 // re-anchoring every tag to the exact output position of the Tamil
-// character it was attached to.
-function transliterateTaggedTokens(tokens) {
+// character it was attached to. prevWordEndedWithSach is passed in from the
+// caller so ச at the start of the next word can be forced to "cha".
+function transliterateTaggedTokens(tokens, prevWordEndedWithSach = false) {
   let result = "";
   let i = 0;
+  let sachFlag = prevWordEndedWithSach; // cross-word ச→cha context
   while (i < tokens.length) {
     const tok = tokens[i];
     if (tok.ch != null && TAMIL_RANGE_RE.test(tok.ch)) {
@@ -424,13 +468,15 @@ function transliterateTaggedTokens(tokens) {
       if (onlyLeadingTag && activeTanglishExceptions[rawWord]) {
         const lead = tagHits.length ? `[${tagHits[0].tag}]` : "";
         result += lead + activeTanglishExceptions[rawWord];
+        sachFlag = wordEndsWithSachPulli(rawWord);
         continue;
       }
 
       // General path: algorithmic transliteration with exact per-character
       // output offsets, so every tag (however many, wherever placed) lands
       // precisely on the syllable it was attached to.
-      const { out, offsets } = transliterateTamilWordWithOffsets(rawWord);
+      const { out, offsets } = transliterateTamilWordWithOffsets(rawWord, sachFlag);
+      sachFlag = wordEndsWithSachPulli(rawWord);
       let spliced = out;
       let shift = 0;
       tagHits.forEach(({ index, tag }) => {
@@ -446,6 +492,8 @@ function transliterateTaggedTokens(tokens) {
     // trailing tag with no following character) — passes through as-is,
     // tag and all, in its original position.
     result += (tok.tag ? `[${tok.tag}]` : "") + (tok.ch ?? "");
+    // A non-Tamil character between two Tamil words (usually a space) doesn't
+    // reset the sach-flag — the rule persists across word-separating spaces.
     i++;
   }
   return result;
@@ -3151,7 +3199,9 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
-        <button onClick={handlePasteFromClipboard} title="Paste song from clipboard" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ClipboardPaste size={20} /></button>
+        <button disabled={!canSave} onClick={handleSave} style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+          <Check size={15} color={canSave ? "#fff" : C.textFaint} />Save
+        </button>
       </div>
 
       <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60, width: "100%", boxSizing: "border-box" }}>
@@ -3217,24 +3267,15 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             <button onClick={() => onDelete(initial.id)} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Trash2 size={16} color="#fff" />Confirm Delete</button>
           </div>
         ) : initial ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
-            <button disabled={!canSave} onClick={handleSave} style={{ fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <Check size={17} color={canSave ? "#fff" : C.textFaint} />SAVE
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+              <Trash2 size={15} color={C.danger} />Delete
             </button>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-                <Trash2 size={15} color={C.danger} />Delete
-              </button>
-              <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-                <Copy size={15} color={C.text} />Duplicate
-              </button>
-            </div>
+            <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+              <Copy size={15} color={C.text} />Duplicate
+            </button>
           </div>
-        ) : (
-          <button disabled={!canSave} onClick={handleSave} style={{ marginTop: 8, fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "16px 0", borderRadius: 14, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Check size={17} color={canSave ? "#fff" : C.textFaint} />SAVE
-          </button>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -3829,20 +3870,86 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
    SpellingChartScreen — full-screen overlay listing every TANGLISH_EXCEPTIONS
    entry as a Tamil → Tanglish table, with add / delete support.
    ========================================================================= */
+// SpellingChartRow — handles both read and inline-edit state for a single entry.
+function SpellingChartRow({ tamilKey, value, isFirst, onSave, onDelete, C }) {
+  const [editing, setEditing] = useState(false);
+  const [editTamil, setEditTamil] = useState(tamilKey);
+  const [editLatin, setEditLatin] = useState(value);
+  const [err, setErr] = useState("");
+
+  const inputStyle = {
+    flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`,
+    background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14,
+    fontWeight: 500, padding: "0 8px", outline: "none", boxSizing: "border-box", minWidth: 0,
+  };
+
+  const handleSave = () => {
+    const t = editTamil.trim(); const l = editLatin.trim();
+    if (!t) { setErr("Enter Tamil."); return; }
+    if (!l) { setErr("Enter Tanglish."); return; }
+    onSave(tamilKey, t, l);
+    setEditing(false); setErr("");
+  };
+
+  const rowBorder = isFirst ? "none" : `1px solid ${C.border}`;
+
+  if (editing) {
+    return (
+      <div style={{ borderTop: rowBorder, padding: "10px 12px" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: err ? 4 : 0 }}>
+          <input autoFocus value={editTamil} onChange={(e) => { setEditTamil(e.target.value); setErr(""); }} style={inputStyle} />
+          <input value={editLatin} onChange={(e) => { setEditLatin(e.target.value); setErr(""); }} style={inputStyle} />
+        </div>
+        {err && <div style={{ fontSize: 11.5, color: "#FF453A", marginBottom: 4, paddingLeft: 2 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button onClick={handleSave} style={{ flex: 1, height: 36, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700 }}>Save</button>
+          <button onClick={() => { setEditing(false); setEditTamil(tamilKey); setEditLatin(value); setErr(""); }} style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>Cancel</button>
+          <button onClick={() => onDelete(tamilKey)} style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.danger ?? "#FF453A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }} aria-label="Delete"><Trash2 size={14} /></button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => { setEditing(true); setEditTamil(tamilKey); setEditLatin(value); }}
+      style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rowBorder, background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+    >
+      <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{tamilKey}</div>
+      <div style={{ fontSize: 14, fontWeight: 500, color: C.textMuted, paddingRight: 8 }}>{value}</div>
+      <Pencil size={13} color={C.textFaint} />
+    </button>
+  );
+}
+
 function SpellingChartScreen({ chart, onSave, onBack, C }) {
-  // chart is an object { tamilWord: tanglishSpelling, ... }
   const [adding, setAdding] = useState(false);
   const [newTamil, setNewTamil] = useState("");
   const [newLatin, setNewLatin] = useState("");
-  const [editError, setEditError] = useState("");
+  const [addError, setAddError] = useState("");
+  const keyboardInset = useKeyboardInset();
 
-  // Keep seed entries in declaration order, user-added entries appended alphabetically.
+  // User-added entries on top (newest-first), then seed entries below.
   const seedKeys = Object.keys(TANGLISH_EXCEPTIONS);
-  const userKeys = Object.keys(chart).filter((k) => !seedKeys.includes(k)).sort();
-  const rows = [
-    ...seedKeys.filter((k) => k in chart),
-    ...userKeys,
-  ];
+  const userKeys = Object.keys(chart).filter((k) => !seedKeys.includes(k)).reverse();
+  const presentSeedKeys = seedKeys.filter((k) => k in chart);
+  const rows = [...userKeys, ...presentSeedKeys];
+
+  const handleAdd = () => {
+    const tamil = newTamil.trim();
+    const latin = newLatin.trim();
+    if (!tamil) { setAddError("Enter a Tamil word."); return; }
+    if (!latin) { setAddError("Enter the Tanglish spelling."); return; }
+    if (chart[tamil]) { setAddError("That word already exists."); return; }
+    onSave({ ...chart, [tamil]: latin });
+    setNewTamil(""); setNewLatin(""); setAdding(false); setAddError("");
+  };
+
+  const handleRowSave = (oldKey, newKey, newVal) => {
+    const next = { ...chart };
+    if (oldKey !== newKey) delete next[oldKey];
+    next[newKey] = newVal;
+    onSave(next);
+  };
 
   const handleDelete = (key) => {
     const next = { ...chart };
@@ -3850,34 +3957,11 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
     onSave(next);
   };
 
-  const handleAdd = () => {
-    const tamil = newTamil.trim();
-    const latin = newLatin.trim();
-    if (!tamil) { setEditError("Enter a Tamil word."); return; }
-    if (!latin) { setEditError("Enter the Tanglish spelling."); return; }
-    if (chart[tamil]) { setEditError("That word already exists."); return; }
-    onSave({ ...chart, [tamil]: latin });
-    setNewTamil("");
-    setNewLatin("");
-    setAdding(false);
-    setEditError("");
+  const inputStyle = {
+    flex: 1, height: 40, borderRadius: 8, border: `1px solid ${C.border}`,
+    background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 15,
+    fontWeight: 500, padding: "0 10px", outline: "none", boxSizing: "border-box", minWidth: 0,
   };
-
-  const inputStyle = (C) => ({
-    flex: 1,
-    height: 40,
-    borderRadius: 8,
-    border: `1px solid ${C.border}`,
-    background: C.surface3,
-    color: C.text,
-    fontFamily: FONT,
-    fontSize: 15,
-    fontWeight: 500,
-    padding: "0 10px",
-    outline: "none",
-    boxSizing: "border-box",
-    minWidth: 0,
-  });
 
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
@@ -3889,81 +3973,55 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
-      {/* Subtitle */}
-      <div style={{ flex: "0 0 auto", padding: "10px 20px 6px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
-        Words where the algorithm's default output is wrong. These always override the automatic transliteration.
-      </div>
+      {/* Scrollable content — paddingBottom shrinks when keyboard is up so nothing is hidden */}
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: `max(40px, ${keyboardInset})`, boxSizing: "border-box" }}>
 
-      {/* Table */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px", boxSizing: "border-box" }}>
+        {/* Subtitle */}
+        <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+          Words where the algorithm's default output is wrong. Tap any row to edit. Edits take effect immediately.
+        </div>
+
+        {/* ADD WORD — always at top */}
+        {adding ? (
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 12px", marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: addError ? 6 : 0 }}>
+              <input autoFocus placeholder="தமிழ்" value={newTamil} onChange={(e) => { setNewTamil(e.target.value); setAddError(""); }} style={inputStyle} />
+              <input placeholder="Tanglish" value={newLatin} onChange={(e) => { setNewLatin(e.target.value); setAddError(""); }} style={inputStyle} />
+            </div>
+            {addError && <div style={{ fontSize: 12, color: "#FF453A", marginBottom: 6, paddingLeft: 2 }}>{addError}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={handleAdd} style={{ flex: 1, height: 38, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700 }}>Save</button>
+              <button onClick={() => { setAdding(false); setNewTamil(""); setNewLatin(""); setAddError(""); }} style={{ flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600 }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            style={{ width: "100%", height: 44, borderRadius: 11, border: `1px solid ${C.border}`, background: C.surface2, color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 12 }}
+          >
+            <Plus size={16} /> Add word
+          </button>
+        )}
+
         {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 0, marginBottom: 4, padding: "8px 12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 0, marginBottom: 4, padding: "0 12px" }}>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tamil</div>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
           <div style={{ width: 30 }} />
         </div>
 
         {/* Rows */}
-        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-          {rows.length === 0 && !adding && (
-            <div style={{ padding: "24px 16px", textAlign: "center", color: C.textMuted, fontSize: 14 }}>No entries. Tap + Add to create one.</div>
+        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+          {rows.length === 0 && (
+            <div style={{ padding: "24px 16px", textAlign: "center", color: C.textMuted, fontSize: 14 }}>No entries yet.</div>
           )}
           {rows.map((key, i) => (
-            <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{key}</div>
-              <div style={{ fontSize: 14, fontWeight: 500, color: C.textMuted, paddingRight: 8 }}>{chart[key]}</div>
-              <button
-                onClick={() => handleDelete(key)}
-                style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textFaint, flexShrink: 0, borderRadius: 6, padding: 0 }}
-                aria-label={`Delete ${key}`}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
+            <SpellingChartRow
+              key={key} tamilKey={key} value={chart[key]}
+              isFirst={i === 0} onSave={handleRowSave} onDelete={handleDelete} C={C}
+            />
           ))}
-
-          {/* Add row inline */}
-          {adding && (
-            <div style={{ borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", padding: "12px 12px" }}>
-              <div style={{ display: "flex", gap: 8, marginBottom: editError ? 6 : 0 }}>
-                <input
-                  autoFocus
-                  placeholder="தமிழ்"
-                  value={newTamil}
-                  onChange={(e) => { setNewTamil(e.target.value); setEditError(""); }}
-                  style={inputStyle(C)}
-                />
-                <input
-                  placeholder="Tanglish"
-                  value={newLatin}
-                  onChange={(e) => { setNewLatin(e.target.value); setEditError(""); }}
-                  style={inputStyle(C)}
-                />
-              </div>
-              {editError && <div style={{ fontSize: 12, color: "#FF453A", marginBottom: 6, paddingLeft: 2 }}>{editError}</div>}
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button
-                  onClick={handleAdd}
-                  style={{ flex: 1, height: 38, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700 }}
-                >Save</button>
-                <button
-                  onClick={() => { setAdding(false); setNewTamil(""); setNewLatin(""); setEditError(""); }}
-                  style={{ flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600 }}
-                >Cancel</button>
-              </div>
-            </div>
-          )}
         </div>
-
-        {/* Add button */}
-        {!adding && (
-          <button
-            onClick={() => setAdding(true)}
-            style={{ marginTop: 14, width: "100%", height: 44, borderRadius: 11, border: `1px solid ${C.border}`, background: C.surface2, color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-          >
-            <Plus size={16} /> Add word
-          </button>
-        )}
       </div>
     </div>
   );
