@@ -96,35 +96,8 @@ const MODE_META = {
   drums: { label: "Drums", accent: "#FFB020", accentDim: "rgba(255,176,32,0.35)", accentSoft: "rgba(255,176,32,0.12)" },
   chords: { label: "Chords", accent: "#0A84FF", accentDim: "rgba(10,132,255,0.35)", accentSoft: "rgba(10,132,255,0.12)" },
 };
-// Light-mode accent shades — kept as close as possible to the dark-mode
-// accents (same hue family, same "vocals=green / drums=amber / chords=blue"
-// identity), but pulled darker/more saturated where the dark-mode value
-// doesn't clear readable contrast as text/icon colour on a white surface.
-const LIGHT_MODE_ACCENTS = {
-  vocals: { accent: "#248A3D", accentDim: "rgba(36,138,61,0.35)", accentSoft: "rgba(36,138,61,0.12)" },
-  drums: { accent: "#B36B00", accentDim: "rgba(179,107,0,0.35)", accentSoft: "rgba(179,107,0,0.12)" },
-  chords: { accent: "#0058CC", accentDim: "rgba(0,88,204,0.35)", accentSoft: "rgba(0,88,204,0.12)" },
-};
-function colorsFor(mode, theme = "dark") {
+function colorsFor(mode) {
   const m = MODE_META[mode] || MODE_META.vocals;
-  if (theme === "light") {
-    const la = LIGHT_MODE_ACCENTS[mode] || LIGHT_MODE_ACCENTS.vocals;
-    return {
-      bg: "#F4F4F6",
-      surface: "#FFFFFF",
-      surface2: "#FFFFFF",
-      surface3: "#ECECEF",
-      border: "rgba(0,0,0,0.09)",
-      borderStrong: "rgba(0,0,0,0.18)",
-      text: "#1C1C1E",
-      textMuted: "#6E6E73",
-      textFaint: "#AEAEB2",
-      accent: la.accent,
-      accentDim: la.accentDim,
-      accentSoft: la.accentSoft,
-      danger: "#D70015",
-    };
-  }
   return {
     bg: "#000000",
     surface: "#121212",
@@ -287,6 +260,71 @@ function dedupeTitle(candidateTitle, artist, existingSongs) {
   );
   while (collides(title)) { n += 1; title = `${candidateTitle} (${n})`; }
   return title;
+}
+
+/* =========================================================================
+   Tanglish transliteration engine — offline Tamil-script → Latin-script
+   conversion, driven character-by-character so it can run on any raw song
+   text (lyrics/chords/drums, including "-Section" headers and [Tag]/<Tag>
+   markers) without disturbing anything outside the Tamil Unicode block.
+   ========================================================================= */
+const TAMIL_RANGE_RE = /[\u0B80-\u0BFF]/;
+const TANGLISH_PULLI = "\u0BCD";
+const TANGLISH_VOWELS = {
+  "\u0B85": "a", "\u0B86": "aa", "\u0B87": "i", "\u0B88": "ii", "\u0B89": "u", "\u0B8A": "uu",
+  "\u0B8E": "e", "\u0B8F": "ee", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "oo", "\u0B94": "au",
+  "\u0B83": "h",
+};
+const TANGLISH_CONSONANTS = {
+  "\u0B95": "k", "\u0B99": "ng", "\u0B9A": "ch", "\u0B9C": "j", "\u0B9E": "nj",
+  "\u0B9F": "t", "\u0BA3": "n", "\u0BA4": "th", "\u0BA8": "n", "\u0BA9": "n",
+  "\u0BAA": "p", "\u0BAE": "m", "\u0BAF": "y", "\u0BB0": "r", "\u0BB2": "l",
+  "\u0BB5": "v", "\u0BB4": "zh", "\u0BB3": "l", "\u0BB1": "r",
+  "\u0BB7": "sh", "\u0BB8": "s", "\u0BB9": "h",
+};
+const TANGLISH_VOWEL_SIGNS = {
+  "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ii", "\u0BC1": "u", "\u0BC2": "uu",
+  "\u0BC6": "e", "\u0BC7": "ee", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "oo", "\u0BCC": "au",
+};
+const TANGLISH_DIGITS = {
+  "\u0BE6": "0", "\u0BE7": "1", "\u0BE8": "2", "\u0BE9": "3", "\u0BEA": "4",
+  "\u0BEB": "5", "\u0BEC": "6", "\u0BED": "7", "\u0BEE": "8", "\u0BEF": "9",
+};
+function transliterateTanglish(input) {
+  const str = String(input || "");
+  let out = "";
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (TANGLISH_CONSONANTS[ch]) {
+      const next = str[i + 1];
+      if (next === TANGLISH_PULLI) { out += TANGLISH_CONSONANTS[ch]; i++; }
+      else if (next && TANGLISH_VOWEL_SIGNS[next]) { out += TANGLISH_CONSONANTS[ch] + TANGLISH_VOWEL_SIGNS[next]; i++; }
+      else out += TANGLISH_CONSONANTS[ch] + "a";
+    } else if (TANGLISH_VOWELS[ch]) out += TANGLISH_VOWELS[ch];
+    else if (TANGLISH_DIGITS[ch]) out += TANGLISH_DIGITS[ch];
+    else out += ch;
+  }
+  return out;
+}
+// Runs transliteration only when Tanglish mode is on and the text actually
+// contains Tamil script; otherwise passes the original text through
+// untouched (English/mixed text, or Tanglish mode off).
+function maybeTanglish(text, tanglishMode) {
+  if (!tanglishMode || !text) return text;
+  return TAMIL_RANGE_RE.test(text) ? transliterateTanglish(text) : text;
+}
+// Lets a Latin/Tanglish search query match Tamil-script song titles/artists
+// by comparing the query against a transliterated version of the text too.
+function songMatchesQuery(song, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return true;
+  const plain = `${song.title || ""} ${song.artist || ""}`.toLowerCase();
+  if (plain.includes(q)) return true;
+  if (TAMIL_RANGE_RE.test(song.title || "") || TAMIL_RANGE_RE.test(song.artist || "")) {
+    const translit = transliterateTanglish(`${song.title || ""} ${song.artist || ""}`).toLowerCase();
+    if (translit.includes(q)) return true;
+  }
+  return false;
 }
 
 /* =========================================================================
@@ -1211,12 +1249,33 @@ function PianoScreen({ C }) {
     gain.gain.setValueAtTime(1, now);
 
     // A gentle register-scaled lowpass on the whole voice, standing in for
-    // a soundboard's own natural top-end rolloff.
+    // a soundboard's own natural top-end rolloff. A touch of resonance
+    // (Q above the previous near-flat 0.3) gives it a hint of the
+    // soundboard's own body resonance instead of sounding like a sterile
+    // brick-wall filter.
     const bodyFilter = ctx.createBiquadFilter();
     bodyFilter.type = "lowpass";
-    bodyFilter.Q.value = 0.3;
-    bodyFilter.frequency.setValueAtTime(Math.min(11000, freq * 13), now);
-    bodyFilter.connect(gain); gain.connect(dest);
+    bodyFilter.Q.value = 0.9;
+    bodyFilter.frequency.setValueAtTime(Math.min(9500, freq * 10), now);
+
+    // Soft-clip saturation stage: a bank of perfectly clean summed sines
+    // is exactly what reads as an "artificial"/digital additive-synth
+    // patch. Real strings, the soundboard, and the amp path all impart a
+    // touch of gentle nonlinear saturation that folds a little energy into
+    // odd harmonics — this is a cheap, effective stand-in for that, using
+    // a smooth tanh-like curve so it warms the tone without adding audible
+    // distortion.
+    const shaper = ctx.createWaveShaper();
+    const curveLen = 1024;
+    const curve = new Float32Array(curveLen);
+    for (let i = 0; i < curveLen; i++) {
+      const x = (i / (curveLen - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * 1.6) / Math.tanh(1.6);
+    }
+    shaper.curve = curve;
+    shaper.oversample = "2x";
+
+    bodyFilter.connect(shaper); shaper.connect(gain); gain.connect(dest);
 
     const peak = 0.62;
     const B = pianoInharmonicity(freq);
@@ -1230,9 +1289,17 @@ function PianoScreen({ C }) {
         const stretch = Math.sqrt(1 + B * n * n);
         const partialFreq = freq * n * stretch;
         if (partialFreq > 15000) continue;
-        const amp = pianoPartialAmp(n, freq) * (peak / unisonDetunes.length);
-        const tau = pianoPartialDecay(n, freq);
+        // Small per-partial random variance on amplitude and decay (on top
+        // of the deterministic curve) so unison strings and overtones
+        // don't all breathe in perfect lockstep — another subtle cue that
+        // separates a struck string from a synthesized additive stack.
+        const amp = pianoPartialAmp(n, freq) * (peak / unisonDetunes.length) * (0.94 + Math.random() * 0.12);
+        const tau = pianoPartialDecay(n, freq) * (0.92 + Math.random() * 0.16);
         const stopAt = now + tau + 0.15;
+        // A hair of per-partial timing jitter (up to ~3ms) so the whole
+        // stack doesn't start in perfect phase lock-step, which is what
+        // makes a bank of pure sines sound synthesized rather than struck.
+        const startAt = now + Math.random() * 0.003;
 
         const osc = ctx.createOscillator();
         osc.type = "sine";
@@ -1244,37 +1311,51 @@ function PianoScreen({ C }) {
 
         const pg = ctx.createGain();
         const attack = n === 1 ? 0.006 : 0.001; // fundamental has a hair of hammer-strike rise; overtones snap on with the hammer impact itself
-        pg.gain.setValueAtTime(0, now);
-        pg.gain.linearRampToValueAtTime(amp, now + attack);
-        pg.gain.exponentialRampToValueAtTime(Math.max(0.00005, amp * 0.001), now + tau);
+        pg.gain.setValueAtTime(0, startAt);
+        pg.gain.linearRampToValueAtTime(amp, startAt + attack);
+        pg.gain.exponentialRampToValueAtTime(Math.max(0.00005, amp * 0.001), startAt + tau);
 
         osc.connect(pg); pg.connect(bodyFilter);
-        osc.start(now);
+        osc.start(startAt);
         osc.stop(stopAt);
         osc.onended = () => { try { osc.disconnect(); pg.disconnect(); } catch { } };
         oscillators.push(osc);
       }
     });
 
-    // Hammer-strike transient: a very brief burst of filtered noise adds
-    // the percussive "thock" a bank of pure sines can't produce alone.
-    const noiseDur = 0.018;
+    // Hammer-strike transient: a brief burst of filtered noise adds the
+    // percussive "thock" a bank of pure sines can't produce alone. Widened
+    // and split into two bands (a low thump plus the original high click)
+    // so it reads as a felt hammer hitting a string rather than a thin
+    // digital tick.
+    const noiseDur = 0.03;
     const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.6);
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
+
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = "bandpass";
     noiseFilter.frequency.value = Math.min(6000, freq * 3);
     noiseFilter.Q.value = 0.7;
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.045, now);
+    noiseGain.gain.setValueAtTime(0.055, now);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
     noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(gain);
-    noise.start(now); noise.stop(now + noiseDur);
-    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); } catch { } };
+
+    const thumpFilter = ctx.createBiquadFilter();
+    thumpFilter.type = "lowpass";
+    thumpFilter.frequency.value = Math.max(180, Math.min(500, freq * 1.5));
+    thumpFilter.Q.value = 0.5;
+    const thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(0.05, now);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur * 1.4);
+    noise.connect(thumpFilter); thumpFilter.connect(thumpGain); thumpGain.connect(gain);
+
+    noise.start(now); noise.stop(now + noiseDur * 1.4);
+    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); thumpFilter.disconnect(); thumpGain.disconnect(); } catch { } };
     oscillators.push(noise);
 
     return { oscillators, bodyFilter, gain };
@@ -1675,7 +1756,25 @@ function useMetronomeEngine(settings) {
     schedulerRef.current = setInterval(scheduler, 25);
     setPlaying(true);
   };
-  const stop = () => { clearInterval(schedulerRef.current); schedulerRef.current = null; setPlaying(false); setFlashBeat(-1); };
+  const stop = () => {
+    clearInterval(schedulerRef.current);
+    schedulerRef.current = null;
+    setPlaying(false);
+    setFlashBeat(-1);
+    // Fully tear down the audio graph rather than leaving the context
+    // suspended. Reusing the same context/compressor across many
+    // start/stop cycles let internal node state (the compressor's
+    // reduction/release state in particular) carry over from one session
+    // to the next, which is what made the click perceptibly louder each
+    // time the metronome was toggled back on. Closing here forces start()
+    // to build a brand-new context and compressor from scratch every time.
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state !== "closed") {
+      try { ctx.onstatechange = null; ctx.close().catch(() => { }); } catch { }
+    }
+    audioCtxRef.current = null;
+    masterCompRef.current = null;
+  };
   const toggle = () => (playing ? stop() : start());
 
   const tapTempo = () => {
@@ -2915,7 +3014,7 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
     </>
   );
 }
-function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, mode, C, dimmed, onMenuOpenChange }) {
+function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, mode, tanglishMode, C, dimmed, onMenuOpenChange }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
   const [menuPos, setMenuPos] = useState(null); // { x, y } | null
@@ -2966,8 +3065,8 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
-        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
       {menuPos && (
@@ -2983,12 +3082,12 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
     </div>
   );
 }
-function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadToMetronome, mode, C }) {
+function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadToMetronome, mode, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [langFilter, setLangFilter] = useState("All");
   const [activeMenuId, setActiveMenuId] = useState(null);
   const filtered = songs
-    .filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()))
+    .filter((s) => songMatchesQuery(s, query))
     .filter((s) => langFilter === "All" || s.language === langFilter)
     .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
 
@@ -3014,7 +3113,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
         ) : filtered.map((s) => (
-          <SongRow key={s.id} song={s} onOpen={onOpen} onEdit={onEdit} onShare={onShare} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} mode={mode} C={C}
+          <SongRow key={s.id} song={s} onOpen={onOpen} onEdit={onEdit} onShare={onShare} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} mode={mode} tanglishMode={tanglishMode} C={C}
             dimmed={activeMenuId != null && activeMenuId !== s.id} onMenuOpenChange={setActiveMenuId} />
         ))}
       </div>
@@ -3022,10 +3121,10 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
   );
 }
 
-function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, mode, C }) {
+function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, mode, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [nameDraft, setNameDraft] = useState(setlistName ?? "");
-  const filtered = songs.filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()));
+  const filtered = songs.filter((s) => songMatchesQuery(s, query));
   const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed && onRenameSetlist) onRenameSetlist(trimmed); else setNameDraft(setlistName ?? ""); };
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
@@ -3052,7 +3151,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
               <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {checked && <Check size={14} color="#fff" />}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{s.title}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{s.artist || "Unknown"}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(s.title, tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>
                 {mode === "drums" ? (s.tempo !== "" && s.tempo != null ? `${s.tempo}` : "—") : keyLabel(s)}
               </div>
@@ -3064,10 +3163,10 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
   );
 }
 
-function SongExportPicker({ songs, onClose, onExport, C }) {
+function SongExportPicker({ songs, onClose, onExport, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(() => new Set());
-  const filtered = songs.filter((s) => (s.title + " " + s.artist).toLowerCase().includes(query.toLowerCase()));
+  const filtered = songs.filter((s) => songMatchesQuery(s, query));
   const allSelected = filtered.length > 0 && filtered.every((s) => selected.has(s.id));
   const toggle = (id) => setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const toggleAll = () => setSelected((prev) => { const next = new Set(prev); if (allSelected) filtered.forEach((s) => next.delete(s.id)); else filtered.forEach((s) => next.add(s.id)); return next; });
@@ -3091,7 +3190,7 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
               <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {checked && <Check size={14} color="#fff" />}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{s.title}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{s.artist || "Unknown"}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(s.title, tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
             </div>
           );
         })}
@@ -3108,7 +3207,7 @@ function SongExportPicker({ songs, onClose, onExport, C }) {
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
-function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, C }) {
+function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, C }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [chordsView, setChordsView] = useState("chords");
@@ -3168,8 +3267,8 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
           onMouseDown={startTitlePress} onMouseUp={cancelTitlePress} onMouseLeave={cancelTitlePress}
           style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", maxWidth: "calc(100% - 140px)", textAlign: "center", cursor: "pointer" }}
         >
-          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
-          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist}</div>}
+          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
+          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode)}</div>}
         </div>
         {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
@@ -3223,13 +3322,14 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
       <div className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y" }}>
         {descOpen && song.description && (
           <div style={{ marginBottom: 18, padding: "11px 13px", background: C.surface2, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 8, fontSize: 13.5, color: C.textMuted, whiteSpace: "pre-wrap" }}>
-            {song.description}
+            {maybeTanglish(song.description, tanglishMode)}
           </div>
         )}
         {(() => {
           let displayText = activeRawText;
           if (mode === "chords" && chordsView === "chords") displayText = sanitizeChordsOnlyNashville(displayText);
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
+          displayText = maybeTanglish(displayText, tanglishMode);
           return parseTextIntoBlocks(displayText).map((block, idx) => (
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
@@ -3259,7 +3359,7 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
 /* =========================================================================
    Setlist song row
    ========================================================================= */
-function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onClick, mode, C }) {
+function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onClick, mode, tanglishMode, C }) {
   const effectiveTempo = tempoOverride ?? song.tempo;
   const badgeText = mode === "drums"
     ? (effectiveTempo !== "" && effectiveTempo != null ? `${effectiveTempo}` : "—")
@@ -3267,8 +3367,8 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
   return (
     <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</div>
-        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.artist || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -3280,7 +3380,7 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
    in Drums mode per spec #11) with Chords' setlist stage (reorder, swipe
    to delete, song picker).
    ========================================================================= */
-function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSong, onShare, onDeleteSetlist, initialPickerOpen, mode, C }) {
+function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSong, onShare, onDeleteSetlist, initialPickerOpen, mode, tanglishMode, C }) {
   const [pickerOpen, setPickerOpen] = useState(!!initialPickerOpen);
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const [editingName, setEditingName] = useState(false);
@@ -3375,7 +3475,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
           return (
             <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => removeFromStage(s.id)} icon={X} C={C} elevated={isDraggingThis}>
               <SetlistSongRow
-                song={s} keyOverride={keyOverride} tempoOverride={tempoOverride} mode={mode} C={C}
+                song={s} keyOverride={keyOverride} tempoOverride={tempoOverride} mode={mode} tanglishMode={tanglishMode} C={C}
                 onClick={() => {
                   if (justDraggedRef.current) { justDraggedRef.current = false; return; }
                   if (activeDragIndex === null) onOpenSong(s);
@@ -3399,7 +3499,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       </div>
 
       {pickerOpen && (
-        <SongPickerScreen songs={songs} selectedIds={setlist.entries.map((e) => e.songId)} onToggle={toggleSong} onClose={() => setPickerOpen(false)} setlistName={setlist.name} onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })} mode={mode} C={C} />
+        <SongPickerScreen songs={songs} selectedIds={setlist.entries.map((e) => e.songId)} onToggle={toggleSong} onClose={() => setPickerOpen(false)} setlistName={setlist.name} onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })} mode={mode} tanglishMode={tanglishMode} C={C} />
       )}
     </div>
   );
@@ -3438,7 +3538,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, theme, setTheme, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
   const fileRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
@@ -3496,13 +3596,19 @@ function SettingsScreen({ mode, setMode, theme, setTheme, fontSize, setFontSize,
             {MODES.map((m) => {
               const active = mode === m;
               const meta = MODE_META[m];
-              const mc = colorsFor(m, theme);
               return (
-                <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? mc.accentSoft : "transparent", color: active ? mc.accent : C.textMuted }}>
+                <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "12px 0", borderRadius: 9, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? meta.accentSoft : "transparent", color: active ? meta.accent : C.textMuted }}>
                   {meta.label}
                 </button>
               );
             })}
+          </div>
+
+          <SectionLabel>TAMIL</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26 }}>
+            <Field label="TANGLISH TRANSLITERATION">
+              <ToggleSwitch checked={tanglishMode} onChange={setTanglishMode} offLabel="Tamil" onLabel="Tanglish" C={C} />
+            </Field>
           </div>
 
           <SectionLabel>DISPLAY</SectionLabel>
@@ -3600,22 +3706,6 @@ function SettingsScreen({ mode, setMode, theme, setTheme, fontSize, setFontSize,
             </>
           ) : null}
 
-          <SectionLabel>APPEARANCE</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-            <Field label="THEME">
-              <div style={{ display: "flex", gap: 8, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4 }}>
-                {[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }].map((t) => {
-                  const active = theme === t.id;
-                  return (
-                    <button key={t.id} onClick={() => setTheme(t.id)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
-                      {t.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </Field>
-          </div>
-
           <SectionLabel>LIBRARY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 10 }}>
@@ -3647,7 +3737,7 @@ function BottomNav({ active, onChange, mode, C }) {
   const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
-      <div style={{ display: "flex", background: C.bg, borderTop: `1px solid ${C.border}`, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
+      <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
         {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
           return (
@@ -3689,15 +3779,15 @@ function AppInner() {
   const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.75);
   const [noteSpacing, setNoteSpacing] = useLocalStorageState("altar:note-spacing", 1);
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
-  const [theme, setTheme] = useLocalStorageState("altar:theme", "dark");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
+  const [tanglishMode, setTanglishMode] = useLocalStorageState("altar:tanglish", false);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Not connected");
   const syncRevision = useRef(Number(localStorage.getItem("zong:revision") || 0));
   const syncDirty = useRef(false);
   const syncing = useRef(false);
 
-  const C = colorsFor(mode, theme);
+  const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
 
   // Metronome only belongs to Drums mode — stop it whenever the person
@@ -3972,7 +4062,7 @@ function AppInner() {
             : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         )}
         {tab === "setlists" && (
           <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
@@ -3980,7 +4070,6 @@ function AppInner() {
         {tab === "settings" && (
           <SettingsScreen
             mode={mode} setMode={setMode}
-            theme={theme} setTheme={setTheme}
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
             sectionFontSize={sectionFontSize} setSectionFontSize={setSectionFontSize}
@@ -3989,6 +4078,7 @@ function AppInner() {
             notesBold={notesBold} setNotesBold={setNotesBold}
             lineSpacing={lineSpacing} setLineSpacing={setLineSpacing} noteSpacing={noteSpacing} setNoteSpacing={setNoteSpacing}
             clickSettings={clickSettings} setClickSettings={setClickSettings}
+            tanglishMode={tanglishMode} setTanglishMode={setTanglishMode}
             onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={configureSync} syncStatus={syncStatus}
             C={C}
           />
@@ -4018,7 +4108,7 @@ function AppInner() {
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           fontSize={fontSize} textAlign={textAlign} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} noteSpacing={noteSpacing} chordFontSize={chordFontSize} sectionFontSize={sectionFontSize}
-          mode={mode} engine={engine}
+          mode={mode} engine={engine} tanglishMode={tanglishMode}
           C={C}
         />
       )}
@@ -4032,12 +4122,12 @@ function AppInner() {
           onShare={() => exportSetlist(setlists[stageIndex])}
           onDeleteSetlist={handleDeleteSetlist}
           initialPickerOpen={stageAutoOpenPicker}
-          mode={mode} C={C}
+          mode={mode} tanglishMode={tanglishMode} C={C}
         />
       )}
 
       {exportPickerOpen && (
-        <SongExportPicker songs={songs} onClose={() => setExportPickerOpen(false)} onExport={(ids) => { exportSongsByIds(ids); setExportPickerOpen(false); }} C={C} />
+        <SongExportPicker songs={songs} onClose={() => setExportPickerOpen(false)} onExport={(ids) => { exportSongsByIds(ids); setExportPickerOpen(false); }} tanglishMode={tanglishMode} C={C} />
       )}
 
       <Toast message={toastMsg} C={C} />
