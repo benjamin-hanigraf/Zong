@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy,
+  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save,
 } from "lucide-react";
 import { syncLibrary } from "./bandSync";
 
@@ -3174,7 +3174,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
       return s.title.toLowerCase() === cleanTitle.toLowerCase() && (s.artist || "").toLowerCase() === cleanArtist.toLowerCase();
     });
     if (!cleanTitle) return;
-    if (isDuplicate) { setError("Song already exists"); return; }
+    if (isDuplicate) { setError("A song with this title and artist already exists."); return; }
     const savedKey = composeKey(keyNatural, keyAccidental);
     const normalizedChordsText = chordsTaggedToNumbersTagged(autoBracketNumbers(chordsText), savedKey, keyQuality);
     onSave({
@@ -3447,7 +3447,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
   );
 }
 
-function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, mode, tanglishMode, C }) {
+function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, isShared, onToggleShared, mode, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [nameDraft, setNameDraft] = useState(setlistName ?? "");
   const filtered = songs.filter((s) => songMatchesQuery(s, query));
@@ -3460,6 +3460,29 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
           <input className="no-ring" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             style={{ width: "100%", boxSizing: "border-box", fontFamily: FONT, fontSize: 17, fontWeight: 600, background: "transparent", border: "none", color: C.text, padding: 0, outline: "none" }} />
         </div>
+        {onToggleShared && (
+          <button
+            onClick={() => onToggleShared(!isShared)}
+            style={{
+              height: 30,
+              padding: "0 10px",
+              borderRadius: 8,
+              fontFamily: FONT,
+              fontWeight: 700,
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              border: `1px solid ${isShared ? C.accentDim : C.border}`,
+              background: isShared ? C.accentSoft : C.surface2,
+              color: isShared ? C.accent : C.textMuted,
+              cursor: "pointer"
+            }}
+          >
+            {isShared ? "Shared" : "Personal"}
+          </button>
+        )}
         <button onClick={onClose} style={{ background: "none", border: "none", fontFamily: FONT, fontSize: 15.5, fontWeight: 700, color: C.accent, padding: "6px 4px" }}>Done</button>
       </div>
       <div style={{ padding: "14px 20px 6px" }}>
@@ -3533,7 +3556,12 @@ function SongExportPicker({ songs, onClose, onExport, tanglishMode, C }) {
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
-function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare, fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize, isInSetlist, onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, C }) {
+function SongDetailScreen({
+  song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare,
+  fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize,
+  isInSetlist, isSharedSetlist, syncedKeyOverride, syncedTempoOverride, onSaveOverrideToTeam,
+  onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, C
+}) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
   const [chordsView, setChordsView] = useState("chords");
@@ -3583,6 +3611,11 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
   const isVocals = mode === "vocals";
   const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? ms.drumsText : (chordsView === "chords" ? ms.chordsText : ms.chartText);
 
+  const hasKeyChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && viewKey !== (syncedKeyOverride ?? song.key));
+  const currentBpm = engine ? Math.round(engine.bpm) : (contextTempo ?? song.tempo);
+  const baseTempo = syncedTempoOverride ?? (song.tempo === "" || song.tempo == null ? 120 : song.tempo);
+  const hasTempoChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && currentBpm !== Number(baseTempo));
+
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
@@ -3606,8 +3639,6 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
             <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
           </button>
         ) : mode === "drums" && !!engine ? (
-          // No description to toggle, so the metronome bottom-bar toggle
-          // takes over this slot instead of leaving it an empty spacer.
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
@@ -3622,6 +3653,15 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
+          {hasKeyChanged && (
+            <button
+              onClick={() => onSaveOverrideToTeam?.({ keyOverride: viewKey })}
+              title="Save key to Team"
+              style={{ ...chevronBtn, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
+            >
+              <Save size={15} color={C.accent} />
+            </button>
+          )}
           <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={16} /></button>
           <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
             {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
@@ -3641,7 +3681,18 @@ function SongDetailScreen({ song, contextKey, onKeyChange, contextTempo, onTempo
           <div style={{ justifySelf: "center" }}>
             <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
           </div>
-          <div style={{ ...badgeStyle, height: 30, boxSizing: "border-box", flexShrink: 0, justifySelf: "end", position: "relative", zIndex: 1 }}>{Math.round(engine.bpm)} BPM</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "end", position: "relative", zIndex: 1 }}>
+            {hasTempoChanged && (
+              <button
+                onClick={() => onSaveOverrideToTeam?.({ tempoOverride: currentBpm })}
+                title="Save tempo to Team"
+                style={{ ...chevronBtn, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
+              >
+                <Save size={15} color={C.accent} />
+              </button>
+            )}
+            <div style={{ ...badgeStyle, height: 30, boxSizing: "border-box", flexShrink: 0 }}>{Math.round(engine.bpm)} BPM</div>
+          </div>
         </div>
       )}
 
@@ -3826,7 +3877,19 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       </div>
 
       {pickerOpen && (
-        <SongPickerScreen songs={songs} selectedIds={setlist.entries.map((e) => e.songId)} onToggle={toggleSong} onClose={() => setPickerOpen(false)} setlistName={setlist.name} onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })} mode={mode} tanglishMode={tanglishMode} C={C} />
+        <SongPickerScreen
+          songs={songs}
+          selectedIds={setlist.entries.map((e) => e.songId)}
+          onToggle={toggleSong}
+          onClose={() => setPickerOpen(false)}
+          setlistName={setlist.name}
+          onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })}
+          isShared={Boolean(setlist.shared)}
+          onToggleShared={(shared) => onUpdateSetlist({ ...setlist, shared })}
+          mode={mode}
+          tanglishMode={tanglishMode}
+          C={C}
+        />
       )}
     </div>
   );
@@ -3857,7 +3920,15 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
         {[...filtered].reverse().map((sl) => (
           <SwipeToDelete key={sl.id} id={sl.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(sl.id)} C={C}>
             <div onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 16, fontWeight: 600 }}>{sl.name}</div><div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{sl.entries.length} song{sl.entries.length === 1 ? "" : "s"}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>{sl.name}</div>
+                <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{sl.entries.length} song{sl.entries.length === 1 ? "" : "s"}</div>
+              </div>
+              {sl.shared && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "2px 7px", flexShrink: 0 }}>
+                  Shared
+                </span>
+              )}
             </div>
           </SwipeToDelete>
         ))}
@@ -4203,14 +4274,14 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             </>
           ) : null}
 
-          <SectionLabel>LIBRARY</SectionLabel>
+          <SectionLabel>TEAM</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => fileRef.current?.click()} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Download size={16} color={C.accent} /> Import</button>
               <input ref={fileRef} type="file" accept="application/json" onChange={(e) => { if (e.target.files[0]) onImportFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
               <button onClick={onExportOpen} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Upload size={16} color={C.accent} /> Export</button>
             </div>
-            <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Shared library</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
+            <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Team</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
           </div>
 
           <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Created by Benjamin Hanigraf</div>
@@ -4283,7 +4354,7 @@ function AppInner() {
   // Keep the runtime transliteration dictionary in sync with persisted edits.
   useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
-  const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Not connected");
+  const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Public only");
   const syncRevision = useRef(Number(localStorage.getItem("zong:revision") || 0));
   const syncDirty = useRef(false);
   const syncing = useRef(false);
@@ -4310,39 +4381,98 @@ function AppInner() {
 
   const saveSongs = (next) => { syncDirty.current = true; setSongs(next); };
   const saveSetlists = (next) => { syncDirty.current = true; setSetlists(next); };
+  const saveSpellingChart = (next) => { syncDirty.current = true; setSpellingChart(next); };
 
   const performSync = useCallback(async (force = false) => {
-    if (!bandKey || !navigator.onLine || syncing.current) return;
-    syncing.current = true; setSyncStatus("Syncing…");
+    if (!navigator.onLine || syncing.current) return;
+    syncing.current = true;
+    if (bandKey) setSyncStatus("Syncing…");
     try {
-      const result = await syncLibrary({ key: bandKey, state: { songs, setlists }, revision: syncRevision.current, changed: force || syncDirty.current });
+      const sharedSetlists = setlists.filter((sl) => sl.shared);
+      const result = await syncLibrary({
+        key: bandKey,
+        state: { songs, spellingChart, sharedSetlists },
+        revision: syncRevision.current,
+        changed: force || syncDirty.current
+      });
       syncRevision.current = result.revision;
       localStorage.setItem("zong:revision", String(result.revision));
-      if (result.conflict) {
-        localStorage.setItem("zong:conflict-backup", JSON.stringify({ savedAt: new Date().toISOString(), remoteSongs: result.state?.songs, remoteSetlists: result.state?.setlists }));
 
+      if (result.conflict || result.pulled) {
+        const remoteSongs = result.state?.songs || [];
+        const remoteSpelling = result.state?.spellingChart || {};
+        const remoteSharedSetlists = result.state?.sharedSetlists || [];
+
+        // 1. Merge Songs (prevent duplicates by title + artist)
         const mergedSongs = [...songs];
-        (result.state?.songs || []).forEach(rs => {
-          if (!mergedSongs.find(ls => ls.id === rs.id)) mergedSongs.push(rs);
+        remoteSongs.forEach((rs) => {
+          const idx = mergedSongs.findIndex((ls) =>
+            ls.id === rs.id ||
+            (ls.title.trim().toLowerCase() === rs.title.trim().toLowerCase() &&
+             (ls.artist || "").trim().toLowerCase() === (rs.artist || "").trim().toLowerCase())
+          );
+          if (idx !== -1) {
+            mergedSongs[idx] = { ...mergedSongs[idx], ...rs };
+          } else {
+            mergedSongs.push(rs);
+          }
         });
 
-        const mergedSetlists = [...setlists];
-        (result.state?.setlists || []).forEach(rs => {
-          if (!mergedSetlists.find(ls => ls.id === rs.id)) mergedSetlists.push(rs);
-        });
+        // 2. Merge Spelling Chart
+        const mergedSpelling = { ...spellingChart, ...remoteSpelling };
+
+        // 3. Merge Setlists (keep personal setlists, merge shared setlists for team subscribers)
+        let mergedSetlists = setlists;
+        if (bandKey) {
+          const personalSetlists = setlists.filter((sl) => !sl.shared);
+          const sharedMap = new Map();
+          remoteSharedSetlists.forEach((rsl) => {
+            const normalizedEntries = (rsl.entries || []).map((e) => ({
+              ...e,
+              syncedKeyOverride: e.syncedKeyOverride ?? e.keyOverride,
+              syncedTempoOverride: e.syncedTempoOverride ?? e.tempoOverride
+            }));
+            sharedMap.set(rsl.id, { ...rsl, shared: true, entries: normalizedEntries });
+          });
+          setlists.filter((sl) => sl.shared).forEach((lsl) => {
+            if (sharedMap.has(lsl.id)) {
+              const remoteSl = sharedMap.get(lsl.id);
+              const mergedEntries = remoteSl.entries.map((re) => {
+                const le = lsl.entries.find((e) => e.songId === re.songId);
+                if (le) {
+                  return {
+                    ...re,
+                    keyOverride: le.keyOverride ?? re.keyOverride,
+                    tempoOverride: le.tempoOverride ?? re.tempoOverride,
+                    syncedKeyOverride: re.syncedKeyOverride ?? re.keyOverride,
+                    syncedTempoOverride: re.syncedTempoOverride ?? re.tempoOverride
+                  };
+                }
+                return re;
+              });
+              sharedMap.set(lsl.id, { ...remoteSl, entries: mergedEntries });
+            } else if (result.conflict) {
+              sharedMap.set(lsl.id, lsl);
+            }
+          });
+          mergedSetlists = [...personalSetlists, ...Array.from(sharedMap.values())];
+        }
 
         setSongs(mergedSongs);
+        setSpellingChart(mergedSpelling);
         setSetlists(mergedSetlists);
-        syncDirty.current = true;
-        setSyncStatus("Conflict merged");
-        flash("Sync conflict: remote additions were merged with your local library.");
-
-      } else if (result.pulled) {
-        setSongs(result.state?.songs || []); setSetlists(result.state?.setlists || []); syncDirty.current = false; setSyncStatus("Up to date");
-      } else { syncDirty.current = false; setSyncStatus("Up to date"); }
-    } catch (error) { setSyncStatus(navigator.onLine ? error.message : "Offline"); }
-    finally { syncing.current = false; }
-  }, [bandKey, songs, setlists]);
+        syncDirty.current = false;
+        if (bandKey) setSyncStatus("Up to date");
+      } else {
+        syncDirty.current = false;
+        if (bandKey) setSyncStatus("Up to date");
+      }
+    } catch (error) {
+      if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
+    } finally {
+      syncing.current = false;
+    }
+  }, [bandKey, songs, spellingChart, setlists]);
 
   useEffect(() => {
     const online = () => performSync();
@@ -4352,11 +4482,16 @@ function AppInner() {
   }, [performSync]);
 
   const configureSync = () => {
-    const key = window.prompt("Enter your band’s shared sync code (leave blank to disconnect):", bandKey);
+    const key = window.prompt("Enter your Team access code (leave blank for public library only):", bandKey);
     if (key === null) return;
-    const clean = key.trim(); localStorage.setItem("zong:access-key", clean); localStorage.removeItem("zong:revision"); syncRevision.current = 0; setBandKey(clean);
-    if (!clean) { setSyncStatus("Not connected"); return; }
+    const clean = key.trim();
+    localStorage.setItem("zong:access-key", clean);
+    localStorage.removeItem("zong:revision");
+    syncRevision.current = 0;
+    setBandKey(clean);
+    if (!clean) { setSyncStatus("Public only"); return; }
     syncDirty.current = true;
+    performSync(true);
   };
 
   const rootRef = useRef(null);
@@ -4471,7 +4606,7 @@ function AppInner() {
   const handleCreateSetlist = () => {
     let n = 1;
     while (setlists.some((sl) => sl.name.toLowerCase() === `setlist ${n}`.toLowerCase())) n += 1;
-    const next = [...setlists, { id: uid(), name: `Setlist ${n}`, entries: [] }];
+    const next = [...setlists, { id: uid(), name: `Setlist ${n}`, entries: [], shared: false }];
     saveSetlists(next);
     setStageAutoOpenPicker(true);
     setStageIndex(next.length - 1);
@@ -4487,6 +4622,29 @@ function AppInner() {
   };
   const handleTempoOverrideChange = (setlistId, songId, newTempo) => {
     saveSetlists(setlists.map((sl) => (sl.id !== setlistId ? sl : { ...sl, entries: sl.entries.map((e) => (e.songId === songId ? { ...e, tempoOverride: newTempo } : e)) })));
+  };
+  const handleSaveOverrideToTeam = (setlistId, songId, { keyOverride, tempoOverride }) => {
+    saveSetlists(setlists.map((sl) => {
+      if (sl.id !== setlistId) return sl;
+      return {
+        ...sl,
+        entries: sl.entries.map((e) => {
+          if (e.songId !== songId) return e;
+          const updated = { ...e };
+          if (keyOverride !== undefined) {
+            updated.keyOverride = keyOverride;
+            updated.syncedKeyOverride = keyOverride;
+          }
+          if (tempoOverride !== undefined) {
+            updated.tempoOverride = tempoOverride;
+            updated.syncedTempoOverride = tempoOverride;
+          }
+          return updated;
+        })
+      };
+    }));
+    flash("Saved to Team");
+    performSync(true);
   };
   const handleUpdateSongAccents = (songId, accents) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, accents } : s)));
   const handleUpdateSongSubdivision = (songId, subdivision) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, subdivision } : s)));
@@ -4622,11 +4780,15 @@ function AppInner() {
           onKeyChange={viewing?.fromSetlistId ? (newKey) => handleKeyOverrideChange(viewing.fromSetlistId, viewingSong.id, newKey) : null}
           contextTempo={viewingEntry ? (viewingEntry.tempoOverride ?? viewingSong.tempo) : viewingSong.tempo}
           onTempoChange={viewing?.fromSetlistId ? (newTempo) => handleTempoOverrideChange(viewing.fromSetlistId, viewingSong.id, newTempo) : null}
+          isInSetlist={!!viewing?.fromSetlistId}
+          isSharedSetlist={Boolean(viewingSetlist?.shared)}
+          syncedKeyOverride={viewingEntry?.syncedKeyOverride}
+          syncedTempoOverride={viewingEntry?.syncedTempoOverride}
+          onSaveOverrideToTeam={viewing?.fromSetlistId ? (overrides) => handleSaveOverrideToTeam(viewing.fromSetlistId, viewingSong.id, overrides) : null}
           onBack={() => setViewing(null)}
           onEdit={(s) => { setViewing(null); setEditingSong(s); }}
           onDelete={handleDeleteSong}
           onShare={exportSingleSong}
-          isInSetlist={!!viewing?.fromSetlistId}
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
@@ -4654,7 +4816,7 @@ function AppInner() {
       )}
 
       {spellingChartOpen && (
-        <SpellingChartScreen chart={spellingChart} onSave={setSpellingChart} onBack={() => setSpellingChartOpen(false)} C={C} />
+        <SpellingChartScreen chart={spellingChart} onSave={saveSpellingChart} onBack={() => setSpellingChartOpen(false)} C={C} />
       )}
 
       <Toast message={toastMsg} C={C} />
