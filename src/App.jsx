@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save,
+  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw,
 } from "lucide-react";
 import { syncLibrary } from "./bandSync";
 
@@ -594,13 +594,13 @@ function parseTextIntoBlocks(text) {
   const blocks = [];
   let current = null;
   lines.forEach((rawLine) => {
-    const trimmed = rawLine.replace(/^ +/, "");
+    const trimmed = rawLine.trimStart();
     if (trimmed.startsWith("-")) {
       current = { label: trimmed.slice(1).trim(), lines: [] };
       blocks.push(current);
     } else {
       if (!current) { current = { label: null, lines: [] }; blocks.push(current); }
-      current.lines.push(rawLine);
+      current.lines.push(trimmed);
     }
   });
   return blocks;
@@ -651,7 +651,7 @@ function autoBracketNumbers(text) {
    following character (end of line) is a trailing tag.
    ========================================================================= */
 function tokenizeTaggedLine(rawLine) {
-  const line = String(rawLine || "").replace(/^ +/, "");
+  const line = String(rawLine || "").trimStart();
   const tokens = [];
   let i = 0;
   let pendingTag = null;
@@ -1380,7 +1380,7 @@ function useKeyboardInset() {
 // neutralises the browser's native "scroll focused input into view" step.
 const scrollFieldIntoView = (e) => {
   const el = e.currentTarget;
-  setTimeout(() => { el.scrollIntoView({ block: "center", behavior: "smooth" }); }, 320);
+  setTimeout(() => { el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, 320);
 };
 function LandscapeLock({ children }) {
   const outerRef = useRef(null);
@@ -1886,28 +1886,30 @@ function useMetronomeEngine(settings) {
   const playClick = (state, time) => {
     if (state === "mute") return;
     const ctx = audioCtxRef.current;
+    if (!ctx) return;
     const isAccent = state === "accent";
     const tone = clickToneRef.current;
     const master = ensureMasterChain(ctx);
+    const scheduledTime = Math.max(time, ctx.currentTime + 0.002);
     let dest = master;
     if (ctx.createStereoPanner) {
       const panner = ctx.createStereoPanner();
-      panner.pan.setValueAtTime(panValue(), time);
+      panner.pan.setValueAtTime(panValue(), scheduledTime);
       panner.connect(master);
       dest = panner;
     }
     if (tone === "cowbell") {
       const dur = 0.12;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(isAccent ? 0.42 : 0.24, time);
-      gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+      gain.gain.setValueAtTime(isAccent ? 0.42 : 0.24, scheduledTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, scheduledTime + dur);
       const bp = ctx.createBiquadFilter();
       bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 1.1;
       gain.connect(bp); bp.connect(dest);
       [800, 540].forEach((f) => {
         const osc = ctx.createOscillator();
         osc.type = "square"; osc.frequency.value = isAccent ? f * 1.05 : f;
-        osc.connect(gain); osc.start(time); osc.stop(time + dur);
+        osc.connect(gain); osc.start(scheduledTime); osc.stop(scheduledTime + dur);
       });
       return;
     }
@@ -1924,34 +1926,34 @@ function useMetronomeEngine(settings) {
       const hp = ctx.createBiquadFilter();
       hp.type = "highpass"; hp.frequency.value = isAccent ? 3200 : 2600;
       const noiseGain = ctx.createGain();
-      noiseGain.gain.setValueAtTime(isAccent ? 0.9 : 0.65, time);
-      noiseGain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+      noiseGain.gain.setValueAtTime(isAccent ? 0.9 : 0.65, scheduledTime);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, scheduledTime + dur);
       noise.connect(hp); hp.connect(noiseGain); noiseGain.connect(dest);
-      noise.start(time); noise.stop(time + dur);
+      noise.start(scheduledTime); noise.stop(scheduledTime + dur);
 
       const osc = ctx.createOscillator(); const oscGain = ctx.createGain();
       osc.type = "triangle"; osc.frequency.value = isAccent ? 2600 : 2000;
-      oscGain.gain.setValueAtTime(isAccent ? 0.55 : 0.38, time);
-      oscGain.gain.exponentialRampToValueAtTime(0.001, time + 0.025);
+      oscGain.gain.setValueAtTime(isAccent ? 0.55 : 0.38, scheduledTime);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, scheduledTime + 0.025);
       osc.connect(oscGain); oscGain.connect(dest);
-      osc.start(time); osc.stop(time + 0.025);
+      osc.start(scheduledTime); osc.stop(scheduledTime + 0.025);
       return;
     }
     if (tone === "digital") {
       const osc = ctx.createOscillator(); const gain = ctx.createGain();
       osc.type = "square"; osc.frequency.value = isAccent ? 1800 : 1200;
-      gain.gain.setValueAtTime(isAccent ? 0.5 : 0.28, time);
-      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
+      gain.gain.setValueAtTime(isAccent ? 0.5 : 0.28, scheduledTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, scheduledTime + 0.03);
       osc.connect(gain); gain.connect(dest);
-      osc.start(time); osc.stop(time + 0.03);
+      osc.start(scheduledTime); osc.stop(scheduledTime + 0.03);
       return;
     }
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     osc.frequency.value = isAccent ? 1500 : 1000;
-    gain.gain.setValueAtTime(isAccent ? 0.7 : 0.4, time);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+    gain.gain.setValueAtTime(isAccent ? 0.7 : 0.4, scheduledTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, scheduledTime + 0.05);
     osc.connect(gain); gain.connect(dest);
-    osc.start(time); osc.stop(time + 0.05);
+    osc.start(scheduledTime); osc.stop(scheduledTime + 0.05);
   };
 
   const scheduleClick = (beatNum, time) => {
@@ -1965,6 +1967,7 @@ function useMetronomeEngine(settings) {
 
   const scheduler = () => {
     const ctx = audioCtxRef.current;
+    if (!ctx) return;
     while (nextNoteTimeRef.current < ctx.currentTime + 0.1) {
       const beatIndex = beatRef.current;
       const beatState = accentsRef.current[beatIndex] || "normal";
@@ -1986,12 +1989,6 @@ function useMetronomeEngine(settings) {
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      // iOS can drop the context to "interrupted" mid-playback (incoming
-      // call, Siri, another app grabbing the audio session) without ever
-      // firing visibilitychange. Resume automatically whenever the context
-      // reports itself as anything other than running, so a click stream
-      // doesn't just go silent until the user backgrounds/foregrounds the
-      // app to trigger the visibility handler.
       audioCtxRef.current.onstatechange = () => {
         const ctx = audioCtxRef.current;
         if (ctx && (ctx.state === "suspended" || ctx.state === "interrupted") && schedulerRef.current) {
@@ -2002,8 +1999,10 @@ function useMetronomeEngine(settings) {
     if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
       await audioCtxRef.current.resume();
     }
+    ensureMasterChain(audioCtxRef.current);
     beatRef.current = 0;
-    nextNoteTimeRef.current = audioCtxRef.current.currentTime + 0.05;
+    nextNoteTimeRef.current = audioCtxRef.current.currentTime + 0.02;
+    scheduler();
     clearInterval(schedulerRef.current);
     schedulerRef.current = setInterval(scheduler, 25);
     setPlaying(true);
@@ -2414,24 +2413,39 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const rootRef = useRef(null);
-  // Collapse "space" groups that land at the very start of a browser-wrapped
-  // visual row. Real line-start spaces are already stripped from the raw
-  // text below, so any space-group measured at offsetLeft 0 inside its row
-  // is by definition a wrap-introduced leading space, not an intentional
-  // one — hide it so wrapped continuation lines don't show indentation.
+  // Collapse space groups that land at the very start of any visual line (both
+  // initial lines and browser-wrapped continuation lines), across all text alignments
+  // (left, center, right), font sizes, and line spacings.
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const collapseWrapLeadingSpaces = () => {
-      const spaceEls = root.querySelectorAll('[data-space-group="1"]');
-      spaceEls.forEach((el) => { el.style.width = ""; el.style.minWidth = el.dataset.origMinWidth || ""; el.style.overflow = ""; el.style.visibility = ""; });
-      spaceEls.forEach((el) => {
-        if (el.offsetLeft === 0) {
-          el.style.width = "0px";
-          el.style.minWidth = "0px";
-          el.style.overflow = "hidden";
-          el.style.visibility = "hidden";
-        }
+      const lineRows = root.querySelectorAll('[data-chord-line="1"]');
+      lineRows.forEach((row) => {
+        const groups = Array.from(row.querySelectorAll('[data-group="1"]'));
+        groups.forEach((el) => {
+          if (el.dataset.spaceGroup === "1") {
+            el.style.display = "";
+            el.style.width = "";
+            el.style.minWidth = el.dataset.origMinWidth || "";
+            el.style.overflow = "";
+            el.style.visibility = "";
+          }
+        });
+        let lastTop = null;
+        groups.forEach((el) => {
+          const top = Math.round(el.offsetTop);
+          const isFirstOnLine = lastTop === null || Math.abs(top - lastTop) > 4;
+          if (isFirstOnLine) {
+            lastTop = top;
+            if (el.dataset.spaceGroup === "1") {
+              el.style.display = "none";
+              el.style.width = "0px";
+              el.style.minWidth = "0px";
+              el.style.visibility = "hidden";
+            }
+          }
+        });
       });
     };
     collapseWrapLeadingSpaces();
@@ -2440,7 +2454,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
     window.addEventListener("resize", collapseWrapLeadingSpaces);
     return () => { ro.disconnect(); window.removeEventListener("resize", collapseWrapLeadingSpaces); };
   });
-  const lines = String(text || "").split("\n").map((l) => l.replace(/^ +/, ""));
+  const lines = String(text || "").split("\n").map((l) => l.replace(/^\s+/, ""));
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
   const tagGap = Math.max(2, tagSize * 0.28 * tagGapMult);
@@ -2529,6 +2543,21 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         });
         if (current.length) groups.push({ type: "word", items: current });
 
+        // If not editing, strip any leading space group before the first word,
+        // transferring any attached tag to the first character of the word.
+        if (!editable) {
+          while (groups.length > 0 && groups[0].type === "space" && !groups[0].items.some((it) => it.tok.tag)) {
+            groups.shift();
+          }
+          if (groups.length > 1 && groups[0].type === "space" && groups[1].type === "word") {
+            const taggedSpaceItem = groups[0].items.find((it) => it.tok.tag);
+            if (taggedSpaceItem) {
+              groups[1].items[0].tok.tag = taggedSpaceItem.tok.tag;
+            }
+            groups.shift();
+          }
+        }
+
         const renderChar = ({ tok, ti }) => {
           const isEditingThis = editable && editorFor && editorFor.line === li && editorFor.index === ti;
           return (
@@ -2591,7 +2620,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         };
 
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
+          <div key={li} data-chord-line="1" style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
               // A word/space's visible box only naturally spans 1ch per character,
               // but an attached tag can render far wider than what's underneath it
@@ -2616,7 +2645,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                 const minWidthCh = Math.max(1, tagDrivenWidth);
                 const minWidthVal = showTags ? `${minWidthCh}ch` : undefined;
                 return (
-                  <span key={gi} data-space-group="1" data-orig-min-width={minWidthVal || ""} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: minWidthVal }}>
+                  <span key={gi} data-group="1" data-space-group="1" data-orig-min-width={minWidthVal || ""} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: minWidthVal }}>
                     {renderChar(repItem)}
                     <wbr />
                   </span>
@@ -2624,7 +2653,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               }
               const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
-                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
+                <span key={gi} data-group="1" data-space-group="0" style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
                 </span>
               );
@@ -3183,13 +3212,13 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   };
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
-        <button disabled={!canSave} onClick={handleSave} style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-          <Check size={15} color={canSave ? "#fff" : C.textFaint} />Save
+        <button disabled={!canSave} onClick={handleSave} style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          Save
         </button>
       </div>
 
@@ -3219,7 +3248,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
         <Field label="LANGUAGE"><TabSelect options={LANGUAGES} value={language} onChange={setLanguage} C={C} /></Field>
 
         <Field label="DESCRIPTION">
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} onFocus={scrollFieldIntoView} placeholder={"Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle"}
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} onFocus={scrollFieldIntoView} placeholder="Arrangement notes, keys, or style"
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", height: "auto", padding: "12px 14px", minHeight: 62, resize: "vertical" }} />
         </Field>
 
@@ -3460,11 +3489,11 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
               flexShrink: 0,
               border: `1px solid ${isShared ? C.accentDim : C.border}`,
               background: isShared ? C.accentSoft : C.surface2,
-              color: isShared ? C.accent : C.textMuted,
+              color: isShared ? C.accent : C.text,
               cursor: "pointer"
             }}
           >
-            {isShared ? "Shared" : "Personal"}
+            {isShared ? "Shared" : "Share"}
           </button>
         )}
         <button onClick={onClose} style={{ background: "none", border: "none", fontFamily: FONT, fontSize: 15.5, fontWeight: 700, color: C.accent, padding: "6px 4px" }}>Done</button>
@@ -3587,10 +3616,10 @@ function SongDetailScreen({
   const cancelTitlePress = () => { if (titleLongPressRef.current) { clearTimeout(titleLongPressRef.current); titleLongPressRef.current = null; } };
 
   const labelFontSize = sectionFontSize != null ? sectionFontSize : Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
-  const badgeStyle = { fontSize: 12.5, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap" };
-  const chevronBtn = { width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0 };
-  const keyButtonStyle = { minWidth: 56, height: 30, padding: "0 10px", borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.border}`, background: C.surface2, color: C.text };
-  const lyricsToggleStyle = (on) => ({ height: 30, minWidth: 64, padding: "0 12px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
+  const badgeStyle = { fontSize: 12.5, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+  const chevronBtn = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0 };
+  const keyButtonStyle = { width: 44, minWidth: 44, height: 28, padding: 0, borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.border}`, background: C.surface2, color: C.text };
+  const lyricsToggleStyle = (on) => ({ height: 28, minWidth: 56, padding: "0 8px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
 
   const isVocals = mode === "vocals";
   const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? ms.drumsText : (chordsView === "chords" ? ms.chordsText : ms.chartText);
@@ -3614,16 +3643,16 @@ function SongDetailScreen({
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode)}</div>}
         </div>
         {mode === "drums" && !!engine && song.description && (
-          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
+          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
         )}
         {song.description ? (
-          <button onClick={() => setDescOpen((o) => !o)} style={{ ...chevronBtn, position: "relative", zIndex: 1 }}>
+          <button onClick={() => setDescOpen((o) => !o)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1 }}>
             <ChevronDown size={16} style={{ transform: descOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
           </button>
         ) : mode === "drums" && !!engine ? (
-          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
+          <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
         ) : (
@@ -3637,20 +3666,22 @@ function SongDetailScreen({
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
-          {hasKeyChanged && (
-            <button
-              onClick={() => onSaveOverrideToTeam?.({ keyOverride: viewKey })}
-              title="Save key to Team"
-              style={{ ...chevronBtn, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
-            >
-              <Save size={15} color={C.accent} />
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            {hasKeyChanged && (
+              <button
+                onClick={() => onSaveOverrideToTeam?.({ keyOverride: viewKey })}
+                title="Save key to Team"
+                style={{ ...chevronBtn, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
+              >
+                <Save size={14} color={C.accent} />
+              </button>
+            )}
+            <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={15} /></button>
+            <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
+              {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
             </button>
-          )}
-          <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={16} /></button>
-          <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
-            {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
-          </button>
-          <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={16} /></button>
+            <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={15} /></button>
+          </div>
         </div>
       )}
 
@@ -3658,7 +3689,7 @@ function SongDetailScreen({
         <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
             <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} fontSize={12.5} C={C} />
-            <button onClick={cycleSubdivision} style={chevronBtn}>
+            <button onClick={cycleSubdivision} style={{ ...chevronBtn, width: 30, height: 30 }}>
               <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
             </button>
           </div>
@@ -3670,12 +3701,12 @@ function SongDetailScreen({
               <button
                 onClick={() => onSaveOverrideToTeam?.({ tempoOverride: currentBpm })}
                 title="Save tempo to Team"
-                style={{ ...chevronBtn, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
+                style={{ ...chevronBtn, width: 30, height: 30, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent }}
               >
                 <Save size={15} color={C.accent} />
               </button>
             )}
-            <div style={{ ...badgeStyle, height: 30, boxSizing: "border-box", flexShrink: 0 }}>{Math.round(engine.bpm)} BPM</div>
+            <div style={{ ...badgeStyle, width: 78, minWidth: 78, height: 30, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", fontVariantNumeric: "tabular-nums", padding: 0 }}>{Math.round(engine.bpm)} BPM</div>
           </div>
         </div>
       )}
@@ -3923,50 +3954,53 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
 
 /* =========================================================================
    SpellingChartScreen — full-screen overlay listing every TANGLISH_EXCEPTIONS
-   entry as a Tamil → Tanglish table, with add / delete support.
+   entry as a Tamil → Tanglish table, with inline add / edit / delete support.
    ========================================================================= */
-// SpellingChartRow — handles both read and inline-edit state for a single entry.
-function SpellingChartRow({ tamilKey, value, isFirst, onSave, onDelete, C }) {
-  const [editing, setEditing] = useState(false);
-  const [editTamil, setEditTamil] = useState(tamilKey);
-  const [editLatin, setEditLatin] = useState(value);
-  const [err, setErr] = useState("");
-
+function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, setDraftTamil, draftLatin, setDraftLatin, onStartEdit, onDelete, onCommit, C, activeRef }) {
   const inputStyle = {
     flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`,
     background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14,
     fontWeight: 500, padding: "0 8px", outline: "none", boxSizing: "border-box", minWidth: 0,
   };
 
-  const handleSave = () => {
-    const t = editTamil.trim(); const l = editLatin.trim();
-    if (!t) { setErr("Enter Tamil."); return; }
-    if (!l) { setErr("Enter Tanglish."); return; }
-    onSave(tamilKey, t, l);
-    setEditing(false); setErr("");
-  };
-
   const rowBorder = isFirst ? "none" : `1px solid ${C.border}`;
 
-  if (editing) {
+  if (isEditing) {
     return (
-      <div style={{ borderTop: rowBorder, padding: "10px 12px" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: err ? 4 : 0 }}>
-          <input autoFocus value={editTamil} onChange={(e) => { setEditTamil(e.target.value); setErr(""); }} style={inputStyle} />
-          <input value={editLatin} onChange={(e) => { setEditLatin(e.target.value); setErr(""); }} style={inputStyle} />
-        </div>
-        {err && <div style={{ fontSize: 11.5, color: "#FF453A", marginBottom: 4, paddingLeft: 2 }}>{err}</div>}
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button onClick={handleSave} style={{ flex: 1, height: 36, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 13.5, fontWeight: 700 }}>Save</button>
-          <button onClick={() => { setEditing(false); setEditTamil(tamilKey); setEditLatin(value); setErr(""); }} style={{ flex: 1, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>Cancel</button>
-          <button onClick={() => onDelete(tamilKey)} style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.danger ?? "#FF453A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }} aria-label="Delete"><Trash2 size={14} /></button>
-        </div>
+      <div
+        ref={activeRef}
+        onClick={(e) => e.stopPropagation()}
+        style={{ borderTop: rowBorder, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, background: C.surface3 }}
+      >
+        <input
+          autoFocus
+          value={draftTamil}
+          onChange={(e) => setDraftTamil(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
+          style={inputStyle}
+          placeholder="தமிழ்"
+        />
+        <input
+          value={draftLatin}
+          onChange={(e) => setDraftLatin(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
+          style={inputStyle}
+          placeholder="Tanglish"
+        />
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(tamilKey); }}
+          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.danger ?? "#FF453A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+          aria-label="Delete"
+        >
+          <Trash2 size={15} />
+        </button>
       </div>
     );
   }
+
   return (
     <button
-      onClick={() => { setEditing(true); setEditTamil(tamilKey); setEditLatin(value); }}
+      onClick={(e) => onStartEdit(tamilKey, value, e)}
       style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rowBorder, background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
     >
       <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{tamilKey}</div>
@@ -3977,11 +4011,17 @@ function SpellingChartRow({ tamilKey, value, isFirst, onSave, onDelete, C }) {
 }
 
 function SpellingChartScreen({ chart, onSave, onBack, C }) {
-  const [adding, setAdding] = useState(false);
-  const [newTamil, setNewTamil] = useState("");
-  const [newLatin, setNewLatin] = useState("");
-  const [addError, setAddError] = useState("");
+  const [activeEditKey, setActiveEditKey] = useState(null); // null | "__NEW__" | string
+  const [draftTamil, setDraftTamil] = useState("");
+  const [draftLatin, setDraftLatin] = useState("");
+  const activeRowRef = useRef(null);
   const keyboardInset = useKeyboardInset();
+
+  const handleBack = () => {
+    commitActiveEdit(null);
+    onBack();
+  };
+  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(handleBack);
 
   // User-added entries on top (newest-first), then seed entries below.
   const seedKeys = Object.keys(TANGLISH_EXCEPTIONS);
@@ -3989,28 +4029,57 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   const presentSeedKeys = seedKeys.filter((k) => k in chart);
   const rows = [...userKeys, ...presentSeedKeys];
 
-  const handleAdd = () => {
-    const tamil = newTamil.trim();
-    const latin = newLatin.trim();
-    if (!tamil) { setAddError("Enter a Tamil word."); return; }
-    if (!latin) { setAddError("Enter the Tanglish spelling."); return; }
-    if (chart[tamil]) { setAddError("That word already exists."); return; }
-    onSave({ ...chart, [tamil]: latin });
-    setNewTamil(""); setNewLatin(""); setAdding(false); setAddError("");
+  const commitActiveEdit = (newKeyToEdit = null, newDraftT = "", newDraftL = "") => {
+    if (activeEditKey === "__NEW__") {
+      const t = draftTamil.trim();
+      const l = draftLatin.trim();
+      if (t && l && !chart[t]) {
+        onSave({ ...chart, [t]: l });
+      }
+    } else if (activeEditKey && chart[activeEditKey] !== undefined) {
+      const origTamil = activeEditKey;
+      const origLatin = chart[activeEditKey];
+      const t = draftTamil.trim();
+      const l = draftLatin.trim();
+      if (t && l && (t !== origTamil || l !== origLatin)) {
+        const next = { ...chart };
+        if (origTamil !== t) delete next[origTamil];
+        next[t] = l;
+        onSave(next);
+      }
+    }
+    setActiveEditKey(newKeyToEdit);
+    setDraftTamil(newDraftT);
+    setDraftLatin(newDraftL);
   };
 
-  const handleRowSave = (oldKey, newKey, newVal) => {
-    const next = { ...chart };
-    if (oldKey !== newKey) delete next[oldKey];
-    next[newKey] = newVal;
-    onSave(next);
+  const handleStartAdd = (e) => {
+    e.stopPropagation();
+    commitActiveEdit("__NEW__", "", "");
+  };
+
+  const handleStartEditRow = (key, val, e) => {
+    e.stopPropagation();
+    if (activeEditKey === key) return;
+    commitActiveEdit(key, key, val);
   };
 
   const handleDelete = (key) => {
+    if (activeEditKey === key) {
+      setActiveEditKey(null);
+    }
     const next = { ...chart };
     delete next[key];
     onSave(next);
   };
+
+  useEffect(() => {
+    if (activeEditKey && activeRowRef.current) {
+      setTimeout(() => {
+        activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 100);
+    }
+  }, [activeEditKey]);
 
   const inputStyle = {
     flex: 1, height: 40, borderRadius: 8, border: `1px solid ${C.border}`,
@@ -4019,39 +4088,65 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
+    <div
+      onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
+      style={{
+        position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT,
+        zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden",
+        paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box",
+        transform: `translateX(${dragX}px)`,
+        transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none",
+        touchAction: dragging ? "none" : "pan-y"
+      }}
+      {...handlers}
+    >
       {/* Header */}
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6 }}>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleBack(); }}
+          style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6 }}
+        >
           <ChevronLeft size={22} />
         </button>
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
       {/* Scrollable content — paddingBottom shrinks when keyboard is up so nothing is hidden */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: `max(40px, ${keyboardInset})`, boxSizing: "border-box" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 40}px` : "40px", boxSizing: "border-box" }}>
 
         {/* Subtitle */}
         <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
-          Words where the algorithm's default output is wrong. Tap any row to edit. Edits take effect immediately.
+          Custom transliteration overrides. Tap any row to edit.
         </div>
 
         {/* ADD WORD — always at top */}
-        {adding ? (
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 12px", marginBottom: 12 }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: addError ? 6 : 0 }}>
-              <input autoFocus placeholder="தமிழ்" value={newTamil} onChange={(e) => { setNewTamil(e.target.value); setAddError(""); }} style={inputStyle} />
-              <input placeholder="Tanglish" value={newLatin} onChange={(e) => { setNewLatin(e.target.value); setAddError(""); }} style={inputStyle} />
-            </div>
-            {addError && <div style={{ fontSize: 12, color: "#FF453A", marginBottom: 6, paddingLeft: 2 }}>{addError}</div>}
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button onClick={handleAdd} style={{ flex: 1, height: 38, borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700 }}>Save</button>
-              <button onClick={() => { setAdding(false); setNewTamil(""); setNewLatin(""); setAddError(""); }} style={{ flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600 }}>Cancel</button>
+        {activeEditKey === "__NEW__" ? (
+          <div
+            ref={activeRowRef}
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 12px", marginBottom: 12 }}
+          >
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                autoFocus
+                placeholder="தமிழ்"
+                value={draftTamil}
+                onChange={(e) => setDraftTamil(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
+              <input
+                placeholder="Tanglish"
+                value={draftLatin}
+                onChange={(e) => setDraftLatin(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
             </div>
           </div>
         ) : (
           <button
-            onClick={() => setAdding(true)}
+            onClick={handleStartAdd}
             style={{ width: "100%", height: 44, borderRadius: 11, border: `1px solid ${C.border}`, background: C.surface2, color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 12 }}
           >
             <Plus size={16} /> Add word
@@ -4072,8 +4167,20 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
           )}
           {rows.map((key, i) => (
             <SpellingChartRow
-              key={key} tamilKey={key} value={chart[key]}
-              isFirst={i === 0} onSave={handleRowSave} onDelete={handleDelete} C={C}
+              key={key}
+              tamilKey={key}
+              value={chart[key]}
+              isFirst={i === 0}
+              isEditing={activeEditKey === key}
+              draftTamil={draftTamil}
+              setDraftTamil={setDraftTamil}
+              draftLatin={draftLatin}
+              setDraftLatin={setDraftLatin}
+              onStartEdit={handleStartEditRow}
+              onDelete={handleDelete}
+              onCommit={commitActiveEdit}
+              activeRef={activeEditKey === key ? activeRowRef : null}
+              C={C}
             />
           ))}
         </div>
@@ -4082,8 +4189,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onImportFile, onExportOpen, onConfigureSync, syncStatus, C }) {
-  const fileRef = useRef(null);
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, C }) {
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
@@ -4153,7 +4259,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}` }}>
               <div>
                 <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Transliteration</div>
-                <div style={{ fontFamily: FONT, fontSize: 12, color: C.textMuted, marginTop: 2 }}>த → tha</div>
+                <div style={{ fontFamily: FONT, fontSize: 12, color: C.textMuted, marginTop: 2 }}>(த → tha)</div>
               </div>
               <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
             </div>
@@ -4261,14 +4367,28 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             </>
           ) : null}
 
-          <SectionLabel>TEAM</SectionLabel>
-          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => fileRef.current?.click()} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Download size={16} color={C.accent} /> Import</button>
-              <input ref={fileRef} type="file" accept="application/json" onChange={(e) => { if (e.target.files[0]) onImportFile(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
-              <button onClick={onExportOpen} style={{ ...rowBtnStyle, flex: 1, justifyContent: "center" }}><Upload size={16} color={C.accent} /> Export</button>
+          <SectionLabel>LIBRARY</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 26 }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "6px 8px 6px 16px" }}>
+              <button
+                onClick={onConfigureSync}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600, cursor: "pointer", padding: "10px 0", textAlign: "left" }}
+              >
+                <span>Team</span>
+                <span style={{ color: bandKey ? C.accent : C.textMuted, fontSize: 13, fontWeight: 700 }}>
+                  {bandKey || "Public only"}
+                </span>
+              </button>
+              {bandKey && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onForceSync(); }}
+                  title="Sync"
+                  style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface3, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 12, flexShrink: 0, cursor: "pointer" }}
+                >
+                  <RefreshCw size={15} color={C.accent} />
+                </button>
+              )}
             </div>
-            <button onClick={onConfigureSync} style={{ ...rowBtnStyle, justifyContent: "space-between" }}><span>Team</span><span style={{ color: C.accent, fontSize: 12 }}>{syncStatus}</span></button>
           </div>
 
           <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Created by Benjamin Hanigraf</div>
@@ -4311,6 +4431,7 @@ function BottomNav({ active, onChange, mode, C }) {
 
 function DeleteSongModal({ song, onConfirm, onCancel, C }) {
   const [input, setInput] = useState("");
+  const keyboardInset = useKeyboardInset();
   const isMatch = input.trim().toLowerCase() === "delete";
   if (!song) return null;
   return createPortal(
@@ -4320,7 +4441,11 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
         position: "fixed", inset: 0, zIndex: 300,
         background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 20, boxSizing: "border-box"
+        padding: 20,
+        paddingBottom: keyboardInset ? `${keyboardInset + 20}px` : 20,
+        transition: "padding-bottom 150ms ease-out",
+        overflowY: "auto",
+        boxSizing: "border-box"
       }}
     >
       <div
@@ -4336,10 +4461,10 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
           <Trash2 size={18} color={C.danger ?? "#FF453A"} /> Delete Song
         </div>
         <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 12 }}>
-          Deleting <strong style={{ color: C.text }}>"{song.title}"</strong> will permanently remove it from the library for everyone on the team.
+          Delete <strong style={{ color: C.text }}>"{song.title}"</strong> permanently for the team?
         </div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 8 }}>
-          Type <span style={{ color: C.danger ?? "#FF453A", fontWeight: 700 }}>delete</span> below to confirm:
+          Type <span style={{ color: C.danger ?? "#FF453A", fontWeight: 700 }}>delete</span> to confirm:
         </div>
         <input
           autoFocus
@@ -4392,6 +4517,7 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
 
 function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
   const [draft, setDraft] = useState(initialKey || "");
+  const keyboardInset = useKeyboardInset();
   useEffect(() => { setDraft(initialKey || ""); }, [initialKey, isOpen]);
   if (!isOpen) return null;
   const isConnected = Boolean(initialKey && initialKey.trim());
@@ -4402,7 +4528,11 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
         position: "fixed", inset: 0, zIndex: 300,
         background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 20, boxSizing: "border-box"
+        padding: 20,
+        paddingBottom: keyboardInset ? `${keyboardInset + 20}px` : 20,
+        transition: "padding-bottom 150ms ease-out",
+        overflowY: "auto",
+        boxSizing: "border-box"
       }}
     >
       <div
@@ -4418,13 +4548,13 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
           Team Access
         </div>
         <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>
-          Enter your team access code to synchronize shared setlists across your team. Leave blank for public library access only.
+          Enter team code to sync shared setlists.
         </div>
         <input
           autoFocus
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Team access code"
+          placeholder="Team code"
           style={{
             width: "100%", height: 42, background: C.surface3,
             border: `1px solid ${C.border}`,
@@ -4568,7 +4698,7 @@ function AppInner() {
           const idx = mergedSongs.findIndex((ls) =>
             ls.id === rs.id ||
             (ls.title.trim().toLowerCase() === rs.title.trim().toLowerCase() &&
-             (ls.artist || "").trim().toLowerCase() === (rs.artist || "").trim().toLowerCase())
+              (ls.artist || "").trim().toLowerCase() === (rs.artist || "").trim().toLowerCase())
           );
           if (idx !== -1) {
             mergedSongs[idx] = { ...mergedSongs[idx], ...rs };
@@ -4636,7 +4766,7 @@ function AppInner() {
   useEffect(() => {
     const online = () => performSync();
     window.addEventListener("online", online);
-    const timer = window.setInterval(() => performSync(), 30000);
+    const timer = window.setInterval(() => performSync(), 10000);
     return () => { window.removeEventListener("online", online); window.clearInterval(timer); };
   }, [performSync]);
 
@@ -4929,7 +5059,10 @@ function AppInner() {
             clickSettings={clickSettings} setClickSettings={setClickSettings}
             tanglishMode={tanglishMode} setTanglishMode={setTanglishMode}
             onOpenSpellingChart={() => setSpellingChartOpen(true)}
-            onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={() => setTeamKeyModalOpen(true)} syncStatus={syncStatus}
+            onConfigureSync={() => setTeamKeyModalOpen(true)}
+            onForceSync={() => performSync(true)}
+            bandKey={bandKey}
+            syncStatus={syncStatus}
             C={C}
           />
         )}
