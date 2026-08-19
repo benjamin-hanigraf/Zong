@@ -241,17 +241,35 @@ function downloadJSON(filename, payload) {
 }
 async function shareOrDownloadJSON(filename, payload) {
   const json = JSON.stringify(payload, null, 2);
-  try {
-    const file = new File([json], filename, { type: "application/json" });
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: filename });
-      return "shared";
+  if (typeof navigator !== "undefined" && navigator.share) {
+    try {
+      if (typeof File !== "undefined" && navigator.canShare) {
+        const file = new File([json], filename, { type: "application/json" });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: filename });
+          return "shared";
+        }
+      }
+    } catch (err) {
+      if (err && (err.name === "AbortError" || String(err).includes("Abort") || String(err).includes("cancel"))) {
+        return "cancelled";
+      }
     }
-  } catch (err) {
-    if (err && err.name === "AbortError") return "cancelled";
+    try {
+      await navigator.share({ title: filename, text: json });
+      return "shared";
+    } catch (err) {
+      if (err && (err.name === "AbortError" || String(err).includes("Abort") || String(err).includes("cancel"))) {
+        return "cancelled";
+      }
+    }
   }
-  downloadJSON(filename, payload);
-  return "downloaded";
+  try {
+    downloadJSON(filename, payload);
+    return "downloaded";
+  } catch {
+    return "cancelled";
+  }
 }
 function dedupeTitle(candidateTitle, artist, existingSongs) {
   let n = 0;
@@ -461,13 +479,29 @@ function transliterateTaggedTokens(tokens, prevWordEndedWithSach = false) {
       const tagHits = [];
       wordTokens.forEach((t, idx) => { if (t.tag) tagHits.push({ index: idx, tag: t.tag }); });
 
-      // Fast path: no tag, or a single tag right at the word's start — safe
-      // to use the curated dictionary spelling if one exists, since there's
-      // nowhere ambiguous to splice.
-      const onlyLeadingTag = tagHits.length === 0 || (tagHits.length === 1 && tagHits[0].index === 0);
-      if (onlyLeadingTag && activeTanglishExceptions[rawWord]) {
-        const lead = tagHits.length ? `[${tagHits[0].tag}]` : "";
-        result += lead + activeTanglishExceptions[rawWord];
+      // Dictionary Exception Match:
+      // If the word exists in the spelling chart, use its curated Tanglish spelling.
+      // If chords/notes tags are planted mid-word, scale character offsets to the
+      // dictionary spelling so every tag lands precisely on its syllable!
+      if (activeTanglishExceptions[rawWord]) {
+        const dictWord = activeTanglishExceptions[rawWord];
+        if (tagHits.length === 0) {
+          result += dictWord;
+        } else if (tagHits.length === 1 && tagHits[0].index === 0) {
+          result += `[${tagHits[0].tag}]` + dictWord;
+        } else {
+          const { out, offsets } = transliterateTamilWordWithOffsets(rawWord, sachFlag);
+          let spliced = dictWord;
+          let shift = 0;
+          tagHits.forEach(({ index, tag }) => {
+            const rawRatio = out.length > 0 ? (offsets[index] / out.length) : 0;
+            const insertAt = Math.min(dictWord.length, Math.max(0, Math.round(rawRatio * dictWord.length))) + shift;
+            const marker = `[${tag}]`;
+            spliced = spliced.slice(0, insertAt) + marker + spliced.slice(insertAt);
+            shift += marker.length;
+          });
+          result += spliced;
+        }
         sachFlag = wordEndsWithSachPulli(rawWord);
         continue;
       }
@@ -1266,32 +1300,25 @@ function IosShareIcon({ size = 16, color = "currentColor" }) {
 //      a real grand only have one, mid/treble have two or three), each with
 //      its own tiny random detune, producing the natural chorus-like
 //      beating a single oscillator per note can never produce.
-// Each note is therefore built from individual sine oscillators per partial
-// per unison string, rather than one shared PeriodicWave.
-const PIANO_PARTIALS = 7; // fundamental + 6 overtones
+const PIANO_HARMONICS = [
+  { n: 1, relAmp: 1.0, decayMult: 1.0 },
+  { n: 2, relAmp: 0.52, decayMult: 0.65 },
+  { n: 3, relAmp: 0.26, decayMult: 0.44 },
+  { n: 4, relAmp: 0.15, decayMult: 0.30 },
+  { n: 5, relAmp: 0.08, decayMult: 0.20 },
+  { n: 6, relAmp: 0.04, decayMult: 0.13 },
+  { n: 7, relAmp: 0.02, decayMult: 0.09 },
+  { n: 8, relAmp: 0.01, decayMult: 0.06 },
+];
 function pianoInharmonicity(freq) {
-  // Falls off from a stiff, thick bass string (larger B, more stretch) to a
-  // thin, near-ideal treble string (B close to 0). Real grand-piano B
-  // values run roughly 0.0002 (treble) to ~0.002-0.004 (lowest bass) — the
-  // previous coefficient here (0.022) was an order of magnitude too large,
-  // stretching partials so far off the harmonic series that they read as
-  // an inharmonic FM/bell tone rather than a struck string.
   const t = Math.min(1, Math.max(0, (freq - 30) / (1500 - 30)));
-  return 0.0032 * Math.pow(1 - t, 2.4) + 0.00004;
+  return 0.00035 * Math.pow(1 - t, 2) + 0.00002;
 }
-function pianoPartialAmp(n, freq) {
-  // Bass strings carry more energy in their upper partials (bright,
-  // metallic sustain); treble strings are close to a pure tone. Falls off
-  // roughly like 1/n^k, with k rising (purer) as pitch rises.
-  const t = Math.min(1, Math.max(0, (freq - 60) / (1400 - 60)));
-  const rolloff = 1.05 + t * 0.95;
-  return 1 / Math.pow(n, rolloff);
-}
-function pianoPartialDecay(n, freq) {
-  // Upper partials ring out much faster than the fundamental — bass notes
-  // hold their tail far longer than treble notes.
-  const base = freq < 200 ? 6 : freq < 700 ? 3.4 : 1.9; // fundamental's own tail, seconds
-  return Math.max(0.12, base / Math.pow(n, 1.3));
+function pianoFundamentalDecay(freq) {
+  if (freq < 150) return 4.5;
+  if (freq < 350) return 3.2;
+  if (freq < 700) return 2.2;
+  return 1.4;
 }
 const WHITE_KEY_BG = "#F2F1EC";
 const WHITE_KEY_BG_PRESSED = null; // filled in per-mode below (needs accent colour)
@@ -1506,119 +1533,81 @@ function PianoScreen({ C }) {
     const freq = freqFor(semitone);
     const dest = masterCompRef.current || ctx.destination;
 
-    // Overall note envelope — release (stopVoice) fades this, independent
-    // of each partial's own longer natural decay below.
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(1, now);
 
-    // A gentle register-scaled lowpass on the whole voice, standing in for
-    // a soundboard's own natural top-end rolloff. A touch of resonance
-    // (Q above the previous near-flat 0.3) gives it a hint of the
-    // soundboard's own body resonance instead of sounding like a sterile
-    // brick-wall filter.
+    // Grand Piano soundboard acoustic filter with dynamic attack brightness
     const bodyFilter = ctx.createBiquadFilter();
     bodyFilter.type = "lowpass";
-    bodyFilter.Q.value = 0.9;
-    bodyFilter.frequency.setValueAtTime(Math.min(9500, freq * 10), now);
+    bodyFilter.Q.value = 1.0;
+    const initCutoff = Math.min(6800, Math.max(2400, freq * 7));
+    const warmCutoff = Math.min(2600, Math.max(750, freq * 2.4));
+    bodyFilter.frequency.setValueAtTime(initCutoff, now);
+    bodyFilter.frequency.exponentialRampToValueAtTime(warmCutoff, now + 0.28);
 
-    // Soft-clip saturation stage: a bank of perfectly clean summed sines
-    // is exactly what reads as an "artificial"/digital additive-synth
-    // patch. Real strings, the soundboard, and the amp path all impart a
-    // touch of gentle nonlinear saturation that folds a little energy into
-    // odd harmonics — this is a cheap, effective stand-in for that, using
-    // a smooth tanh-like curve so it warms the tone without adding audible
-    // distortion.
-    const shaper = ctx.createWaveShaper();
-    const curveLen = 1024;
-    const curve = new Float32Array(curveLen);
-    for (let i = 0; i < curveLen; i++) {
-      const x = (i / (curveLen - 1)) * 2 - 1;
-      curve[i] = Math.tanh(x * 1.6) / Math.tanh(1.6);
-    }
-    shaper.curve = curve;
-    shaper.oversample = "2x";
+    bodyFilter.connect(gain);
+    gain.connect(dest);
 
-    bodyFilter.connect(shaper); shaper.connect(gain); gain.connect(dest);
-
-    const peak = 0.62;
     const B = pianoInharmonicity(freq);
-    // Real grands taper from a single string in the deep bass to two, then
-    // three, unison strings per note going up the keyboard.
-    const unisonDetunes = freq < 90 ? [0] : freq < 400 ? [-4, 4] : [-6, 0.5, 6];
+    const fundamentalTail = pianoFundamentalDecay(freq);
+    // Subtle acoustic unison detuning (gentle chorus without sounding out of tune)
+    const unisonDetunes = freq < 100 ? [0] : [-0.9, 0.9];
     const oscillators = [];
 
     unisonDetunes.forEach((detuneCents) => {
-      for (let n = 1; n <= PIANO_PARTIALS; n++) {
+      PIANO_HARMONICS.forEach(({ n, relAmp, decayMult }) => {
         const stretch = Math.sqrt(1 + B * n * n);
         const partialFreq = freq * n * stretch;
-        if (partialFreq > 15000) continue;
-        // Small per-partial random variance on amplitude and decay (on top
-        // of the deterministic curve) so unison strings and overtones
-        // don't all breathe in perfect lockstep — another subtle cue that
-        // separates a struck string from a synthesized additive stack.
-        const amp = pianoPartialAmp(n, freq) * (peak / unisonDetunes.length) * (0.94 + Math.random() * 0.12);
-        const tau = pianoPartialDecay(n, freq) * (0.92 + Math.random() * 0.16);
-        const stopAt = now + tau + 0.15;
-        // A hair of per-partial timing jitter (up to ~3ms) so the whole
-        // stack doesn't start in perfect phase lock-step, which is what
-        // makes a bank of pure sines sound synthesized rather than struck.
-        const startAt = now + Math.random() * 0.003;
+        if (partialFreq > 16000) return;
+
+        const amp = relAmp * (0.42 / unisonDetunes.length);
+        const tau = Math.max(0.08, fundamentalTail * decayMult);
+        const stopAt = now + tau + 0.1;
+        const startAt = now;
 
         const osc = ctx.createOscillator();
         osc.type = "sine";
         osc.frequency.value = partialFreq;
-        // Tiny per-string random wobble on top of the unison spread is what
-        // keeps multiple notes/strings from beating in a perfectly regular,
-        // machine-like pattern.
-        osc.detune.value = detuneCents + (Math.random() * 2 - 1);
+        osc.detune.value = detuneCents;
 
         const pg = ctx.createGain();
-        const attack = n === 1 ? 0.006 : 0.001; // fundamental has a hair of hammer-strike rise; overtones snap on with the hammer impact itself
+        const attackTime = n === 1 ? 0.005 : 0.0015;
         pg.gain.setValueAtTime(0, startAt);
-        pg.gain.linearRampToValueAtTime(amp, startAt + attack);
-        pg.gain.exponentialRampToValueAtTime(Math.max(0.00005, amp * 0.001), startAt + tau);
+        pg.gain.linearRampToValueAtTime(amp, startAt + attackTime);
+        pg.gain.exponentialRampToValueAtTime(Math.max(0.00001, amp * 0.001), startAt + tau);
 
-        osc.connect(pg); pg.connect(bodyFilter);
+        osc.connect(pg);
+        pg.connect(bodyFilter);
         osc.start(startAt);
         osc.stop(stopAt);
         osc.onended = () => { try { osc.disconnect(); pg.disconnect(); } catch { } };
         oscillators.push(osc);
-      }
+      });
     });
 
-    // Hammer-strike transient: a brief burst of filtered noise adds the
-    // percussive "thock" a bank of pure sines can't produce alone. Widened
-    // and split into two bands (a low thump plus the original high click)
-    // so it reads as a felt hammer hitting a string rather than a thin
-    // digital tick.
-    const noiseDur = 0.03;
+    // Soft felt hammer strike transient
+    const noiseDur = 0.018;
     const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.6);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
 
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = "bandpass";
-    noiseFilter.frequency.value = Math.min(6000, freq * 3);
-    noiseFilter.Q.value = 0.7;
+    noiseFilter.frequency.value = Math.min(3500, Math.max(300, freq * 1.8));
+    noiseFilter.Q.value = 1.0;
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.055, now);
+    noiseGain.gain.setValueAtTime(0.04, now);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
-    noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(gain);
+    noise.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(gain);
 
-    const thumpFilter = ctx.createBiquadFilter();
-    thumpFilter.type = "lowpass";
-    thumpFilter.frequency.value = Math.max(180, Math.min(500, freq * 1.5));
-    thumpFilter.Q.value = 0.5;
-    const thumpGain = ctx.createGain();
-    thumpGain.gain.setValueAtTime(0.05, now);
-    thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur * 1.4);
-    noise.connect(thumpFilter); thumpFilter.connect(thumpGain); thumpGain.connect(gain);
-
-    noise.start(now); noise.stop(now + noiseDur * 1.4);
-    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); thumpFilter.disconnect(); thumpGain.disconnect(); } catch { } };
+    noise.start(now);
+    noise.stop(now + noiseDur);
+    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); } catch { } };
     oscillators.push(noise);
 
     return { oscillators, bodyFilter, gain };
@@ -1630,8 +1619,8 @@ function PianoScreen({ C }) {
     try {
       voice.gain.gain.cancelScheduledValues(now);
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-      voice.oscillators.forEach((node) => { try { node.stop(now + 0.24); } catch { } });
+      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+      voice.oscillators.forEach((node) => { try { node.stop(now + 0.20); } catch { } });
     } catch { }
   };
   const keyAt = (x, y) => {
@@ -2839,9 +2828,9 @@ function KebabMenu({ onEdit, onShare, onDelete, isInSetlist, onRemoveFromSetlist
             <MenuItem icon={Pencil} label="Edit" onClick={() => { setOpen(false); onEdit(); }} C={C} />
             <MenuItem icon={IosShareIcon} label="Share" onClick={() => { setOpen(false); onShare(); }} C={C} />
             {isInSetlist ? (
-              <MenuItem icon={X} label="Remove" danger onClick={() => { setOpen(false); if (window.confirm("Remove this song from the setlist?")) onRemoveFromSetlist(); }} C={C} />
+              <MenuItem icon={X} label="Remove" danger onClick={() => { setOpen(false); onRemoveFromSetlist(); }} C={C} />
             ) : (
-              <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpen(false); if (window.confirm(deleteConfirmMessage)) onDelete(); }} C={C} />
+              <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpen(false); onDelete(); }} C={C} />
             )}
           </div>
         </>
@@ -3261,14 +3250,9 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 
         {error && <div style={{ color: C.danger, fontSize: 13, textAlign: "center", fontWeight: 500 }}>{error}</div>}
 
-        {confirmDelete ? (
+        {initial ? (
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-            <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 14, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.borderStrong}`, background: "transparent", color: C.textMuted }}>Cancel</button>
-            <button onClick={() => onDelete(initial.id)} style={{ flex: 2, fontFamily: FONT, fontWeight: 700, fontSize: 14, padding: "14px 0", borderRadius: 12, border: "none", background: C.danger, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Trash2 size={16} color="#fff" />Confirm Delete</button>
-          </div>
-        ) : initial ? (
-          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-            <button onClick={() => setConfirmDelete(true)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+            <button onClick={() => onDelete(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
               <Trash2 size={15} color={C.danger} />Delete
             </button>
             <button onClick={() => onDuplicate(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
@@ -3322,7 +3306,7 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
         }}>
         <MenuItem icon={Pencil} label="Edit" onClick={() => { onClose(); onEdit(); }} C={C} />
         <MenuItem icon={IosShareIcon} label="Share" onClick={() => { onClose(); onShare(); }} C={C} />
-        <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); if (window.confirm(deleteConfirmMessage)) onDelete(); }} C={C} />
+        <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); onDelete(); }} C={C} />
       </div>
     </>,
     document.body
@@ -4167,7 +4151,10 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           <SectionLabel>TAMIL</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 26 }}>
             <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}` }}>
-              <span style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Tamil Transliteration</span>
+              <div>
+                <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Transliteration</div>
+                <div style={{ fontFamily: FONT, fontSize: 12, color: C.textMuted, marginTop: 2 }}>த → tha</div>
+              </div>
               <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
             </div>
             <button
@@ -4322,6 +4309,176 @@ function BottomNav({ active, onChange, mode, C }) {
   );
 }
 
+function DeleteSongModal({ song, onConfirm, onCancel, C }) {
+  const [input, setInput] = useState("");
+  const isMatch = input.trim().toLowerCase() === "delete";
+  if (!song) return null;
+  return createPortal(
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed", inset: 0, zIndex: 300,
+        background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20, boxSizing: "border-box"
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 360, background: C.surface2,
+          border: `1px solid ${C.borderStrong}`, borderRadius: 16,
+          padding: "22px 20px 20px", boxSizing: "border-box",
+          boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          <Trash2 size={18} color={C.danger ?? "#FF453A"} /> Delete Song
+        </div>
+        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 12 }}>
+          Deleting <strong style={{ color: C.text }}>"{song.title}"</strong> will permanently remove it from the library for everyone on the team.
+        </div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 8 }}>
+          Type <span style={{ color: C.danger ?? "#FF453A", fontWeight: 700 }}>delete</span> below to confirm:
+        </div>
+        <input
+          autoFocus
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder='Type "delete"'
+          style={{
+            width: "100%", height: 42, background: C.surface3,
+            border: `1px solid ${isMatch ? (C.danger ?? "#FF453A") : C.border}`,
+            borderRadius: 10, padding: "0 12px", color: C.text,
+            fontFamily: FONT, fontSize: 15, fontWeight: 600,
+            boxSizing: "border-box", outline: "none", marginBottom: 16
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && isMatch) onConfirm();
+          }}
+        />
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              flex: 1, height: 40, borderRadius: 10,
+              border: `1px solid ${C.border}`, background: "transparent",
+              color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            disabled={!isMatch}
+            onClick={onConfirm}
+            style={{
+              flex: 1, height: 40, borderRadius: 10, border: "none",
+              background: isMatch ? (C.danger ?? "#FF453A") : C.surface3,
+              color: isMatch ? "#fff" : C.textFaint,
+              fontFamily: FONT, fontSize: 14, fontWeight: 700,
+              cursor: isMatch ? "pointer" : "default",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6
+            }}
+          >
+            <Trash2 size={15} color={isMatch ? "#fff" : C.textFaint} /> Delete
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
+  const [draft, setDraft] = useState(initialKey || "");
+  useEffect(() => { setDraft(initialKey || ""); }, [initialKey, isOpen]);
+  if (!isOpen) return null;
+  const isConnected = Boolean(initialKey && initialKey.trim());
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 300,
+        background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20, boxSizing: "border-box"
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 360, background: C.surface2,
+          border: `1px solid ${C.borderStrong}`, borderRadius: 16,
+          padding: "22px 20px 20px", boxSizing: "border-box",
+          boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+          Team Access
+        </div>
+        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>
+          Enter your team access code to synchronize shared setlists across your team. Leave blank for public library access only.
+        </div>
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Team access code"
+          style={{
+            width: "100%", height: 42, background: C.surface3,
+            border: `1px solid ${C.border}`,
+            borderRadius: 10, padding: "0 12px", color: C.text,
+            fontFamily: FONT, fontSize: 15, fontWeight: 600,
+            boxSizing: "border-box", outline: "none", marginBottom: 16
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave(draft.trim());
+          }}
+        />
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1, height: 40, borderRadius: 10,
+              border: `1px solid ${C.border}`, background: "transparent",
+              color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            Cancel
+          </button>
+          {isConnected && (
+            <button
+              onClick={() => onSave("")}
+              style={{
+                flex: 1, height: 40, borderRadius: 10,
+                border: `1px solid ${C.border}`, background: "transparent",
+                color: C.danger ?? "#FF453A", fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              Disconnect
+            </button>
+          )}
+          <button
+            onClick={() => onSave(draft.trim())}
+            style={{
+              flex: 1, height: 40, borderRadius: 10, border: "none",
+              background: C.accent, color: "#fff",
+              fontFamily: FONT, fontSize: 14, fontWeight: 700,
+              cursor: "pointer"
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /* =========================================================================
    Root
    ========================================================================= */
@@ -4374,6 +4531,8 @@ function AppInner() {
   const [editingSong, setEditingSong] = useState(undefined);
   const [newSongSeed, setNewSongSeed] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [songToDelete, setSongToDelete] = useState(null);
+  const [teamKeyModalOpen, setTeamKeyModalOpen] = useState(false);
   const [stageIndex, setStageIndex] = useState(null);
   const [stageAutoOpenPicker, setStageAutoOpenPicker] = useState(false);
   const [exportPickerOpen, setExportPickerOpen] = useState(false);
@@ -4481,15 +4640,19 @@ function AppInner() {
     return () => { window.removeEventListener("online", online); window.clearInterval(timer); };
   }, [performSync]);
 
-  const configureSync = () => {
-    const key = window.prompt("Enter your Team access code (leave blank for public library only):", bandKey);
-    if (key === null) return;
-    const clean = key.trim();
+  const handleSaveTeamKey = (newKey) => {
+    setTeamKeyModalOpen(false);
+    const clean = newKey.trim();
     localStorage.setItem("zong:access-key", clean);
     localStorage.removeItem("zong:revision");
     syncRevision.current = 0;
     setBandKey(clean);
-    if (!clean) { setSyncStatus("Public only"); return; }
+    if (!clean) {
+      setSyncStatus("Public only");
+      flash("Disconnected from Team");
+      return;
+    }
+    flash("Connected to Team");
     syncDirty.current = true;
     performSync(true);
   };
@@ -4585,11 +4748,17 @@ function AppInner() {
     setEditingSong(undefined);
     setNewSongSeed(null);
   };
-  const handleDeleteSong = (id) => {
+  const requestDeleteSong = (songOrId) => {
+    const s = typeof songOrId === "object" && songOrId !== null ? songOrId : songs.find((item) => item.id === songOrId);
+    if (s) setSongToDelete(s);
+  };
+  const executeDeleteSong = (id) => {
     saveSongs(songs.filter((s) => s.id !== id));
     saveSetlists(setlists.map((sl) => ({ ...sl, entries: sl.entries.filter((e) => e.songId !== id) })));
     setEditingSong(undefined);
     if (viewing?.songId === id) setViewing(null);
+    setSongToDelete(null);
+    flash("Song deleted");
   };
   const handleDuplicateSong = (song) => {
     const base = song.title.replace(/\s*\(\d+\)\s*$/, "").trim();
@@ -4742,7 +4911,7 @@ function AppInner() {
             : <PianoScreen C={C} />
         )}
         {tab === "songs" && (
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={handleDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         )}
         {tab === "setlists" && (
           <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
@@ -4760,7 +4929,7 @@ function AppInner() {
             clickSettings={clickSettings} setClickSettings={setClickSettings}
             tanglishMode={tanglishMode} setTanglishMode={setTanglishMode}
             onOpenSpellingChart={() => setSpellingChartOpen(true)}
-            onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={configureSync} syncStatus={syncStatus}
+            onImportFile={importFile} onExportOpen={() => setExportPickerOpen(true)} onConfigureSync={() => setTeamKeyModalOpen(true)} syncStatus={syncStatus}
             C={C}
           />
         )}
@@ -4769,7 +4938,7 @@ function AppInner() {
       <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />
 
       {editingSong !== undefined && (
-        <SongForm initial={editingSong} seed={newSongSeed} onSave={handleSaveSong} onCancel={() => { setEditingSong(undefined); setNewSongSeed(null); }} onDelete={handleDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
+        <SongForm initial={editingSong} seed={newSongSeed} onSave={handleSaveSong} onCancel={() => { setEditingSong(undefined); setNewSongSeed(null); }} onDelete={requestDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
       )}
 
       {viewingSong && (
@@ -4787,7 +4956,7 @@ function AppInner() {
           onSaveOverrideToTeam={viewing?.fromSetlistId ? (overrides) => handleSaveOverrideToTeam(viewing.fromSetlistId, viewingSong.id, overrides) : null}
           onBack={() => setViewing(null)}
           onEdit={(s) => { setViewing(null); setEditingSong(s); }}
-          onDelete={handleDeleteSong}
+          onDelete={requestDeleteSong}
           onShare={exportSingleSong}
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
@@ -4818,6 +4987,23 @@ function AppInner() {
       {spellingChartOpen && (
         <SpellingChartScreen chart={spellingChart} onSave={saveSpellingChart} onBack={() => setSpellingChartOpen(false)} C={C} />
       )}
+
+      {songToDelete && (
+        <DeleteSongModal
+          song={songToDelete}
+          onConfirm={() => executeDeleteSong(songToDelete.id)}
+          onCancel={() => setSongToDelete(null)}
+          C={C}
+        />
+      )}
+
+      <TeamKeyModal
+        isOpen={teamKeyModalOpen}
+        initialKey={bandKey}
+        onSave={handleSaveTeamKey}
+        onClose={() => setTeamKeyModalOpen(false)}
+        C={C}
+      />
 
       <Toast message={toastMsg} C={C} />
     </div>

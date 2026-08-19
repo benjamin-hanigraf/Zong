@@ -1,4 +1,6 @@
-# Zong
+# Zamar
+
+**Notes for Worship Teams**
 
 Shared worship songs, setlists, chord charts, metronome and piano tools that remain usable without internet. The supplied prototype UI is preserved in `src/App.jsx`; its songs and setlists live in IndexedDB on every device.
 
