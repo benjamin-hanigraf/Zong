@@ -1,4 +1,4 @@
-# Zamar
+# Zong
 
 **Notes for Worship Teams**
 
