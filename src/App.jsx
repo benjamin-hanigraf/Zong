@@ -4566,15 +4566,13 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                   {bandKey || "Public only"}
                 </span>
               </button>
-              {bandKey && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onForceSync(); }}
-                  title="Sync"
-                  style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface3, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 12, flexShrink: 0, cursor: "pointer" }}
-                >
-                  <RefreshCw size={15} color={C.accent} />
-                </button>
-              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); onForceSync(); }}
+                title="Sync library now"
+                style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface3, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 12, flexShrink: 0, cursor: "pointer" }}
+              >
+                <RefreshCw size={15} color={C.accent} />
+              </button>
             </div>
           </div>
 
@@ -5069,6 +5067,15 @@ function AppInner() {
     };
   }, [performSync, bandKey]);
 
+  // When IndexedDB finishes loading local songs/spelling on boot, ensure initial sync runs
+  const initialSyncTriggered = useRef(false);
+  useEffect(() => {
+    if (!initialSyncTriggered.current && (songs.length > 0 || (spellingChart && Object.keys(spellingChart).length > 0))) {
+      initialSyncTriggered.current = true;
+      performSync(false);
+    }
+  }, [songs, spellingChart, performSync]);
+
   const handleSaveTeamKey = (newKey) => {
     const clean = newKey.trim().toUpperCase();
     setTeamKeyModalOpen(false);
@@ -5376,7 +5383,11 @@ function AppInner() {
             tanglishMode={tanglishMode} setTanglishMode={setTanglishMode}
             onOpenSpellingChart={() => setSpellingChartOpen(true)}
             onConfigureSync={() => setTeamKeyModalOpen(true)}
-            onForceSync={() => performSync(true)}
+            onForceSync={async () => {
+              flash("Syncing with Supabase…");
+              await performSync(true);
+              flash("Synced with Supabase!");
+            }}
             bandKey={bandKey}
             syncStatus={syncStatus}
             C={C}

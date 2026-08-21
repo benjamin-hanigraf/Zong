@@ -35,12 +35,13 @@ async function readGlobal() {
     .from("zong_global")
     .select("revision, songs, spelling_chart")
     .eq("id", "main")
-    .single();
-  if (error) throw new Error(`Pull failed: ${error.message}`);
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") throw new Error(`Pull failed: ${error.message}`);
   return {
-    revision:      data.revision ?? 0,
-    songs:         data.songs         ?? [],
-    spellingChart: data.spelling_chart ?? {}
+    revision:      data?.revision ?? 0,
+    songs:         data?.songs         ?? [],
+    spellingChart: data?.spelling_chart ?? {}
   };
 }
 
@@ -52,6 +53,23 @@ async function readGlobal() {
  */
 async function writeGlobal({ songs, spellingChart, baseRevision }) {
   const attempt = async (localSongs, localSpelling, fromRevision) => {
+    // If fromRevision === 0, use upsert to ensure the initial 'main' row exists
+    if (fromRevision === 0) {
+      const { data, error } = await client()
+        .from("zong_global")
+        .upsert({
+          id: "main",
+          songs:          localSongs,
+          spelling_chart: localSpelling,
+          revision:       1,
+          updated_at:     new Date().toISOString()
+        }, { onConflict: "id" })
+        .select("revision, songs, spelling_chart");
+
+      if (error) throw new Error(`Push failed: ${error.message}`);
+      return data;
+    }
+
     const { data, error } = await client()
       .from("zong_global")
       .update({
@@ -65,6 +83,31 @@ async function writeGlobal({ songs, spellingChart, baseRevision }) {
       .select("revision, songs, spelling_chart");
 
     if (error) throw new Error(`Push failed: ${error.message}`);
+
+    // If update returned 0 rows, check if row exists at all
+    if (!data || data.length === 0) {
+      const { data: existing } = await client()
+        .from("zong_global")
+        .select("revision")
+        .eq("id", "main")
+        .maybeSingle();
+
+      if (!existing) {
+        const { data: inserted, error: insErr } = await client()
+          .from("zong_global")
+          .upsert({
+            id: "main",
+            songs:          localSongs,
+            spelling_chart: localSpelling,
+            revision:       1,
+            updated_at:     new Date().toISOString()
+          }, { onConflict: "id" })
+          .select("revision, songs, spelling_chart");
+        if (insErr) throw new Error(`Insert failed: ${insErr.message}`);
+        return inserted;
+      }
+    }
+
     return data;
   };
 
