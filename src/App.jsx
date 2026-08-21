@@ -1621,62 +1621,78 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
 
-    // Always anchor the pad to octave 2 (C2 = MIDI 36 … B2 = MIDI 47) so the
-    // chord sounds warm and full regardless of which piano key the user presses.
-    // Pressing higher keys (F#, G, A, B…) would have previously played thin,
-    // sharp-sounding pads; now every key produces a rich low voicing.
+    // ── Vocal-reference chord pad ─────────────────────────────────────────────
+    // Design goals:
+    //   1. Warm & full — sounds like a real instrument, not a sine-wave beep
+    //   2. Root slightly dominant — vocalist locks onto their pitch immediately
+    //   3. No jarring on phone speakers — nothing harsh above 2.2 kHz
     //
-    // Voicing: [bass root, 3rd, 5th, root+octave]
-    //   C key  → C2, E2/Eb2, G2, C3
-    //   G key  → G2, B2/Bb2, D3, G3
-    //   B key  → B2, D#3/D3, F#3, B3
-    // — never goes above ~B3 (MIDI 59, ~247Hz), always warm.
-    const rootMidi = 48 + rootSemitone; // fixed to octave 3 (C3–B3)
-    const thirdInterval = quality === "Minor" ? 3 : 4;
-    const notesMidi = [
-      rootMidi,                   // bass root (C2 range)
-      rootMidi + thirdInterval,   // 3rd
-      rootMidi + 7,               // 5th
-      rootMidi + 12,              // root +octave (the "one extra root note")
-    ];
-    const noteGains = [0.32, 0.22, 0.20, 0.18];
+    // Architecture:
+    //   • Sub-root (C3 range) — TRIANGLE wave, very tight low-pass. Adds physical
+    //     body and "weight" to the chord without raising its pitch character.
+    //     Triangle has soft odd harmonics (1/n²) — warm like a flute/horn.
+    //   • Root (C4 / middle-C range) — TWO slightly-detuned sines (chorus pair).
+    //     This is the pitch the vocalist hears and matches. Slightly dominant gain.
+    //   • 3rd and 5th — detuned sine pairs, softer than root. Give the chord
+    //     harmonic context so it sounds "complete" rather than just a single note.
+    //
+    // Register: sub-root in C3, main chord in C4–G4 — exactly the register a
+    // keyboard player uses to give a vocalist their starting pitch.
 
-    // Master low-pass: 1600Hz is warm and phone-safe; Q=0.6 avoids resonance peak
+    const rootMidi = 60 + rootSemitone; // C4 (middle C) range — vocal register
+    const thirdInterval = quality === "Minor" ? 3 : 4;
+
+    // [midi, gain, lowpassCutoffHz, detuneCents, waveType]
+    const notes = [
+      { midi: rootMidi - 12,             gain: 0.14, cutoff: 300,  detune: 0, wave: "triangle" }, // sub-root  — body
+      { midi: rootMidi,                  gain: 0.30, cutoff: 1500, detune: 7, wave: "sine"     }, // root      — anchor (dominant)
+      { midi: rootMidi + thirdInterval,  gain: 0.19, cutoff: 2000, detune: 6, wave: "sine"     }, // 3rd       — color
+      { midi: rootMidi + 7,              gain: 0.17, cutoff: 2000, detune: 6, wave: "sine"     }, // 5th       — stability
+    ];
+
+    // Master low-pass: 2200 Hz is warm and phone-safe.
+    // Rolls off any residual harshness while letting the chord breathe.
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
-    masterFilter.frequency.value = 1600;
-    masterFilter.Q.value = 0.6;
+    masterFilter.frequency.value = 2200;
+    masterFilter.Q.value = 0.5;
 
+    // Slow pad attack over 80 ms — no click, sounds like a held organ/pad chord
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.22, now + 0.06); // gentle attack, no pop
+    masterGain.gain.linearRampToValueAtTime(0.20, now + 0.08);
     masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
     const oscs = [];
-    notesMidi.forEach((midi, idx) => {
+    notes.forEach(({ midi, gain: noteGainVal, cutoff, detune, wave }) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
-      // Per-note low-pass: keep bass notes dark so they don't muddy phone speakers
+      // Per-note low-pass — sub-root gets very dark (300 Hz) to strip harmonics
+      // and prevent low-mid muddiness on phone speakers
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      filt.frequency.value = idx === 0
-        ? Math.min(600, freq * 2.5)   // bass root — very warm
-        : Math.min(1800, freq * 2.8); // upper notes — full but not harsh
-      filt.Q.value = 0.5;
+      filt.frequency.value = cutoff;
+      filt.Q.value = 0.4;
+
+      // Detuned chorus pair (single osc for sub-root to keep the bass clean)
+      const detunes = detune > 0 ? [-detune / 2, detune / 2] : [0];
 
       const noteGain = ctx.createGain();
-      noteGain.gain.value = noteGains[idx];
-
-      const osc = ctx.createOscillator();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      osc.detune.value = (Math.random() - 0.5) * 4; // subtle ensemble warmth
-      osc.connect(filt);
+      // Divide by pair count so total per-note level matches intended balance
+      noteGain.gain.value = noteGainVal / detunes.length;
       filt.connect(noteGain);
       noteGain.connect(masterFilter);
-      osc.start(now);
-      oscs.push(osc);
+
+      detunes.forEach((dt) => {
+        const osc = ctx.createOscillator();
+        osc.type = wave;
+        osc.frequency.value = freq;
+        osc.detune.value = dt;
+        osc.connect(filt);
+        osc.start(now);
+        oscs.push(osc);
+      });
     });
 
     return { masterGain, oscillators: oscs };
