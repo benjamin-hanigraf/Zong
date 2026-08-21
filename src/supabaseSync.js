@@ -147,10 +147,14 @@ export async function syncLibrary({ key, state, revision = 0, changed }) {
   };
   let globalConflict = false;
 
-  if (changed) {
+  // Auto-seed: if remote is empty/revision 0 and local has songs/spelling, push them up
+  const isFreshRemote = remote.revision === 0 && (!remote.songs || remote.songs.length === 0);
+  const hasLocalData  = (state.songs && state.songs.length > 0) || (state.spellingChart && Object.keys(state.spellingChart).length > 0);
+
+  if (changed || (isFreshRemote && hasLocalData)) {
     const pushed = await writeGlobal({
-      songs:         state.songs,
-      spellingChart: state.spellingChart,
+      songs:         state.songs || [],
+      spellingChart: state.spellingChart || {},
       baseRevision:  rev.global
     });
 
