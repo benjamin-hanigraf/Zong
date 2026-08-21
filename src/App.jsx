@@ -1268,17 +1268,17 @@ function resyncContentWithLyrics(content, newLyricsText) {
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
 function PianoIcon({ size = 20, height, color, strokeWidth }) {
-  // Clean, simplified keyboard icon matching the exact height of other nav icons
+  // Simplified, narrower piano icon with black keys only (no white key lines)
   const h = height ?? size;
-  const w = Math.round(h * 1.55);
-  const sw = strokeWidth ?? 1.6;
+  const w = Math.round(h * 1.32);
+  const sw = strokeWidth ?? 1.5;
   return (
-    <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 31 20" fill="none">
-      <rect x="1.5" y="1.5" width="28" height="17" rx="3" stroke={color} strokeWidth={sw} />
-      {/* 3 clean white key dividing lines */}
-      <path d="M8.5 1.5v17M15.5 1.5v17M22.5 1.5v17" stroke={color} strokeWidth={sw} strokeLinecap="round" />
-      {/* 2 simplified black key accents */}
-      <path d="M12 1.5v9M19 1.5v9" stroke={color} strokeWidth={sw + 0.4} strokeLinecap="round" />
+    <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 24 18" fill="none">
+      <rect x="1.2" y="1.2" width="21.6" height="15.6" rx="2.5" stroke={color} strokeWidth={sw} />
+      {/* Clean black keys */}
+      <rect x="5.2" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
+      <rect x="10.8" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
+      <rect x="16.4" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
     </svg>
   );
 }
@@ -1735,6 +1735,14 @@ function PianoScreen({ C, mode }) {
     const hit = keyAt(e.clientX, e.clientY);
     if (!hit) return;
     if (isVocals) {
+      // In vocals mode, single-touch only: stop all existing active chord voices immediately
+      activeRef.current.forEach((entry) => {
+        stopVoice(entry.voice);
+        if (entry.padVoice) stopPadChord(entry.padVoice);
+        paintKey(entry.keyEl, false);
+      });
+      activeRef.current.clear();
+
       // Full rich chord pad + subtle, gentle root acoustic note
       const padVoice = startPadChord(hit.semitone);
       const pianoVoice = startVoice(hit.semitone, 0.22);
@@ -1820,9 +1828,9 @@ function PianoScreen({ C, mode }) {
         {WHITE_KEYS.map((k) => (
           <div key={k.semitone} data-semitone={k.semitone} data-black="0" style={{
             flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
-            display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
+            display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 12, boxSizing: "border-box",
           }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(0,0,0,0.35)" }}>{k.name}</span>
+            <span style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: "rgba(0,0,0,0.42)" }}>{k.name}</span>
           </div>
         ))}
       </div>
@@ -1835,9 +1843,9 @@ function PianoScreen({ C, mode }) {
             <div key={k.semitone} data-semitone={k.semitone} data-black="1" style={{
               position: "absolute", top: 0, height: "58%", left: `${leftPct}%`, width: `${widthPct}%`,
               background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
-              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 8, boxSizing: "border-box",
+              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
             }}>
-              <span style={{ fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}>{k.name}</span>
+              <span style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: "rgba(255,255,255,0.70)" }}>{k.name}</span>
             </div>
           );
         })}
@@ -1847,13 +1855,13 @@ function PianoScreen({ C, mode }) {
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
-      <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>
+      <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ fontSize: 14.5, fontWeight: 600 }}>
           {isVocals ? "Chord Piano" : "Piano"}
         </div>
         {isVocals ? (
-          // Vocals mode: Compact Major / Minor chord quality toggle
-          <div style={{ width: 140, flexShrink: 0 }}>
+          // Vocals mode: Compact Major / Minor chord quality toggle with space below
+          <div style={{ width: 132, flexShrink: 0 }}>
             <TabSelect
               options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]}
               value={chordQuality}
@@ -1980,20 +1988,24 @@ function useMetronomeEngine(settings) {
   useEffect(() => { if (settings?.clickTone) clickToneRef.current = settings.clickTone; }, [settings?.clickTone]);
   useEffect(() => { if (settings?.pan) panRef.current = settings.pan; }, [settings?.pan]);
   useEffect(() => () => clearInterval(schedulerRef.current), []);
+  const wasPlayingBeforeHideRef = useRef(false);
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
-        // Screen locked / app backgrounded: stop the metronome entirely.
-        // iOS can throttle JS execution when hidden, causing sporadic ticks
-        // (every-other-beat effect). Stopping cleanly is the right behaviour
-        // for a PWA — the user must explicitly restart when they return.
+        // Screen locked / app backgrounded: cleanly pause the metronome
         if (schedulerRef.current !== null) {
+          wasPlayingBeforeHideRef.current = true;
           stop();
+        } else {
+          wasPlayingBeforeHideRef.current = false;
+        }
+      } else if (document.visibilityState === "visible") {
+        // Unlocked / app returned to foreground: resume metronome if it was playing
+        if (wasPlayingBeforeHideRef.current) {
+          wasPlayingBeforeHideRef.current = false;
+          start();
         }
       }
-      // Do NOT try to auto-resume on becoming visible here — the user
-      // pressed Stop intentionally. The onstatechange handler in start()
-      // takes care of resuming the context if iOS suspends it mid-session.
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
@@ -2719,12 +2731,14 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         return (
           <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
-              const maxTagLen = g.items.reduce((max, it) => {
-                if (!it.tok.tag) return max;
+              // Compute total width needed for any tag in this group so long drum/chord tags never get truncated
+              const tagDrivenWidth = g.items.reduce((maxW, it, idx) => {
+                if (!it.tok.tag) return maxW;
                 const label = flatify(it.tok.tag);
-                return Math.max(max, label.length);
-              }, 0);
-              const tagDrivenWidth = maxTagLen * (tagSize / fontSize);
+                const neededWidth = idx + (label.length * (tagSize / fontSize));
+                return Math.max(maxW, neededWidth);
+              }, g.items.length);
+
               if (g.type !== "word") {
                 const repItem = g.items.find((it) => it.tok.tag) || g.items[0];
                 const hasTag = Boolean(repItem?.tok?.tag);
@@ -2743,7 +2757,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   </span>
                 );
               }
-              const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
+              const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : Math.max(g.items.length, tagDrivenWidth);
               return (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
@@ -3841,7 +3855,7 @@ function SongDetailScreen({
               {isVocals ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
               ) : (
-                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} letterSpacing={letterSpacing} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={true} letterSpacing={letterSpacing} />
               )}
             </div>
           ));
@@ -4027,6 +4041,15 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const keyboardInset = useKeyboardInset();
   const filtered = setlists.filter((sl) => sl.name.toLowerCase().includes(query.toLowerCase()));
+
+  // Sort setlists by last added or last opened first
+  const sorted = [...filtered].sort((a, b) => {
+    const timeA = a.lastOpenedAt || a.updatedAt || a.createdAt || 0;
+    const timeB = b.lastOpenedAt || b.updatedAt || b.createdAt || 0;
+    if (timeA !== timeB) return timeB - timeA;
+    return setlists.indexOf(b) - setlists.indexOf(a);
+  });
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
@@ -4041,10 +4064,10 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
         </div>
       </div>
       <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
-        {filtered.length === 0 && (
+        {sorted.length === 0 && (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{setlists.length === 0 ? "No setlists yet." : "No matches."}</div>
         )}
-        {[...filtered].reverse().map((sl) => (
+        {sorted.map((sl) => (
           <SwipeToDelete key={sl.id} id={sl.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(sl.id)} C={C}>
             <div onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -4088,6 +4111,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
           autoFocus
           value={draftTamil}
           onChange={(e) => setDraftTamil(e.target.value)}
+          onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="தமிழ்"
@@ -4095,6 +4119,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
         <input
           value={draftLatin}
           onChange={(e) => setDraftLatin(e.target.value)}
+          onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="Tanglish"
@@ -4203,7 +4228,9 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
     <div
       onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
       style={{
-        position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT,
+        position: "fixed", inset: 0,
+        bottom: keyboardInset ? `${keyboardInset}px` : 0,
+        background: C.bg, color: C.text, fontFamily: FONT,
         zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden",
         paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box",
         transform: `translateX(${dragX}px)`,
@@ -4223,8 +4250,8 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
-      {/* Scrollable content — extra bottom padding when software keyboard is open */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 90}px` : "50px", boxSizing: "border-box" }}>
+      {/* Scrollable content — generous bottom padding so bottom items can always be scrolled fully clear */}
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: "280px", boxSizing: "border-box" }}>
 
         {/* Subtitle */}
         <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
@@ -4443,7 +4470,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
-                    padWordForTag={false}
+                    padWordForTag={true}
                   />
                 ) : (
                   <ChordText
@@ -5100,13 +5127,21 @@ function AppInner() {
   const handleCreateSetlist = () => {
     let n = 1;
     while (setlists.some((sl) => sl.name.toLowerCase() === `setlist ${n}`.toLowerCase())) n += 1;
-    const next = [...setlists, { id: uid(), name: `Setlist ${n}`, entries: [], shared: false }];
+    const now = Date.now();
+    const newSl = { id: uid(), name: `Setlist ${n}`, entries: [], shared: false, createdAt: now, updatedAt: now, lastOpenedAt: now };
+    const next = [newSl, ...setlists];
     saveSetlists(next);
     setStageAutoOpenPicker(true);
-    setStageIndex(next.length - 1);
+    setStageIndex(0);
+  };
+  const handleOpenSetlist = (id) => {
+    const now = Date.now();
+    saveSetlists(setlists.map((sl) => (sl.id === id ? { ...sl, lastOpenedAt: now } : sl)));
+    setStageAutoOpenPicker(false);
+    setStageIndex(setlists.findIndex((sl) => sl.id === id));
   };
   const handleDeleteSetlist = (id) => saveSetlists(setlists.filter((sl) => sl.id !== id));
-  const handleUpdateSetlist = (updated) => saveSetlists(setlists.map((sl) => (sl.id === updated.id ? updated : sl)));
+  const handleUpdateSetlist = (updated) => saveSetlists(setlists.map((sl) => (sl.id === updated.id ? { ...updated, updatedAt: Date.now() } : sl)));
   const handleRemoveSongFromSetlist = (setlistId, songId) => {
     saveSetlists(setlists.map((sl) => (sl.id !== setlistId ? sl : { ...sl, entries: sl.entries.filter((e) => e.songId !== songId) })));
     setViewing(null);
@@ -5239,7 +5274,7 @@ function AppInner() {
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         )}
         {tab === "setlists" && (
-          <SetlistsScreen setlists={setlists} onOpenStage={(id) => { setStageAutoOpenPicker(false); setStageIndex(setlists.findIndex((sl) => sl.id === id)); }} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
+          <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
         )}
         {tab === "settings" && (
           <SettingsScreen
