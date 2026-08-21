@@ -1620,20 +1620,33 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
-    
-    // Balanced voicing: [sub root, root, 3rd, 5th, octave]
-    const majorIntervals = [-12, 0, 4, 7, 12];
-    const minorIntervals = [-12, 0, 3, 7, 12];
+
+    // Rich full voicing: deep bass root (-24), bass root (-12), root (0), 3rd, 5th, high 5th (+19)
+    // The sub-bass and bass give the chord fullness without jarring; we keep them
+    // soft and heavily low-passed so they don't distort on phone speakers.
+    const majorIntervals = [-24, -12, 0, 4, 7, 19];
+    const minorIntervals = [-24, -12, 0, 3, 7, 19];
     const intervals = quality === "Minor" ? minorIntervals : majorIntervals;
 
+    // Per-note gain weights: sub-bass is very soft, bass is moderate, upper notes normal
+    const gainForInterval = (i) => {
+      if (i <= -24) return 0.18;  // sub-bass – present but never boomy
+      if (i <= -12) return 0.30;  // bass root – anchors the chord
+      if (i === 0)  return 0.22;  // root
+      if (i === 4 || i === 3) return 0.18;  // 3rd
+      if (i === 7)  return 0.16;  // 5th
+      return 0.13;  // upper extension
+    };
+
+    // Master low-pass: 1600Hz is warm and phone-safe; Q=0.6 avoids resonance peak
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
-    masterFilter.frequency.value = 1800; // Tame harsh frequencies for mobile/OnePlus speakers
-    masterFilter.Q.value = 0.7;
+    masterFilter.frequency.value = 1600;
+    masterFilter.Q.value = 0.6;
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.24, now + 0.05); // Smooth attack without pop
+    masterGain.gain.linearRampToValueAtTime(0.22, now + 0.06); // gentle attack, no pop
     masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
@@ -1642,18 +1655,25 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       const midi = (octaveStartRef.current + 1) * 12 + rootSemitone + interval;
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
+      // Per-note filter: bass notes get a tight low-pass so no harsh harmonics reach the speaker
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      filt.frequency.value = interval <= 0 ? Math.min(900, freq * 3.0) : Math.min(2200, freq * 2.8);
+      if (interval <= -24) {
+        filt.frequency.value = Math.min(400, freq * 2.5);  // sub-bass stays very dark
+      } else if (interval <= -12) {
+        filt.frequency.value = Math.min(700, freq * 2.8);  // bass – warm but not muddy
+      } else {
+        filt.frequency.value = Math.min(2200, freq * 2.8); // upper notes – full but not harsh
+      }
       filt.Q.value = 0.5;
 
       const noteGain = ctx.createGain();
-      noteGain.gain.value = interval < 0 ? 0.28 : interval === 0 ? 0.24 : 0.18;
+      noteGain.gain.value = gainForInterval(interval);
 
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = freq;
-      osc.detune.value = (Math.random() - 0.5) * 4; // subtle warmth
+      osc.detune.value = (Math.random() - 0.5) * 4; // subtle ensemble warmth
       osc.connect(filt);
       filt.connect(noteGain);
       noteGain.connect(masterFilter);
@@ -3177,7 +3197,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const [subdivision, setSubdivision] = useState(initial?.subdivision ?? seed?.subdivision ?? 1);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
-  const [sectionTab, setSectionTab] = useState("lyrics");
+  const [sectionTab, setSectionTab] = useState(() => mode === "drums" ? "drums" : mode === "chords" ? "chords" : "lyrics");
 
   const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
   const keyboardInset = useKeyboardInset();
@@ -3344,12 +3364,16 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 /* =========================================================================
    Songs list
    ========================================================================= */
-function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, C }) {
+function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, isSwipeOpen, C }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
   const swipeStartRef = useRef(null);
   const [swipeDx, setSwipeDx] = useState(0);
   const swipeFiredRef = useRef(false);
+  // Track whether the delete swipe was already open when the gesture started.
+  // If the row was open, we let the gesture close it but suppress the load-to-piano/metronome
+  // action — the user must start a fresh swipe from the closed state to trigger load.
+  const wasOpenRef = useRef(false);
 
   const isVocals = mode === "vocals";
   const isDrums = mode === "drums";
@@ -3357,6 +3381,8 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const startPress = (e) => {
     firedLongPressRef.current = false;
+    // Capture whether the delete panel was already exposed when this touch began.
+    wasOpenRef.current = Boolean(isSwipeOpen);
     const point = e.touches ? e.touches[0] : e;
     const x = point.clientX, y = point.clientY;
     swipeStartRef.current = { x, y };
@@ -3383,13 +3409,16 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const cancelPress = () => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-    if (swipeDx > 60) {
+    // Only fire the load action if the row was NOT already open (i.e. this is a fresh right-swipe,
+    // not the gesture that closes the delete panel).
+    if (swipeDx > 60 && !wasOpenRef.current) {
       swipeFiredRef.current = true;
       if (isDrums && onLoadToMetronome) onLoadToMetronome(song);
       else if (isVocals && onLoadToPiano) onLoadToPiano(song);
     }
     setSwipeDx(0);
     swipeStartRef.current = null;
+    wasOpenRef.current = false;
   };
 
   const handleClick = () => {
@@ -3452,7 +3481,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
         ) : filtered.map((s) => (
           <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(s.id)} C={C}>
-            <SongRow song={s} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} onLoadToPiano={onLoadToPiano} mode={mode} tanglishMode={tanglishMode} C={C} />
+            <SongRow song={s} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} onLoadToPiano={onLoadToPiano} mode={mode} tanglishMode={tanglishMode} isSwipeOpen={openSwipeId === s.id} C={C} />
           </SwipeToDelete>
         ))}
       </div>
@@ -3536,7 +3565,7 @@ function SongDetailScreen({
 }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
-  const [chordsView, setChordsView] = useState("chords");
+  const [chordsView, setChordsView] = useLocalStorageState("altar:song-view-chords-mode", "chords");
   const [nashvilleMode, setNashvilleMode] = useState(true);
   const [metroBarVisible, setMetroBarVisible] = useLocalStorageState("altar:song-view-metro-bar", false);
   const ms = migrateSongShape(song);
@@ -3620,7 +3649,7 @@ function SongDetailScreen({
 
       {mode === "chords" && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, flexWrap: "nowrap", overflow: "hidden" }}>
-          <button onClick={() => setChordsView((v) => (v === "chords" ? "chart" : "chords"))} style={lyricsToggleStyle(true)}>{chordsView === "chords" ? "Chords" : "Chart"}</button>
+          <button onClick={() => setChordsView((v) => (v === "chords" ? "chart" : "chords"))} style={{ ...lyricsToggleStyle(true), minWidth: 60, width: 60 }}>{chordsView === "chords" ? "Chords" : "Chart"}</button>
           {song.timeSignature && <span style={badgeStyle}>{song.timeSignature}</span>}
           {song.tempo !== "" && song.tempo != null && <span style={badgeStyle}>{song.tempo} BPM</span>}
           <div style={{ flex: 1 }} />
@@ -3815,8 +3844,8 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
             {setlist.name}
           </button>
         )}
-        <button onClick={() => setPickerOpen(true)} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.accent, flexShrink: 0, cursor: "pointer" }}>
-          <Pencil size={18} color={C.accent} />
+        <button onClick={() => setPickerOpen(true)} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+          <Pencil size={16} color={C.accent} />
         </button>
       </div>
 
@@ -4142,6 +4171,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="தமிழ்"
                 value={draftTamil}
                 onChange={(e) => setDraftTamil(e.target.value)}
+                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4149,6 +4179,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="Tanglish"
                 value={draftLatin}
                 onChange={(e) => setDraftLatin(e.target.value)}
+                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4469,6 +4500,92 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
         </div>
         <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 12 }}>
           Delete <strong style={{ color: C.text }}>"{song.title}"</strong> permanently for the team?
+        </div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 8 }}>
+          Type <span style={{ color: C.danger ?? "#FF453A", fontWeight: 700 }}>delete</span> to confirm:
+        </div>
+        <input
+          autoFocus
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder='Type "delete"'
+          style={{
+            width: "100%", height: 42, background: C.surface3,
+            border: `1px solid ${isMatch ? (C.danger ?? "#FF453A") : C.border}`,
+            borderRadius: 10, padding: "0 12px", color: C.text,
+            fontFamily: FONT, fontSize: 15, fontWeight: 600,
+            boxSizing: "border-box", outline: "none", marginBottom: 16
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && isMatch) onConfirm();
+          }}
+        />
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              flex: 1, height: 40, borderRadius: 10,
+              border: `1px solid ${C.border}`, background: "transparent",
+              color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            disabled={!isMatch}
+            onClick={onConfirm}
+            style={{
+              flex: 1, height: 40, borderRadius: 10, border: "none",
+              background: isMatch ? (C.danger ?? "#FF453A") : C.surface3,
+              color: isMatch ? "#fff" : C.textFaint,
+              fontFamily: FONT, fontSize: 14, fontWeight: 700,
+              cursor: isMatch ? "pointer" : "default",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6
+            }}
+          >
+            <Trash2 size={15} color={isMatch ? "#fff" : C.textFaint} /> Delete
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function DeleteSetlistModal({ setlist, onConfirm, onCancel, C }) {
+  const [input, setInput] = useState("");
+  const keyboardInset = useKeyboardInset();
+  const isMatch = input.trim().toLowerCase() === "delete";
+  if (!setlist) return null;
+  return createPortal(
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed", inset: 0, zIndex: 300,
+        background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20,
+        paddingBottom: keyboardInset ? `${keyboardInset + 20}px` : 20,
+        transition: "padding-bottom 150ms ease-out",
+        overflowY: "auto",
+        boxSizing: "border-box"
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 360, background: C.surface2,
+          border: `1px solid ${C.borderStrong}`, borderRadius: 16,
+          padding: "22px 20px 20px", boxSizing: "border-box",
+          boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          <Trash2 size={18} color={C.danger ?? "#FF453A"} /> Delete Setlist
+        </div>
+        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 12 }}>
+          Delete <strong style={{ color: C.text }}>"{setlist.name}"</strong> permanently for the team?
         </div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 8 }}>
           Type <span style={{ color: C.danger ?? "#FF453A", fontWeight: 700 }}>delete</span> to confirm:
@@ -5061,7 +5178,17 @@ function AppInner() {
     setStageAutoOpenPicker(false);
     setStageIndex(setlists.findIndex((sl) => sl.id === id));
   };
-  const handleDeleteSetlist = (id) => saveSetlists(setlists.filter((sl) => sl.id !== id));
+  const [deletingSetlist, setDeletingSetlist] = useState(null);
+  const requestDeleteSetlist = (id) => {
+    const sl = setlists.find((s) => s.id === id);
+    if (!sl) return;
+    if (sl.shared) {
+      setDeletingSetlist(sl);
+    } else {
+      saveSetlists(setlists.filter((s) => s.id !== id));
+    }
+  };
+  const handleDeleteSetlist = requestDeleteSetlist;
   const handleUpdateSetlist = (updated) => saveSetlists(setlists.map((sl) => (sl.id === updated.id ? { ...updated, updatedAt: Date.now() } : sl)));
   const handleRemoveSongFromSetlist = (setlistId, songId) => {
     saveSetlists(setlists.map((sl) => (sl.id !== setlistId ? sl : { ...sl, entries: sl.entries.filter((e) => e.songId !== songId) })));
@@ -5103,7 +5230,6 @@ function AppInner() {
     const q = song.keyQuality || "Major";
     setPianoQuality(q);
     setTab("practice");
-    flash(`Loaded ${song.title} into Chord Piano`);
   };
 
   const importSongsBatch = (rawSongs) => {
@@ -5201,9 +5327,7 @@ function AppInner() {
             onOpenSpellingChart={() => setSpellingChartOpen(true)}
             onConfigureSync={() => setTeamKeyModalOpen(true)}
             onForceSync={async () => {
-              flash("Syncing with Supabase…");
               await performSync(true);
-              flash("Synced with Supabase!");
             }}
             bandKey={bandKey}
             syncStatus={syncStatus}
@@ -5264,6 +5388,15 @@ function AppInner() {
           song={songToDelete}
           onConfirm={() => executeDeleteSong(songToDelete.id)}
           onCancel={() => setSongToDelete(null)}
+          C={C}
+        />
+      )}
+
+      {deletingSetlist && (
+        <DeleteSetlistModal
+          setlist={deletingSetlist}
+          onConfirm={() => { saveSetlists(setlists.filter((sl) => sl.id !== deletingSetlist.id)); setDeletingSetlist(null); }}
+          onCancel={() => setDeletingSetlist(null)}
           C={C}
         />
       )}
