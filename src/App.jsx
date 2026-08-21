@@ -4105,7 +4105,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
    SpellingChartScreen — full-screen overlay listing every TANGLISH_EXCEPTIONS
    entry as a Tamil → Tanglish table, with inline add / edit / delete support.
    ========================================================================= */
-function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, setDraftTamil, draftLatin, setDraftLatin, onStartEdit, onDelete, onCommit, C, activeRef }) {
+function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, setDraftTamil, draftLatin, setDraftLatin, onStartEdit, onDelete, onCommit, C, activeRef, scrollContainerRef }) {
   const inputStyle = {
     flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`,
     background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14,
@@ -4113,6 +4113,26 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
   };
 
   const rowBorder = isFirst ? "none" : `1px solid ${C.border}`;
+
+  // On focus, scroll the row above the keyboard using direct scrollTop math.
+  // scrollIntoView() inside position:fixed containers is unreliable on Android.
+  const scrollRowIntoView = (e) => {
+    const input = e.currentTarget;
+    setTimeout(() => {
+      const container = scrollContainerRef?.current;
+      if (!container || !input) return;
+      const containerRect = container.getBoundingClientRect();
+      const inputRect = input.getBoundingClientRect();
+      // Estimate keyboard height from visualViewport if available
+      const kbHeight = window.visualViewport
+        ? Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop)
+        : 0;
+      const visibleBottom = containerRect.bottom - kbHeight;
+      if (inputRect.bottom > visibleBottom) {
+        container.scrollTop += inputRect.bottom - visibleBottom + 16;
+      }
+    }, 380);
+  };
 
   if (isEditing) {
     return (
@@ -4125,7 +4145,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
           autoFocus
           value={draftTamil}
           onChange={(e) => setDraftTamil(e.target.value)}
-          onFocus={scrollFieldIntoView}
+          onFocus={scrollRowIntoView}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="தமிழ்"
@@ -4133,7 +4153,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
         <input
           value={draftLatin}
           onChange={(e) => setDraftLatin(e.target.value)}
-          onFocus={scrollFieldIntoView}
+          onFocus={scrollRowIntoView}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="Tanglish"
@@ -4165,6 +4185,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   const [draftTamil, setDraftTamil] = useState("");
   const [draftLatin, setDraftLatin] = useState("");
   const activeRowRef = useRef(null);
+  const scrollContainerRef = useRef(null);
   const keyboardInset = useKeyboardInset();
 
   const handleBack = () => {
@@ -4224,12 +4245,26 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
     onSave(next);
   };
 
+  // Scroll the active editing row into view above the keyboard.
+  // scrollIntoView() is unreliable inside position:fixed overflow containers on
+  // Android Chrome, so we calculate scrollTop directly on the container instead.
   useEffect(() => {
-    if (activeEditKey && activeRowRef.current) {
-      setTimeout(() => {
-        activeRowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-      }, 150);
-    }
+    if (!activeEditKey || !activeRowRef.current || !scrollContainerRef.current) return;
+    // Wait for the keyboard to finish animating open (~380 ms on Android)
+    const timer = setTimeout(() => {
+      const container = scrollContainerRef.current;
+      const row = activeRowRef.current;
+      if (!container || !row) return;
+      const containerRect = container.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      // The visible height is the total container height minus the keyboard inset
+      const visibleBottom = containerRect.bottom - keyboardInset;
+      if (rowRect.bottom > visibleBottom) {
+        // Row is hidden behind the keyboard — scroll it into view with 16px clearance
+        container.scrollTop += rowRect.bottom - visibleBottom + 16;
+      }
+    }, 380);
+    return () => clearTimeout(timer);
   }, [activeEditKey, keyboardInset]);
 
   const inputStyle = {
@@ -4240,6 +4275,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
 
   return (
     <div
+      ref={scrollContainerRef}
       className="scroll-list"
       onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
       style={{
@@ -4249,7 +4285,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         touchAction: dragging ? "none" : "pan-y",
         boxSizing: "border-box",
         paddingTop: "env(safe-area-inset-top, 0px)",
-        paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60,
+        paddingBottom: keyboardInset ? Math.max(80, keyboardInset + 80) : 60,
         transform: `translateX(${dragX}px)`,
         transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none"
       }}
@@ -4272,12 +4308,6 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
           Custom transliteration overrides. Tap any row to edit.
         </div>
 
-        {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, marginBottom: 6, padding: "0 12px" }}>
-          <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tamil</div>
-          <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
-        </div>
-
         {/* Rows with Add Word at the TOP */}
         <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
           {/* Add Word inline top row */}
@@ -4292,7 +4322,6 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="தமிழ்"
                 value={draftTamil}
                 onChange={(e) => setDraftTamil(e.target.value)}
-                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4300,7 +4329,6 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="Tanglish"
                 value={draftLatin}
                 onChange={(e) => setDraftLatin(e.target.value)}
-                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4332,6 +4360,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
               onDelete={handleDelete}
               onCommit={commitActiveEdit}
               activeRef={activeEditKey === key ? activeRowRef : null}
+              scrollContainerRef={scrollContainerRef}
               C={C}
             />
           ))}
@@ -4828,6 +4857,16 @@ function AppInner() {
   const syncDirty = useRef(false);
   const syncing = useRef(false);
 
+  // Stable refs that always hold the latest state values.
+  // performSync reads from these instead of capturing values via closure,
+  // avoiding the stale-closure bug where a conflict-retry re-pushes stale data.
+  const songsRef = useRef(songs);
+  const spellingChartRef = useRef(spellingChart);
+  const setlistsRef = useRef(setlists);
+  useEffect(() => { songsRef.current = songs; }, [songs]);
+  useEffect(() => { spellingChartRef.current = spellingChart; }, [spellingChart]);
+  useEffect(() => { setlistsRef.current = setlists; }, [setlists]);
+
   const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
 
@@ -4866,10 +4905,16 @@ function AppInner() {
     syncing.current = true;
     if (bandKey) setSyncStatus("Syncing…");
     try {
-      const sharedSetlists = setlists.filter((sl) => sl.shared);
+      // Always read from stable refs so we never push stale state from a
+      // captured closure (fixes the "song added on iPhone not appearing
+      // elsewhere" stale-closure bug).
+      const latestSongs = songsRef.current;
+      const latestSpelling = spellingChartRef.current;
+      const latestSetlists = setlistsRef.current;
+      const sharedSetlists = latestSetlists.filter((sl) => sl.shared);
       const result = await syncLibrary({
         key: bandKey,
-        state: { songs, spellingChart, sharedSetlists },
+        state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists },
         revision: syncRevision.current,
         changed: force || syncDirty.current
       });
@@ -4881,8 +4926,8 @@ function AppInner() {
         const remoteSpelling = result.state?.spellingChart || {};
         const remoteSharedSetlists = result.state?.sharedSetlists || [];
 
-        // 1. Merge Songs (prevent duplicates by title + artist)
-        const mergedSongs = [...songs];
+        // 1. Merge Songs (prevent duplicates by id, then title+artist)
+        const mergedSongs = [...latestSongs];
         remoteSongs.forEach((rs) => {
           const idx = mergedSongs.findIndex((ls) =>
             ls.id === rs.id ||
@@ -4897,12 +4942,12 @@ function AppInner() {
         });
 
         // 2. Merge Spelling Chart
-        const mergedSpelling = { ...spellingChart, ...remoteSpelling };
+        const mergedSpelling = { ...latestSpelling, ...remoteSpelling };
 
         // 3. Merge Setlists (keep personal setlists, merge shared setlists for team subscribers)
-        let mergedSetlists = setlists;
+        let mergedSetlists = latestSetlists;
         if (bandKey) {
-          const personalSetlists = setlists.filter((sl) => !sl.shared);
+          const personalSetlists = latestSetlists.filter((sl) => !sl.shared);
           const sharedMap = new Map();
           remoteSharedSetlists.forEach((rsl) => {
             const normalizedEntries = (rsl.entries || []).map((e) => ({
@@ -4912,7 +4957,7 @@ function AppInner() {
             }));
             sharedMap.set(rsl.id, { ...rsl, shared: true, entries: normalizedEntries });
           });
-          setlists.filter((sl) => sl.shared).forEach((lsl) => {
+          latestSetlists.filter((sl) => sl.shared).forEach((lsl) => {
             if (sharedMap.has(lsl.id)) {
               const remoteSl = sharedMap.get(lsl.id);
               const mergedEntries = remoteSl.entries.map((re) => {
@@ -4956,7 +5001,8 @@ function AppInner() {
     } finally {
       syncing.current = false;
     }
-  }, [bandKey, songs, spellingChart, setlists]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bandKey]);
 
   useEffect(() => {
     const online = () => performSync();

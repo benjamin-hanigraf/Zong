@@ -44,25 +44,62 @@ async function readGlobal() {
   };
 }
 
+/**
+ * Attempt to write global state with optimistic concurrency.
+ * If a conflict is detected (another device already bumped the revision),
+ * we re-read the latest revision and retry once — merging local songs and
+ * spelling entries on top of the remote so nothing is silently dropped.
+ */
 async function writeGlobal({ songs, spellingChart, baseRevision }) {
-  const { data, error } = await client()
-    .from("zong_global")
-    .update({
-      songs,
-      spelling_chart: spellingChart,
-      revision:       baseRevision + 1,
-      updated_at:     new Date().toISOString()
-    })
-    .eq("id", "main")
-    .eq("revision", baseRevision)   // optimistic concurrency check
-    .select("revision, songs, spelling_chart");
+  const attempt = async (localSongs, localSpelling, fromRevision) => {
+    const { data, error } = await client()
+      .from("zong_global")
+      .update({
+        songs:          localSongs,
+        spelling_chart: localSpelling,
+        revision:       fromRevision + 1,
+        updated_at:     new Date().toISOString()
+      })
+      .eq("id", "main")
+      .eq("revision", fromRevision)   // optimistic concurrency check
+      .select("revision, songs, spelling_chart");
 
-  if (error) throw new Error(`Push failed: ${error.message}`);
+    if (error) throw new Error(`Push failed: ${error.message}`);
+    return data;
+  };
+
+  // First attempt with the caller's known revision.
+  let data = await attempt(songs, spellingChart, baseRevision);
 
   if (!data || data.length === 0) {
-    // Another device pushed first — conflict
-    return null;
+    // Conflict — another device pushed first.
+    // Re-read the true current state, merge our local changes on top, retry once.
+    const remote = await readGlobal();
+
+    // Merge: remote wins for keys that exist in both; local adds new entries.
+    const mergedSongs = [...remote.songs];
+    songs.forEach((ls) => {
+      const idx = mergedSongs.findIndex(
+        (rs) => rs.id === ls.id ||
+          (rs.title?.trim().toLowerCase() === ls.title?.trim().toLowerCase() &&
+           (rs.artist || "").trim().toLowerCase() === (ls.artist || "").trim().toLowerCase())
+      );
+      if (idx !== -1) {
+        mergedSongs[idx] = { ...mergedSongs[idx], ...ls };
+      } else {
+        mergedSongs.push(ls);
+      }
+    });
+    const mergedSpelling = { ...remote.spellingChart, ...spellingChart };
+
+    data = await attempt(mergedSongs, mergedSpelling, remote.revision);
+
+    if (!data || data.length === 0) {
+      // Still conflicting (very rare race) — return null so caller handles it.
+      return null;
+    }
   }
+
   return {
     revision:      data[0].revision,
     songs:         data[0].songs          ?? songs,
@@ -159,13 +196,33 @@ export async function syncLibrary({ key, state, revision = 0, changed }) {
     });
 
     if (!pushed) {
-      // Conflict — return remote state so caller can merge
+      // Still conflicted after retry — pull remote and merge local on top
+      // so the caller receives a superset and can push again next cycle.
       globalConflict = true;
+      const fallback = await readGlobal();
+      const mergedSongs = [...fallback.songs];
+      (state.songs || []).forEach((ls) => {
+        const idx = mergedSongs.findIndex(
+          (rs) => rs.id === ls.id ||
+            (rs.title?.trim().toLowerCase() === ls.title?.trim().toLowerCase() &&
+             (rs.artist || "").trim().toLowerCase() === (ls.artist || "").trim().toLowerCase())
+        );
+        if (idx !== -1) {
+          mergedSongs[idx] = { ...mergedSongs[idx], ...ls };
+        } else {
+          mergedSongs.push(ls);
+        }
+      });
+      nextGlobal = {
+        revision:      fallback.revision,
+        songs:         mergedSongs,
+        spellingChart: { ...fallback.spellingChart, ...(state.spellingChart || {}) }
+      };
     } else {
       nextGlobal = pushed;
     }
   } else if (remote.revision > rev.global) {
-    // Remote is newer — pull it in
+    // Remote is newer — pull it in (nextGlobal already set above)
   }
 
   // ── Team sync (shared setlists only) ─────────────────────────────────────

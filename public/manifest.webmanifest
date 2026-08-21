@@ -1,8 +1,11 @@
 {
   "name": "Zong",
   "short_name": "Zong",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#000000",
   "theme_color": "#000000",
   "description": "Notes for Worship Teams",
