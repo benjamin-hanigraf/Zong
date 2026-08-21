@@ -1855,18 +1855,21 @@ function PianoScreen({ C, mode }) {
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
-      <div style={{ height: 46, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between", marginBottom: 6 }}>
-        <div style={{ fontSize: 14.5, fontWeight: 600 }}>
+      <div style={{ height: 42, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
           {isVocals ? "Chord Piano" : "Piano"}
         </div>
         {isVocals ? (
-          // Vocals mode: Compact Major / Minor chord quality toggle with space below
-          <div style={{ width: 132, flexShrink: 0 }}>
+          // Vocals mode: Ultra-compact Major / Minor chord quality toggle with clear gap below
+          <div style={{ width: 110, height: 26, flexShrink: 0 }}>
             <TabSelect
               options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]}
               value={chordQuality}
               onChange={setChordQuality}
               compact
+              height={26}
+              fontSize={10.5}
+              padding="2px"
               C={C}
             />
           </div>
@@ -4228,8 +4231,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
     <div
       onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
       style={{
-        position: "fixed", inset: 0,
-        bottom: keyboardInset ? `${keyboardInset}px` : 0,
+        position: "fixed", inset: 0, width: "100%", height: "100%",
         background: C.bg, color: C.text, fontFamily: FONT,
         zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden",
         paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box",
@@ -4250,8 +4252,8 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
-      {/* Scrollable content — generous bottom padding so bottom items can always be scrolled fully clear */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: "280px", boxSizing: "border-box" }}>
+      {/* Scrollable content — dynamic bottom padding expands when keyboard is up, clean normal padding when closed */}
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 60}px` : "40px", boxSizing: "border-box" }}>
 
         {/* Subtitle */}
         <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
