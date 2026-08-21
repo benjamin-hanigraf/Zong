@@ -4893,9 +4893,30 @@ function AppInner() {
   // defined before performSync's useCallback can still trigger an immediate push.
   const performSyncRef = useRef(null);
 
-  const saveSongs = (next) => { syncDirty.current = true; setSongs(next); setTimeout(() => performSyncRef.current?.(true), 0); };
-  const saveSetlists = (next) => { syncDirty.current = true; setSetlists(next); setTimeout(() => performSyncRef.current?.(true), 0); };
-  const saveSpellingChart = (next) => { syncDirty.current = true; setSpellingChart(next); setTimeout(() => performSyncRef.current?.(true), 0); };
+  const saveSongs = (next) => {
+    // Resolve the next value immediately (handles both plain value and updater fn)
+    // and eagerly push it into the ref so performSync (which fires on the very
+    // next microtask, before React re-renders) always sees the brand-new songs.
+    const resolved = typeof next === "function" ? next(songsRef.current) : next;
+    songsRef.current = resolved;
+    syncDirty.current = true;
+    setSongs(resolved);
+    setTimeout(() => performSyncRef.current?.(true), 0);
+  };
+  const saveSetlists = (next) => {
+    const resolved = typeof next === "function" ? next(setlistsRef.current) : next;
+    setlistsRef.current = resolved;
+    syncDirty.current = true;
+    setSetlists(resolved);
+    setTimeout(() => performSyncRef.current?.(true), 0);
+  };
+  const saveSpellingChart = (next) => {
+    const resolved = typeof next === "function" ? next(spellingChartRef.current) : next;
+    spellingChartRef.current = resolved;
+    syncDirty.current = true;
+    setSpellingChart(resolved);
+    setTimeout(() => performSyncRef.current?.(true), 0);
+  };
 
   const performSync = useCallback(async (force = false) => {
     // Keep the ref in sync so save functions can call the latest closure.
@@ -5005,6 +5026,11 @@ function AppInner() {
   }, [bandKey]);
 
   useEffect(() => {
+    // Sync immediately on mount (and whenever bandKey changes) so that:
+    // (a) performSyncRef.current is set before the user can save their first song, and
+    // (b) any data the remote gained while this device was offline is pulled in.
+    performSync();
+
     const online = () => performSync();
     window.addEventListener("online", online);
 
