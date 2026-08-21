@@ -5,7 +5,7 @@ import {
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw,
 } from "lucide-react";
-import { syncLibrary } from "./bandSync";
+import { syncLibrary, subscribeToChanges, isSupabaseConfigured } from "./supabaseSync";
 
 /* =========================================================================
    Persistence — IndexedDB for songs/setlists, localStorage for small prefs.
@@ -4636,11 +4636,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
   if (!isOpen) return null;
   const isConnected = Boolean(initialKey && initialKey.trim());
   const handleSave = (val) => {
-    const clean = val.trim();
-    if (clean && clean.toUpperCase() !== "FACA") {
-      setError("Invalid Team Key");
-      return;
-    }
+    const clean = val.trim().toUpperCase();
     setError("");
     onSave(clean);
   };
@@ -4670,14 +4666,14 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
         <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>
           Team Access
         </div>
-        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>
-          Enter team code to sync shared setlists.
+        <div style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.45, marginBottom: 14 }}>
+          Enter a team code (e.g. your church or band name) to sync shared setlists with your members. Songs & spelling chart are always shared globally.
         </div>
         <input
           autoFocus
           value={draft}
           onChange={(e) => { setDraft(e.target.value); setError(""); }}
-          placeholder="Team code"
+          placeholder="e.g. FACA or GRACE-CHURCH"
           style={{
             width: "100%", height: 42, background: C.surface3,
             border: `1px solid ${C.border}`,
@@ -4716,7 +4712,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
                 cursor: "pointer"
               }}
             >
-              Disconnect
+              Leave Team
             </button>
           )}
           <button
@@ -4728,7 +4724,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
               cursor: "pointer"
             }}
           >
-            Save
+            {isConnected && draft.trim().toUpperCase() === initialKey.trim().toUpperCase() ? "Save" : "Connect"}
           </button>
         </div>
       </div>
@@ -4770,7 +4766,18 @@ function AppInner() {
   useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Public only");
-  const syncRevision = useRef(Number(localStorage.getItem("zong:revision") || 0));
+  const syncRevision = useRef(() => {
+    try {
+      const stored = localStorage.getItem("zong:revision");
+      if (!stored) return { global: 0, team: 0 };
+      const parsed = JSON.parse(stored);
+      if (typeof parsed === "object" && parsed !== null) return parsed;
+      // Legacy plain-number value — migrate
+      return { global: Number(parsed) || 0, team: 0 };
+    } catch { return { global: 0, team: 0 }; }
+  });
+  // Unwrap the lazy-init function so the ref holds the value, not the fn
+  if (typeof syncRevision.current === "function") syncRevision.current = syncRevision.current();
   const syncDirty = useRef(false);
   const syncing = useRef(false);
 
@@ -4819,8 +4826,8 @@ function AppInner() {
         revision: syncRevision.current,
         changed: force || syncDirty.current
       });
-      syncRevision.current = result.revision;
-      localStorage.setItem("zong:revision", String(result.revision));
+      syncRevision.current = result.revision;  // { global: N, team: M }
+      localStorage.setItem("zong:revision", JSON.stringify(result.revision));
 
       if (result.conflict || result.pulled) {
         const remoteSongs = result.state?.songs || [];
@@ -4907,20 +4914,48 @@ function AppInner() {
   useEffect(() => {
     const online = () => performSync();
     window.addEventListener("online", online);
-    const timer = window.setInterval(() => performSync(), 10000);
-    return () => { window.removeEventListener("online", online); window.clearInterval(timer); };
-  }, [performSync]);
+
+    // Prefer Realtime push (Supabase) over polling — falls back to 30s poll if
+    // Supabase is not configured (e.g. still using the Apps Script endpoint).
+    let unsubscribeRealtime = null;
+    let timer = null;
+
+    if (isSupabaseConfigured()) {
+      unsubscribeRealtime = subscribeToChanges({
+        teamKey: bandKey || null,
+        onGlobal: ({ revision, songs: remoteSongs, spellingChart: remoteSpelling }) => {
+          // A remote device pushed new global data — trigger a pull-only sync
+          if (revision > (syncRevision.current?.global ?? 0)) {
+            performSync(false);
+          }
+        },
+        onTeam: ({ revision, sharedSetlists }) => {
+          // A remote device updated this team's setlists
+          if (revision > (syncRevision.current?.team ?? 0)) {
+            performSync(false);
+          }
+        }
+      });
+      // Also keep a 30-second fallback poll for reconnections after going offline
+      timer = window.setInterval(() => performSync(), 30000);
+    } else {
+      // No Supabase — keep the original 10-second Google Sheets poll
+      timer = window.setInterval(() => performSync(), 10000);
+    }
+
+    return () => {
+      window.removeEventListener("online", online);
+      if (timer) window.clearInterval(timer);
+      if (unsubscribeRealtime) unsubscribeRealtime();
+    };
+  }, [performSync, bandKey]);
 
   const handleSaveTeamKey = (newKey) => {
-    const clean = newKey.trim();
-    if (clean && clean.toUpperCase() !== "FACA") {
-      flash("Invalid Team Key");
-      return;
-    }
+    const clean = newKey.trim().toUpperCase();
     setTeamKeyModalOpen(false);
     localStorage.setItem("zong:access-key", clean);
     localStorage.removeItem("zong:revision");
-    syncRevision.current = 0;
+    syncRevision.current = { global: 0, team: 0 };
     setBandKey(clean);
     if (!clean) {
       setSyncStatus("Public only");
@@ -4930,6 +4965,15 @@ function AppInner() {
     flash("Connected to Team");
     syncDirty.current = true;
     performSync(true);
+  };
+
+  const handleLeaveTeam = () => {
+    localStorage.setItem("zong:access-key", "");
+    localStorage.removeItem("zong:revision");
+    syncRevision.current = { global: 0, team: 0 };
+    setBandKey("");
+    setSyncStatus("Public only");
+    flash("Left Team");
   };
 
   const rootRef = useRef(null);
