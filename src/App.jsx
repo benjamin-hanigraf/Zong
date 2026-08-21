@@ -1268,17 +1268,17 @@ function resyncContentWithLyrics(content, newLyricsText) {
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
 function PianoIcon({ size = 20, height, color, strokeWidth }) {
-  // Render at a landscape aspect ratio (~1.55:1) so that the visual weight
-  // matches the square Lucide icons at the same HEIGHT. The caller can
-  // pass either `size` (square) or a separate `height` to constrain only
-  // the vertical dimension and let the icon be naturally wider.
+  // Clean, simplified keyboard icon matching the exact height of other nav icons
   const h = height ?? size;
   const w = Math.round(h * 1.55);
-  const sw = strokeWidth ?? 1.5;
+  const sw = strokeWidth ?? 1.6;
   return (
     <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 31 20" fill="none">
-      <rect x="1" y="1" width="29" height="18" rx="2" stroke={color} strokeWidth={sw} />
-      <path d="M7 1v18M13 1v18M19 1v18M25 1v18M10 1v11M16 1v11M22 1v11" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      <rect x="1.5" y="1.5" width="28" height="17" rx="3" stroke={color} strokeWidth={sw} />
+      {/* 3 clean white key dividing lines */}
+      <path d="M8.5 1.5v17M15.5 1.5v17M22.5 1.5v17" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      {/* 2 simplified black key accents */}
+      <path d="M12 1.5v9M19 1.5v9" stroke={color} strokeWidth={sw + 0.4} strokeLinecap="round" />
     </svg>
   );
 }
@@ -1559,14 +1559,14 @@ function PianoScreen({ C, mode }) {
     const midi = (octaveStartRef.current + 1) * 12 + semitone;
     return 440 * Math.pow(2, (midi - 69) / 12);
   };
-  const startVoice = (semitone) => {
+  const startVoice = (semitone, volume = 1) => {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const freq = freqFor(semitone);
     const dest = masterCompRef.current || ctx.destination;
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(1, now);
+    gain.gain.setValueAtTime(volume, now);
 
     // Grand Piano soundboard acoustic filter with dynamic attack brightness
     const bodyFilter = ctx.createBiquadFilter();
@@ -1657,43 +1657,44 @@ function PianoScreen({ C, mode }) {
   };
 
   // --- Warm pad chord voice for Vocals mode -----------------------------------
-  // Plays a 6-note two-octave chord (root triad + octave triad) using sine
-  // oscillators through a warm lowpass filter. Sustains until stopPadChord()
-  // is called on pointer-up. A single piano-tone root note plays alongside it
-  // so the root pitch is easy to hear.
+  // Plays a rich two-octave chord with lower bass root (-12), lower fifth (-5),
+  // middle triad, and shimmering upper octave for a full, warm sound.
   const startPadChord = (rootSemitone) => {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
-    const majorIntervals = [0, 4, 7, 12, 16, 19];
-    const minorIntervals = [0, 3, 7, 12, 15, 19];
+    
+    // Rich harmonic voicing: [deep bass root, lower 5th, middle root, 3rd, 5th, octave, octave 3rd]
+    const majorIntervals = [-12, -5, 0, 4, 7, 12, 16];
+    const minorIntervals = [-12, -5, 0, 3, 7, 12, 15];
     const intervals = quality === "Minor" ? minorIntervals : majorIntervals;
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.48, now + 0.2);
+    masterGain.gain.linearRampToValueAtTime(0.55, now + 0.18);
     masterGain.connect(dest);
 
     const oscs = [];
-    intervals.forEach((interval, i) => {
+    intervals.forEach((interval) => {
       const midi = (octaveStartRef.current + 1) * 12 + rootSemitone + interval;
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      filt.frequency.value = Math.min(4200, freq * 5.5);
+      // Warmer cutoff on lower bass notes, open slightly on upper
+      filt.frequency.value = interval < 0 ? Math.min(1200, freq * 4.5) : Math.min(3600, freq * 4.0);
       filt.Q.value = 0.5;
 
       const noteGain = ctx.createGain();
-      // Lower octave slightly louder; upper voices sit back
-      noteGain.gain.value = i < 3 ? 0.72 : 0.46;
+      // Bass & lower notes given solid foundation weight; upper notes sit softly
+      noteGain.gain.value = interval < 0 ? 0.65 : interval <= 7 ? 0.45 : 0.32;
 
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = freq;
-      // Tiny random detune per partial for warmth / chorus
-      osc.detune.value = (Math.random() - 0.5) * 9;
+      // Gentle chorus detune for warm pad fullness
+      osc.detune.value = (Math.random() - 0.5) * 8;
       osc.connect(filt);
       filt.connect(noteGain);
       noteGain.connect(masterGain);
@@ -1734,12 +1735,12 @@ function PianoScreen({ C, mode }) {
     const hit = keyAt(e.clientX, e.clientY);
     if (!hit) return;
     if (isVocals) {
-      // Chord pad + root piano note for pitch clarity
+      // Full rich chord pad + subtle, gentle root acoustic note
       const padVoice = startPadChord(hit.semitone);
-      const pianoVoice = startVoice(hit.semitone);
+      const pianoVoice = startVoice(hit.semitone, 0.22);
       activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: pianoVoice, padVoice, keyEl: hit.el });
     } else {
-      const voice = startVoice(hit.semitone);
+      const voice = startVoice(hit.semitone, 1.0);
       activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
     }
     paintKey(hit.el, true);
@@ -1763,10 +1764,10 @@ function PianoScreen({ C, mode }) {
       if (hit) {
         if (isVocals) {
           const padVoice = startPadChord(hit.semitone);
-          const voice = startVoice(hit.semitone);
+          const voice = startVoice(hit.semitone, 0.22);
           activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice, keyEl: hit.el });
         } else {
-          const voice = startVoice(hit.semitone);
+          const voice = startVoice(hit.semitone, 1.0);
           activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
         }
         paintKey(hit.el, true);
@@ -1851,12 +1852,13 @@ function PianoScreen({ C, mode }) {
           {isVocals ? "Chord Piano" : "Piano"}
         </div>
         {isVocals ? (
-          // Vocals mode: Major / Minor chord quality toggle
-          <div style={{ maxWidth: 200, flex: 1, marginLeft: 12 }}>
+          // Vocals mode: Compact Major / Minor chord quality toggle
+          <div style={{ width: 140, flexShrink: 0 }}>
             <TabSelect
               options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]}
               value={chordQuality}
               onChange={setChordQuality}
+              compact
               C={C}
             />
           </div>
@@ -4143,7 +4145,8 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
       const t = draftTamil.trim();
       const l = draftLatin.trim();
       if (t && l && !chart[t]) {
-        onSave({ ...chart, [t]: l });
+        // Prepend new custom word to the top
+        onSave({ [t]: l, ...chart });
       }
     } else if (activeEditKey && chart[activeEditKey] !== undefined) {
       const origTamil = activeEditKey;
@@ -4185,10 +4188,10 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   useEffect(() => {
     if (activeEditKey && activeRowRef.current) {
       setTimeout(() => {
-        activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      }, 100);
+        activeRowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      }, 150);
     }
-  }, [activeEditKey]);
+  }, [activeEditKey, keyboardInset]);
 
   const inputStyle = {
     flex: 1, height: 40, borderRadius: 8, border: `1px solid ${C.border}`,
@@ -4220,8 +4223,8 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
-      {/* Scrollable content — paddingBottom shrinks when keyboard is up so nothing is hidden */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 40}px` : "40px", boxSizing: "border-box" }}>
+      {/* Scrollable content — extra bottom padding when software keyboard is open */}
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 90}px` : "50px", boxSizing: "border-box" }}>
 
         {/* Subtitle */}
         <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
@@ -4234,14 +4237,51 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
         </div>
 
-        {/* Rows */}
+        {/* Rows with Add Word at the TOP */}
         <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
-          {rows.map((key, i) => (
+          {/* Add Word inline top row */}
+          {activeEditKey === "__NEW__" ? (
+            <div
+              ref={activeRowRef}
+              onClick={(e) => e.stopPropagation()}
+              style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 8, background: C.surface3, boxSizing: "border-box" }}
+            >
+              <input
+                autoFocus
+                placeholder="தமிழ்"
+                value={draftTamil}
+                onChange={(e) => setDraftTamil(e.target.value)}
+                onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
+              <input
+                placeholder="Tanglish"
+                value={draftLatin}
+                onChange={(e) => setDraftLatin(e.target.value)}
+                onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
+            </div>
+          ) : (
+            <button
+              onClick={handleStartAdd}
+              style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.accent, display: "flex", alignItems: "center", gap: 6 }}>
+                <Plus size={15} /> Add word...
+              </div>
+              <div style={{ fontSize: 13, color: C.textFaint }}>Custom transliteration</div>
+            </button>
+          )}
+
+          {rows.map((key) => (
             <SpellingChartRow
               key={key}
               tamilKey={key}
               value={chart[key]}
-              isFirst={i === 0}
+              isFirst={false}
               isEditing={activeEditKey === key}
               draftTamil={draftTamil}
               setDraftTamil={setDraftTamil}
@@ -4254,40 +4294,6 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
               C={C}
             />
           ))}
-          {/* Add Word row — lives at the bottom like any other row */}
-          {activeEditKey === "__NEW__" ? (
-            <div
-              ref={activeRowRef}
-              onClick={(e) => e.stopPropagation()}
-              style={{ borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 8, background: C.surface3, boxSizing: "border-box" }}
-            >
-              <input
-                autoFocus
-                placeholder="தமிழ்"
-                value={draftTamil}
-                onChange={(e) => setDraftTamil(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
-              <input
-                placeholder="Tanglish"
-                value={draftLatin}
-                onChange={(e) => setDraftLatin(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
-            </div>
-          ) : (
-            <button
-              onClick={handleStartAdd}
-              style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.accent, display: "flex", alignItems: "center", gap: 6 }}>
-                <Plus size={15} /> Add word...
-              </div>
-              <div style={{ fontSize: 13.5, color: C.textFaint }}>Custom transliteration</div>
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -4328,8 +4334,8 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   const incSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.min(30, f + 1)));
   const decLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100)));
   const incLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100)));
-  const decNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.max(0.3, Math.round((f - 0.1) * 100) / 100)));
-  const incNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.min(2.5, Math.round((f + 0.1) * 100) / 100)));
+  const decNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.max(0.1, Math.round((f - 0.05) * 100) / 100)));
+  const incNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.min(2.5, Math.round((f + 0.05) * 100) / 100)));
 
   // Font Size / Bold / Spacing all delegate to whichever target is picked
   // in the dropdown above them.
@@ -4747,16 +4753,16 @@ function AppInner() {
     meta.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover");
   }, []);
 
-  const [songs, setSongs] = useIndexedDbState("songs", SEED_SONGS);
-  const [setlists, setSetlists] = useIndexedDbState("setlists", SEED_SETLISTS);
-  const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 22);
+  const [songs, setSongs] = useIndexedDbState("songs", []);
+  const [setlists, setSetlists] = useIndexedDbState("setlists", []);
+  const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 16);
   const [chordFontSize, setChordFontSize] = useLocalStorageState("altar:chord-font-size", 16);
-  const [sectionFontSize, setSectionFontSize] = useLocalStorageState("altar:section-font-size", 14);
+  const [sectionFontSize, setSectionFontSize] = useLocalStorageState("altar:section-font-size", 12);
   const [textAlign, setTextAlign] = useLocalStorageState("altar:text-align", "left");
   const [lyricsBold, setLyricsBold] = useLocalStorageState("altar:lyrics-bold", false);
   const [notesBold, setNotesBold] = useLocalStorageState("altar:notes-bold", false);
-  const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.75);
-  const [noteSpacing, setNoteSpacing] = useLocalStorageState("altar:note-spacing", 1);
+  const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.40);
+  const [noteSpacing, setNoteSpacing] = useLocalStorageState("altar:note-spacing", 0.30);
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
   const [tanglishMode, setTanglishMode] = useLocalStorageState("altar:tanglish", false);
