@@ -27,8 +27,12 @@ CREATE TABLE IF NOT EXISTS zong_teams (
   team_key        TEXT PRIMARY KEY,
   revision        INTEGER NOT NULL DEFAULT 0,
   shared_setlists JSONB NOT NULL DEFAULT '[]'::jsonb,
+  subscribers     JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migration if column does not exist
+ALTER TABLE zong_teams ADD COLUMN IF NOT EXISTS subscribers JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- 3. Row Level Security (RLS)
 ALTER TABLE zong_global ENABLE ROW LEVEL SECURITY;

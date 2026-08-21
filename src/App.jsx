@@ -5,7 +5,17 @@ import {
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw,
 } from "lucide-react";
-import { syncLibrary, subscribeToChanges, isSupabaseConfigured } from "./supabaseSync";
+import { syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam } from "./supabaseSync";
+
+function getDeviceId() {
+  if (typeof localStorage === "undefined") return "dev_default";
+  let id = localStorage.getItem("zong:device-id");
+  if (!id) {
+    id = "dev_" + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+    localStorage.setItem("zong:device-id", id);
+  }
+  return id;
+}
 
 /* =========================================================================
    Persistence — IndexedDB for songs/setlists, localStorage for small prefs.
@@ -242,47 +252,7 @@ function parseKeyPaste(raw) {
   const quality = (qualityRaw === "m" || qualityRaw.startsWith("mi")) ? "Minor" : "Major";
   return { natural, accidental, quality };
 }
-function downloadJSON(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-async function shareOrDownloadJSON(filename, payload) {
-  const json = JSON.stringify(payload, null, 2);
-  if (typeof navigator !== "undefined" && navigator.share) {
-    try {
-      if (typeof File !== "undefined" && navigator.canShare) {
-        const file = new File([json], filename, { type: "application/json" });
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: filename });
-          return "shared";
-        }
-      }
-    } catch (err) {
-      if (err && (err.name === "AbortError" || String(err).includes("Abort") || String(err).includes("cancel"))) {
-        return "cancelled";
-      }
-    }
-    try {
-      await navigator.share({ title: filename, text: json });
-      return "shared";
-    } catch (err) {
-      if (err && (err.name === "AbortError" || String(err).includes("Abort") || String(err).includes("cancel"))) {
-        return "cancelled";
-      }
-    }
-  }
-  try {
-    downloadJSON(filename, payload);
-    return "downloaded";
-  } catch {
-    return "cancelled";
-  }
-}
+
 function dedupeTitle(candidateTitle, artist, existingSongs) {
   let n = 0;
   let title = candidateTitle;
@@ -1304,15 +1274,7 @@ function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
     </svg>
   );
 }
-function IosShareIcon({ size = 16, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path d="M12 3v12" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M7.5 7.5 12 3l4.5 4.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M6 10.5H5A2 2 0 0 0 3 12.5V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6.5a2 2 0 0 0-2-2h-1" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
+
 // ---- Acoustic grand-piano voice -----------------------------------------
 // A single fixed-harmonic PeriodicWave — the same exact spectral shape at
 // every pitch, decaying uniformly under one lowpass filter — is what reads
@@ -1494,7 +1456,7 @@ function unlockAudioPlayback() {
   }
 }
 
-function PianoScreen({ C, mode }) {
+function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const audioCtxRef = useRef(null);
@@ -1505,9 +1467,19 @@ function PianoScreen({ C, mode }) {
   const videoUnlockedRef = useRef(false);
   const isLandscapeScreen = useIsLandscapeScreen();
   const isVocals = mode === "vocals";
-  const [chordQuality, setChordQuality] = useState("Major");
-  const chordQualityRef = useRef("Major");
-  useEffect(() => { chordQualityRef.current = chordQuality; }, [chordQuality]);
+  const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
+  const chordQualityRef = useRef(loadedQuality || "Major");
+
+  useEffect(() => {
+    if (loadedQuality && loadedQuality !== chordQuality) {
+      setChordQuality(loadedQuality);
+    }
+  }, [loadedQuality]);
+
+  useEffect(() => {
+    chordQualityRef.current = chordQuality;
+    if (onQualityChange) onQualityChange(chordQuality);
+  }, [chordQuality]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
@@ -1517,18 +1489,6 @@ function PianoScreen({ C, mode }) {
 
   const ensureCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      // Pin a fixed sample rate rather than letting the browser pick
-      // whatever the current audio route happens to be running at (e.g.
-      // 48kHz over Bluetooth vs 44.1kHz on the built-in speaker, or a
-      // different rate after a call/other app changed the device's audio
-      // session). A varying sample rate doesn't change the harmonic
-      // content of the PeriodicWave itself, but it does change exactly
-      // where the lowpass filter's cutoff and envelope timings land
-      // relative to Nyquist and to the audio callback's block size, which
-      // is audible as the tone sounding subtly different from session to
-      // session even though nothing in the code changed. Some browsers
-      // reject an explicit sampleRate on certain devices, so fall back to
-      // the default if construction throws.
       const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
       let ctx;
       try {
@@ -1537,13 +1497,11 @@ function PianoScreen({ C, mode }) {
         ctx = new AudioCtxCls({ latencyHint: "interactive" });
       }
       const comp = ctx.createDynamicsCompressor();
-      // Light "safety" limiter rather than a tone-shaping compressor —
-      // only steps in on loud chord stacks, doesn't squash single notes.
-      comp.threshold.setValueAtTime(-8, ctx.currentTime);
-      comp.knee.setValueAtTime(6, ctx.currentTime);
-      comp.ratio.setValueAtTime(2.5, ctx.currentTime);
-      comp.attack.setValueAtTime(0.006, ctx.currentTime);
-      comp.release.setValueAtTime(0.2, ctx.currentTime);
+      comp.threshold.setValueAtTime(-12, ctx.currentTime);
+      comp.knee.setValueAtTime(8, ctx.currentTime);
+      comp.ratio.setValueAtTime(3.0, ctx.currentTime);
+      comp.attack.setValueAtTime(0.008, ctx.currentTime);
+      comp.release.setValueAtTime(0.25, ctx.currentTime);
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
       audioCtxRef.current = ctx;
@@ -1572,8 +1530,8 @@ function PianoScreen({ C, mode }) {
     const bodyFilter = ctx.createBiquadFilter();
     bodyFilter.type = "lowpass";
     bodyFilter.Q.value = 1.0;
-    const initCutoff = Math.min(6800, Math.max(2400, freq * 7));
-    const warmCutoff = Math.min(2600, Math.max(750, freq * 2.4));
+    const initCutoff = Math.min(5600, Math.max(2000, freq * 5.5));
+    const warmCutoff = Math.min(2200, Math.max(700, freq * 2.2));
     bodyFilter.frequency.setValueAtTime(initCutoff, now);
     bodyFilter.frequency.exponentialRampToValueAtTime(warmCutoff, now + 0.28);
 
@@ -1582,17 +1540,16 @@ function PianoScreen({ C, mode }) {
 
     const B = pianoInharmonicity(freq);
     const fundamentalTail = pianoFundamentalDecay(freq);
-    // Subtle acoustic unison detuning (gentle chorus without sounding out of tune)
-    const unisonDetunes = freq < 100 ? [0] : [-0.9, 0.9];
+    const unisonDetunes = freq < 100 ? [0] : [-0.8, 0.8];
     const oscillators = [];
 
     unisonDetunes.forEach((detuneCents) => {
       PIANO_HARMONICS.forEach(({ n, relAmp, decayMult }) => {
         const stretch = Math.sqrt(1 + B * n * n);
         const partialFreq = freq * n * stretch;
-        if (partialFreq > 16000) return;
+        if (partialFreq > 14000) return;
 
-        const amp = relAmp * (0.42 / unisonDetunes.length);
+        const amp = relAmp * (0.36 / unisonDetunes.length);
         const tau = Math.max(0.08, fundamentalTail * decayMult);
         const stopAt = now + tau + 0.1;
         const startAt = now;
@@ -1603,7 +1560,7 @@ function PianoScreen({ C, mode }) {
         osc.detune.value = detuneCents;
 
         const pg = ctx.createGain();
-        const attackTime = n === 1 ? 0.005 : 0.0015;
+        const attackTime = n === 1 ? 0.008 : 0.003;
         pg.gain.setValueAtTime(0, startAt);
         pg.gain.linearRampToValueAtTime(amp, startAt + attackTime);
         pg.gain.exponentialRampToValueAtTime(Math.max(0.00001, amp * 0.001), startAt + tau);
@@ -1618,7 +1575,7 @@ function PianoScreen({ C, mode }) {
     });
 
     // Soft felt hammer strike transient
-    const noiseDur = 0.018;
+    const noiseDur = 0.014;
     const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -1628,10 +1585,10 @@ function PianoScreen({ C, mode }) {
 
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = "bandpass";
-    noiseFilter.frequency.value = Math.min(3500, Math.max(300, freq * 1.8));
+    noiseFilter.frequency.value = Math.min(2800, Math.max(300, freq * 1.5));
     noiseFilter.Q.value = 1.0;
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.04, now);
+    noiseGain.gain.setValueAtTime(0.02, now);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
@@ -1657,22 +1614,27 @@ function PianoScreen({ C, mode }) {
   };
 
   // --- Warm pad chord voice for Vocals mode -----------------------------------
-  // Plays a rich two-octave chord with lower bass root (-12), lower fifth (-5),
-  // middle triad, and shimmering upper octave for a full, warm sound.
+  // Balanced 5-note voicing with warm lowpass filtering and clean gain staging
   const startPadChord = (rootSemitone) => {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
     
-    // Rich harmonic voicing: [deep bass root, lower 5th, middle root, 3rd, 5th, octave, octave 3rd]
-    const majorIntervals = [-12, -5, 0, 4, 7, 12, 16];
-    const minorIntervals = [-12, -5, 0, 3, 7, 12, 15];
+    // Balanced voicing: [sub root, root, 3rd, 5th, octave]
+    const majorIntervals = [-12, 0, 4, 7, 12];
+    const minorIntervals = [-12, 0, 3, 7, 12];
     const intervals = quality === "Minor" ? minorIntervals : majorIntervals;
+
+    const masterFilter = ctx.createBiquadFilter();
+    masterFilter.type = "lowpass";
+    masterFilter.frequency.value = 1800; // Tame harsh frequencies for mobile/OnePlus speakers
+    masterFilter.Q.value = 0.7;
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.55, now + 0.18);
+    masterGain.gain.linearRampToValueAtTime(0.24, now + 0.05); // Smooth attack without pop
+    masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
     const oscs = [];
@@ -1682,22 +1644,19 @@ function PianoScreen({ C, mode }) {
 
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      // Warmer cutoff on lower bass notes, open slightly on upper
-      filt.frequency.value = interval < 0 ? Math.min(1200, freq * 4.5) : Math.min(3600, freq * 4.0);
+      filt.frequency.value = interval <= 0 ? Math.min(900, freq * 3.0) : Math.min(2200, freq * 2.8);
       filt.Q.value = 0.5;
 
       const noteGain = ctx.createGain();
-      // Bass & lower notes given solid foundation weight; upper notes sit softly
-      noteGain.gain.value = interval < 0 ? 0.65 : interval <= 7 ? 0.45 : 0.32;
+      noteGain.gain.value = interval < 0 ? 0.28 : interval === 0 ? 0.24 : 0.18;
 
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = freq;
-      // Gentle chorus detune for warm pad fullness
-      osc.detune.value = (Math.random() - 0.5) * 8;
+      osc.detune.value = (Math.random() - 0.5) * 4; // subtle warmth
       osc.connect(filt);
       filt.connect(noteGain);
-      noteGain.connect(masterGain);
+      noteGain.connect(masterFilter);
       osc.start(now);
       oscs.push(osc);
     });
@@ -1712,8 +1671,8 @@ function PianoScreen({ C, mode }) {
     try {
       padVoice.masterGain.gain.cancelScheduledValues(now);
       padVoice.masterGain.gain.setValueAtTime(padVoice.masterGain.gain.value, now);
-      padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-      padVoice.oscillators.forEach(osc => { try { osc.stop(now + 0.38); } catch { } });
+      padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+      padVoice.oscillators.forEach(osc => { try { osc.stop(now + 0.28); } catch { } });
     } catch { }
   };
   // ---------------------------------------------------------------------------
@@ -1743,10 +1702,9 @@ function PianoScreen({ C, mode }) {
       });
       activeRef.current.clear();
 
-      // Full rich chord pad + subtle, gentle root acoustic note
+      // Pure rich warm chord pad
       const padVoice = startPadChord(hit.semitone);
-      const pianoVoice = startVoice(hit.semitone, 0.22);
-      activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: pianoVoice, padVoice, keyEl: hit.el });
+      activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: null, padVoice, keyEl: hit.el });
     } else {
       const voice = startVoice(hit.semitone, 1.0);
       activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
@@ -1772,8 +1730,7 @@ function PianoScreen({ C, mode }) {
       if (hit) {
         if (isVocals) {
           const padVoice = startPadChord(hit.semitone);
-          const voice = startVoice(hit.semitone, 0.22);
-          activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice, keyEl: hit.el });
+          activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: null, padVoice, keyEl: hit.el });
         } else {
           const voice = startVoice(hit.semitone, 1.0);
           activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
@@ -2955,39 +2912,6 @@ function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: R
   );
 }
 
-function MenuItem({ icon: Icon, label, onClick, danger, C }) {
-  return (
-    <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: "transparent", border: "none", fontFamily: FONT, fontSize: 14.5, fontWeight: 600, color: danger ? C.danger : C.text, textAlign: "left", whiteSpace: "nowrap" }}>
-      <Icon size={15} color={danger ? C.danger : C.textMuted} />
-      {label}
-    </button>
-  );
-}
-function KebabMenu({ onEdit, onShare, onDelete, isInSetlist, onRemoveFromSetlist, deleteConfirmMessage = "Delete this song?", C }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <MoreVertical size={16} color={C.text} />
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 110 }} />
-          <div style={{ position: "absolute", top: "110%", right: 0, zIndex: 120, width: "max-content", background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)" }}>
-            <MenuItem icon={Pencil} label="Edit" onClick={() => { setOpen(false); onEdit(); }} C={C} />
-            <MenuItem icon={IosShareIcon} label="Share" onClick={() => { setOpen(false); onShare(); }} C={C} />
-            {isInSetlist ? (
-              <MenuItem icon={X} label="Remove" danger onClick={() => { setOpen(false); onRemoveFromSetlist(); }} C={C} />
-            ) : (
-              <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpen(false); onDelete(); }} C={C} />
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* =========================================================================
    SectionChordEditor — lets users edit chords/notes inline on the same line
    as the lyrics between characters. The lyric characters are read-only,
@@ -3343,6 +3267,11 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
       </div>
 
       <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18, paddingBottom: 60, width: "100%", boxSizing: "border-box" }}>
+        {error && (
+          <div style={{ color: C.danger, fontSize: 13.5, textAlign: "center", fontWeight: 600, padding: "10px 14px", background: "rgba(255, 69, 58, 0.12)", border: `1px solid ${C.danger}40`, borderRadius: 10 }}>
+            {error}
+          </div>
+        )}
         <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={(v) => { setTitle(v); setError(""); }} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
         <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(v); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
 
@@ -3397,8 +3326,6 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.4, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
         </Field>
 
-        {error && <div style={{ color: C.danger, fontSize: 13, textAlign: "center", fontWeight: 500 }}>{error}</div>}
-
         {initial ? (
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
             <button onClick={() => onDelete(initial)} style={{ flex: 1, fontFamily: FONT, fontWeight: 600, fontSize: 13, padding: "14px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.danger, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
@@ -3415,79 +3342,19 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 }
 
 /* =========================================================================
-   Songs list (no time signature shown per spec #6)
+   Songs list
    ========================================================================= */
-function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, deleteConfirmMessage = "Delete this song?", C }) {
-  const MENU_WIDTH = 170;
-  const mountTimeRef = useRef(Date.now());
-  const handleClose = (e) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    if (Date.now() - mountTimeRef.current < 350) {
-      return;
-    }
-    onClose();
-  };
-  // Anchor to the actual long-press point, clamped so the menu stays fully
-  // on screen — it was previously pinned to a fixed right-edge x regardless
-  // of where the press happened, so it always showed up near the bottom
-  // right corner.
-  const clampedX = Math.min(Math.max(x, MENU_WIDTH / 2 + 12), window.innerWidth - MENU_WIDTH / 2 - 12);
-  const openUpward = y > window.innerHeight - 160;
-  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  // Portaled to document.body: a `position: fixed` descendant is positioned
-  // relative to the nearest ancestor that has a CSS transform (any
-  // transform, including translateX(0)), not the viewport — and list rows
-  // set an inline transform for swipe-to-load. Without the portal, the menu
-  // was anchoring to that row's transformed box instead of the screen,
-  // landing in a different spot depending on which row/scroll position it
-  // opened from.
-  // Track whether the backdrop received a touchstart — if it didn't, the
-  // touchend that follows is the release of the long-press that *opened*
-  // this menu, and we must not close on it.
-  const backdropTouchStartRef = useRef(false);
-  return createPortal(
-    <>
-      <div
-        onTouchStart={(e) => { e.stopPropagation(); backdropTouchStartRef.current = true; }}
-        onTouchEnd={(e) => {
-          e.stopPropagation();
-          if (!backdropTouchStartRef.current) return;
-          backdropTouchStartRef.current = false;
-          onClose();
-        }}
-        onClick={(e) => { e.stopPropagation(); onClose(); }}
-        onMouseDown={(e) => e.stopPropagation()}
-        style={{ position: "fixed", inset: 0, zIndex: 210 }}
-      />
-      <div
-        onClick={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        style={{
-          position: "fixed", left: clampedX, top: openUpward ? y - 10 : y + 10,
-          transform: openUpward ? "translate(-50%, -100%)" : "translate(-50%, 0)",
-          zIndex: 220, width: "max-content", minWidth: MENU_WIDTH,
-          background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, overflow: "hidden",
-          boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
-        }}>
-        <MenuItem icon={Pencil} label="Edit" onClick={() => { onClose(); onEdit(); }} C={C} />
-        <MenuItem icon={IosShareIcon} label="Share" onClick={() => { onClose(); onShare(); }} C={C} />
-        <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onClose(); onDelete(); }} C={C} />
-      </div>
-    </>,
-    document.body
-  );
-}
-function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, mode, tanglishMode, C, dimmed, onMenuOpenChange }) {
+function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, C }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
-  const [menuPos, setMenuPos] = useState(null); // { x, y } | null
   const swipeStartRef = useRef(null);
   const [swipeDx, setSwipeDx] = useState(0);
   const swipeFiredRef = useRef(false);
+
+  const isVocals = mode === "vocals";
+  const isDrums = mode === "drums";
+  const canSwipeRight = (isDrums && !!onLoadToMetronome) || (isVocals && !!onLoadToPiano);
+
   const startPress = (e) => {
     firedLongPressRef.current = false;
     const point = e.touches ? e.touches[0] : e;
@@ -3496,17 +3363,15 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
     swipeFiredRef.current = false;
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
-      firedLongPressRef.current = true; setMenuPos({ x, y });
-      if (onMenuOpenChange) onMenuOpenChange(song.id);
+      firedLongPressRef.current = true;
       if (navigator.vibrate) navigator.vibrate(15);
+      if (onEdit) onEdit(song);
     }, 500);
   };
+
   const movePress = (e) => {
     if (!swipeStartRef.current || firedLongPressRef.current) return;
-    // Swipe-to-load-into-metronome only does anything in Drums mode; in
-    // Lyrics/Chords mode there's no onLoadToMetronome handler, so don't
-    // let the row drag around for a gesture that has no effect.
-    if (!onLoadToMetronome) return;
+    if (!canSwipeRight) return;
     const point = e.touches ? e.touches[0] : e;
     const dx = point.clientX - swipeStartRef.current.x;
     const dy = point.clientY - swipeStartRef.current.y;
@@ -3515,31 +3380,34 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
       if (dx > 0) setSwipeDx(Math.min(dx, 120));
     }
   };
+
   const cancelPress = () => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-    if (swipeDx > 60 && onLoadToMetronome) { swipeFiredRef.current = true; onLoadToMetronome(song); }
+    if (swipeDx > 60) {
+      swipeFiredRef.current = true;
+      if (isDrums && onLoadToMetronome) onLoadToMetronome(song);
+      else if (isVocals && onLoadToPiano) onLoadToPiano(song);
+    }
     setSwipeDx(0);
     swipeStartRef.current = null;
   };
+
   const handleClick = () => {
     if (firedLongPressRef.current) { firedLongPressRef.current = false; return; }
     if (swipeFiredRef.current) { swipeFiredRef.current = false; return; }
     onOpen(song);
   };
-  // Right-click opens the same action menu as a long-press, since holding
-  // down a mouse button for 500ms isn't a discoverable gesture on
-  // laptop/PC — right-click is the standard desktop convention for a
-  // context/action menu.
+
   const handleContextMenu = (e) => {
     e.preventDefault();
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
     firedLongPressRef.current = true;
-    setMenuPos({ x: e.clientX, y: e.clientY });
-    if (onMenuOpenChange) onMenuOpenChange(song.id);
+    if (onEdit) onEdit(song);
   };
+
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", opacity: dimmed ? 0.3 : 1, transition: dimmed ? "opacity 150ms ease" : "transform 120ms ease", transform: `translateX(${swipeDx}px)`, background: C.bg, zIndex: menuPos ? 130 : 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 120ms ease" : "none", background: C.bg, zIndex: 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3547,23 +3415,14 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
-      {menuPos && (
-        <PositionedActionMenu
-          x={menuPos.x} y={menuPos.y}
-          onEdit={() => onEdit(song)}
-          onShare={() => onShare(song)}
-          onDelete={() => onDelete(song.id)}
-          onClose={() => { setMenuPos(null); if (onMenuOpenChange) onMenuOpenChange(null); }}
-          C={C}
-        />
-      )}
     </div>
   );
 }
-function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadToMetronome, mode, tanglishMode, C }) {
+
+function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [langFilter, setLangFilter] = useState("All");
-  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [openSwipeId, setOpenSwipeId] = useState(null);
   const keyboardInset = useKeyboardInset();
   const filtered = songs
     .filter((s) => songMatchesQuery(s, query))
@@ -3588,12 +3447,13 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onShare, onDelete, onLoadTo
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
       </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: activeMenuId != null ? "hidden" : "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
+      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
         ) : filtered.map((s) => (
-          <SongRow key={s.id} song={s} onOpen={onOpen} onEdit={onEdit} onShare={onShare} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} mode={mode} tanglishMode={tanglishMode} C={C}
-            dimmed={activeMenuId != null && activeMenuId !== s.id} onMenuOpenChange={setActiveMenuId} />
+          <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(s.id)} C={C}>
+            <SongRow song={s} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} onLoadToPiano={onLoadToPiano} mode={mode} tanglishMode={tanglishMode} C={C} />
+          </SwipeToDelete>
         ))}
       </div>
     </div>
@@ -3665,52 +3525,11 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
   );
 }
 
-function SongExportPicker({ songs, onClose, onExport, tanglishMode, C }) {
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(() => new Set());
-  const filtered = songs.filter((s) => songMatchesQuery(s, query));
-  const allSelected = filtered.length > 0 && filtered.every((s) => selected.has(s.id));
-  const toggle = (id) => setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  const toggleAll = () => setSelected((prev) => { const next = new Set(prev); if (allSelected) filtered.forEach((s) => next.delete(s.id)); else filtered.forEach((s) => next.add(s.id)); return next; });
-  return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
-      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}` }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
-        <div style={{ flex: 1, fontSize: 17, fontWeight: 600 }}>Send Songs</div>
-        <button onClick={toggleAll} style={{ background: "none", border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 700, color: C.accent }}>{allSelected ? "None" : "All"}</button>
-      </div>
-      <div style={{ padding: "14px 20px 6px" }}>
-        <ClearableInput autoFocus value={query} onChangeText={setQuery} placeholder="Search title or artist"
-          leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
-          style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
-      </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "6px 20px 40px" }}>
-        {filtered.map((s) => {
-          const checked = selected.has(s.id);
-          return (
-            <div key={s.id} onClick={() => toggle(s.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
-              <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                {checked && <Check size={14} color="#fff" />}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(s.title, tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ padding: 20 }}>
-        <button disabled={selected.size === 0} onClick={() => onExport([...selected])} style={{ width: "100%", fontFamily: FONT, fontWeight: 700, fontSize: 15, padding: "14px 0", borderRadius: 12, border: "none", background: selected.size ? C.accent : C.surface3, color: selected.size ? "#fff" : C.textFaint }}>
-          Send {selected.size || ""}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /* =========================================================================
    Song detail / chart viewer.
    ========================================================================= */
 function SongDetailScreen({
-  song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete, onShare,
+  song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete,
   fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize,
   isInSetlist, isSharedSetlist, syncedKeyOverride, syncedTempoOverride, onSaveOverrideToTeam,
   onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, C
@@ -3727,20 +3546,19 @@ function SongDetailScreen({
   useEffect(() => { setViewKey(contextKey ?? song.key); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mode === "drums" && engine) engine.loadSong({ ...song, tempo: contextTempo ?? song.tempo }); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const cycleSubdivision = () => engine && engine.setSubdivision((engine.subdivision % 3) + 1);
-  const wasPlayingBeforeAdjustRef = useRef(false);
-  const pauseForAdjust = () => { if (engine) { wasPlayingBeforeAdjustRef.current = engine.playing; if (engine.playing) engine.stop(); } };
-  const resumeAfterAdjust = () => { if (engine && wasPlayingBeforeAdjustRef.current) engine.start(); };
+
   // Tempo changes made here (within a setlist) are saved back onto that
   // setlist's entry as a tempoOverride, mirroring how key changes are
   // scoped to the setlist rather than overwriting the song's own tempo.
+  // Smoothly updates BPM without stopping/restarting or cranking the metronome.
   const stepBpm = (delta) => {
     if (!engine) return;
     const next = Math.min(300, Math.max(30, Math.round(engine.bpm + delta)));
     engine.setBpm(next, true);
     if (onTempoChange) onTempoChange(next);
   };
-  const decBpmHold = useHoldRepeat(() => stepBpm(-1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
-  const incBpmHold = useHoldRepeat(() => stepBpm(1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
+  const decBpmHold = useHoldRepeat(() => stepBpm(-1));
+  const incBpmHold = useHoldRepeat(() => stepBpm(1));
 
   const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
   const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
@@ -3913,7 +3731,7 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
    in Drums mode per spec #11) with Chords' setlist stage (reorder, swipe
    to delete, song picker).
    ========================================================================= */
-function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSong, onShare, onDeleteSetlist, initialPickerOpen, mode, tanglishMode, C }) {
+function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSong, onDeleteSetlist, initialPickerOpen, mode, tanglishMode, C }) {
   const [pickerOpen, setPickerOpen] = useState(!!initialPickerOpen);
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const [editingName, setEditingName] = useState(false);
@@ -3997,7 +3815,9 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
             {setlist.name}
           </button>
         )}
-        <KebabMenu onEdit={() => setPickerOpen(true)} onShare={onShare} onDelete={() => { onDeleteSetlist(setlist.id); onBack(); }} deleteConfirmMessage="Delete this setlist?" C={C} />
+        <button onClick={() => setPickerOpen(true)} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.accent, flexShrink: 0, cursor: "pointer" }}>
+          <Pencil size={18} color={C.accent} />
+        </button>
       </div>
 
       <div className="scroll-list" style={{ flex: 1, overflowY: (activeDragIndex !== null || dragging) ? "hidden" : "auto", padding: "0 20px 14px", boxSizing: "border-box", touchAction: (activeDragIndex !== null || dragging) ? "none" : "pan-y" }}>
@@ -4603,9 +4423,9 @@ function BottomNav({ active, onChange, mode, C }) {
           const isPiano = Icon === PianoIcon;
           return (
             <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
-              {/* Allow the piano icon to be naturally wider than 18px; constrain only height */}
+              {/* Allow the piano icon to be naturally balanced; constrain height */}
               <div style={{ height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Icon size={18} height={isPiano ? 18 : undefined} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
+                <Icon size={isPiano ? 16 : 18} height={isPiano ? 16 : undefined} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
               </div>
               <span style={{ fontSize: 8, color: isActive ? C.accent : C.textMuted, fontWeight: isActive ? 600 : 400 }}>{label}</span>
             </button>
@@ -4884,7 +4704,7 @@ function AppInner() {
   const [teamKeyModalOpen, setTeamKeyModalOpen] = useState(false);
   const [stageIndex, setStageIndex] = useState(null);
   const [stageAutoOpenPicker, setStageAutoOpenPicker] = useState(false);
-  const [exportPickerOpen, setExportPickerOpen] = useState(false);
+  const [pianoQuality, setPianoQuality] = useState("Major");
   const [toastMsg, setToastMsg] = useState("");
 
   // A stable ref that always holds the latest performSync so that save functions
@@ -4939,7 +4759,8 @@ function AppInner() {
         key: bandKey,
         state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists },
         revision: syncRevision.current,
-        changed: isChanged
+        changed: isChanged,
+        deviceId: getDeviceId()
       });
       syncRevision.current = result.revision;  // { global: N, team: M }
       localStorage.setItem("zong:revision", JSON.stringify(result.revision));
@@ -5080,6 +4901,9 @@ function AppInner() {
   const handleSaveTeamKey = (newKey) => {
     const clean = newKey.trim().toUpperCase();
     setTeamKeyModalOpen(false);
+    if (bandKey && bandKey !== clean) {
+      leaveTeam({ teamKey: bandKey, deviceId: getDeviceId() });
+    }
     localStorage.setItem("zong:access-key", clean);
     localStorage.removeItem("zong:revision");
     syncRevision.current = { global: 0, team: 0 };
@@ -5095,6 +4919,9 @@ function AppInner() {
   };
 
   const handleLeaveTeam = () => {
+    if (bandKey) {
+      leaveTeam({ teamKey: bandKey, deviceId: getDeviceId() });
+    }
     localStorage.setItem("zong:access-key", "");
     localStorage.removeItem("zong:revision");
     syncRevision.current = { global: 0, team: 0 };
@@ -5126,7 +4953,7 @@ function AppInner() {
   // on-screen keyboard — even though html/body are position:fixed, this
   // still drags every fixed-position element (including the bottom nav)
   // upward with it. The app never actually uses window/document scrolling
-  // itself (all real scrolling happens inside internal .scroll-list divs,
+  // itself (all real scrolling happens internal .scroll-list divs,
   // whose scroll events don't bubble to window), so pinning any window-level
   // scroll straight back to the top neutralises this without touching any
   // legitimate scrolling in the app.
@@ -5272,22 +5099,11 @@ function AppInner() {
   const handleUpdateSongAccents = (songId, accents) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, accents } : s)));
   const handleUpdateSongSubdivision = (songId, subdivision) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, subdivision } : s)));
 
-  const exportSongsByIds = async (ids) => {
-    const chosen = songs.filter((s) => ids.includes(s.id));
-    const result = await shareOrDownloadJSON(`Songs_Export.json`, { type: "songs", exportedAt: new Date().toISOString(), songs: chosen });
-    if (result === "cancelled") return;
-    flash(result === "shared" ? `Shared ${chosen.length} song${chosen.length === 1 ? "" : "s"}` : `Downloaded ${chosen.length} song${chosen.length === 1 ? "" : "s"}`);
-  };
-  const exportSingleSong = async (song) => {
-    const result = await shareOrDownloadJSON(`${song.title}.json`, { type: "songs", exportedAt: new Date().toISOString(), songs: [song] });
-    if (result === "cancelled") return;
-    flash(result === "shared" ? "Shared song" : "Downloaded song");
-  };
-  const exportSetlist = async (setlist) => {
-    const entries = setlist.entries.map((e) => ({ song: songs.find((s) => s.id === e.songId), keyOverride: e.keyOverride, tempoOverride: e.tempoOverride })).filter((e) => e.song);
-    const result = await shareOrDownloadJSON(`${setlist.name}.json`, { type: "setlist", exportedAt: new Date().toISOString(), setlist: { name: setlist.name, entries } });
-    if (result === "cancelled") return;
-    flash(result === "shared" ? `Shared setlist "${setlist.name}"` : `Downloaded setlist "${setlist.name}"`);
+  const handleLoadSongToPiano = (song) => {
+    const q = song.keyQuality || "Major";
+    setPianoQuality(q);
+    setTab("practice");
+    flash(`Loaded ${song.title} into Chord Piano`);
   };
 
   const importSongsBatch = (rawSongs) => {
@@ -5362,10 +5178,10 @@ function AppInner() {
         {tab === "practice" && (
           mode === "drums"
             ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
-            : <PianoScreen C={C} mode={mode} />
+            : <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
         )}
         {tab === "songs" && (
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         )}
         {tab === "setlists" && (
           <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
@@ -5418,7 +5234,6 @@ function AppInner() {
           onBack={() => setViewing(null)}
           onEdit={(s) => { setViewing(null); setEditingSong(s); }}
           onDelete={requestDeleteSong}
-          onShare={exportSingleSong}
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
@@ -5434,15 +5249,10 @@ function AppInner() {
           onBack={() => setStageIndex(null)}
           onUpdateSetlist={handleUpdateSetlist}
           onOpenSong={(s) => setViewing({ songId: s.id, fromSetlistId: setlists[stageIndex].id })}
-          onShare={() => exportSetlist(setlists[stageIndex])}
           onDeleteSetlist={handleDeleteSetlist}
           initialPickerOpen={stageAutoOpenPicker}
           mode={mode} tanglishMode={tanglishMode} C={C}
         />
-      )}
-
-      {exportPickerOpen && (
-        <SongExportPicker songs={songs} onClose={() => setExportPickerOpen(false)} onExport={(ids) => { exportSongsByIds(ids); setExportPickerOpen(false); }} tanglishMode={tanglishMode} C={C} />
       )}
 
       {spellingChartOpen && (

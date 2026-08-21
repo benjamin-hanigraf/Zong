@@ -157,18 +157,24 @@ async function writeGlobal({ songs, spellingChart, baseRevision }) {
 async function readTeam(teamKey) {
   const { data, error } = await client()
     .from("zong_teams")
-    .select("revision, shared_setlists")
+    .select("revision, shared_setlists, subscribers")
     .eq("team_key", teamKey)
     .maybeSingle();          // returns null if team doesn't exist yet
 
   if (error) throw new Error(`Team pull failed: ${error.message}`);
   return {
     revision:       data?.revision        ?? 0,
-    sharedSetlists: data?.shared_setlists ?? []
+    sharedSetlists: data?.shared_setlists ?? [],
+    subscribers:    Array.isArray(data?.subscribers) ? data.subscribers : []
   };
 }
 
-async function writeTeam({ teamKey, sharedSetlists, baseRevision }) {
+async function writeTeam({ teamKey, sharedSetlists, baseRevision, deviceId, currentSubscribers = [] }) {
+  const nextSubs = Array.isArray(currentSubscribers) ? [...currentSubscribers] : [];
+  if (deviceId && !nextSubs.includes(deviceId)) {
+    nextSubs.push(deviceId);
+  }
+
   // UPSERT so the row is created automatically on first push for new teams
   const { data, error } = await client()
     .from("zong_teams")
@@ -176,6 +182,7 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision }) {
       team_key:        teamKey,
       shared_setlists: sharedSetlists,
       revision:        baseRevision + 1,
+      subscribers:     nextSubs,
       updated_at:      new Date().toISOString()
     }, {
       onConflict:       "team_key",
@@ -183,7 +190,7 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision }) {
     })
     // Supabase upsert doesn't support optimistic locking natively; we'll
     // use a separate update with the revision check for conflict detection
-    .select("revision, shared_setlists");
+    .select("revision, shared_setlists, subscribers");
 
   if (error) throw new Error(`Team push failed: ${error.message}`);
 
@@ -198,8 +205,49 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision }) {
 
   return {
     revision:       written.revision,
-    sharedSetlists: written.shared_setlists ?? sharedSetlists
+    sharedSetlists: written.shared_setlists ?? sharedSetlists,
+    subscribers:    written.subscribers     ?? nextSubs
   };
+}
+
+/**
+ * Leaves a team by removing the device from its subscribers list.
+ * If 0 subscribers remain, the team row is automatically deleted from Supabase.
+ */
+export async function leaveTeam({ teamKey, deviceId }) {
+  if (!teamKey || !isSupabaseConfigured()) return;
+  try {
+    const { data: team, error } = await client()
+      .from("zong_teams")
+      .select("subscribers, shared_setlists")
+      .eq("team_key", teamKey)
+      .maybeSingle();
+
+    if (error || !team) return;
+
+    let subs = Array.isArray(team.subscribers) ? team.subscribers : [];
+    if (deviceId) {
+      subs = subs.filter((id) => id !== deviceId);
+    }
+
+    if (subs.length === 0) {
+      console.log(`[Zong Team] Deleting team ${teamKey} because 0 subscribers remain.`);
+      await client()
+        .from("zong_teams")
+        .delete()
+        .eq("team_key", teamKey);
+    } else {
+      await client()
+        .from("zong_teams")
+        .update({
+          subscribers: subs,
+          updated_at: new Date().toISOString()
+        })
+        .eq("team_key", teamKey);
+    }
+  } catch (err) {
+    console.error("[Zong Team] Error during leaveTeam:", err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +257,7 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision }) {
 //  (accepts plain number for backward-compat with stored localStorage values)
 // ---------------------------------------------------------------------------
 
-export async function syncLibrary({ key, state, revision = 0, changed }) {
+export async function syncLibrary({ key, state, revision = 0, changed, deviceId }) {
   const isTeam = Boolean(key && key.trim());
 
   // Normalise revision (handle legacy plain-number values stored in localStorage)
@@ -280,11 +328,26 @@ export async function syncLibrary({ key, state, revision = 0, changed }) {
     nextTeam.revision = remoteTeam.revision;
     nextTeam.sharedSetlists = remoteTeam.sharedSetlists;
 
+    if (deviceId && Array.isArray(remoteTeam.subscribers) && !remoteTeam.subscribers.includes(deviceId)) {
+      const updatedSubs = [...remoteTeam.subscribers, deviceId];
+      try {
+        await client()
+          .from("zong_teams")
+          .update({ subscribers: updatedSubs, updated_at: new Date().toISOString() })
+          .eq("team_key", key);
+        remoteTeam.subscribers = updatedSubs;
+      } catch (e) {
+        console.warn("[Zong Sync] Failed to register subscriber:", e);
+      }
+    }
+
     if (changed) {
       const pushedTeam = await writeTeam({
-        teamKey:        key,
-        sharedSetlists: state.sharedSetlists ?? [],
-        baseRevision:   rev.team
+        teamKey:            key,
+        sharedSetlists:     state.sharedSetlists ?? [],
+        baseRevision:       rev.team,
+        deviceId,
+        currentSubscribers: remoteTeam.subscribers
       });
       if (!pushedTeam) {
         teamConflict = true;
