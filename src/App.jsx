@@ -1267,18 +1267,18 @@ function resyncContentWithLyrics(content, newLyricsText) {
 /* =========================================================================
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
-function PianoIcon({ size = 20, height, color, strokeWidth }) {
-  // Simplified, narrower piano icon with black keys only (no white key lines)
+function PianoIcon({ size = 18, height, color, strokeWidth }) {
+  // Simplified, refined piano icon with black keys only and matching line weight
   const h = height ?? size;
   const w = Math.round(h * 1.32);
-  const sw = strokeWidth ?? 1.5;
+  const sw = strokeWidth ? Math.min(strokeWidth * 0.72, 1.4) : 1.2;
   return (
     <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 24 18" fill="none">
-      <rect x="1.2" y="1.2" width="21.6" height="15.6" rx="2.5" stroke={color} strokeWidth={sw} />
+      <rect x="1" y="1" width="22" height="16" rx="2.5" stroke={color} strokeWidth={sw} />
       {/* Clean black keys */}
-      <rect x="5.2" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
-      <rect x="10.8" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
-      <rect x="16.4" y="1.2" width="2.4" height="8.5" fill={color} rx="0.6" />
+      <rect x="5.5" y="1" width="2" height="8" fill={color} rx="0.5" />
+      <rect x="11" y="1" width="2" height="8" fill={color} rx="0.5" />
+      <rect x="16.5" y="1" width="2" height="8" fill={color} rx="0.5" />
     </svg>
   );
 }
@@ -1855,23 +1855,36 @@ function PianoScreen({ C, mode }) {
 
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
-      <div style={{ height: 42, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>
+      <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>
           {isVocals ? "Chord Piano" : "Piano"}
         </div>
         {isVocals ? (
-          // Vocals mode: Ultra-compact Major / Minor chord quality toggle with clear gap below
-          <div style={{ width: 110, height: 26, flexShrink: 0 }}>
-            <TabSelect
-              options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]}
-              value={chordQuality}
-              onChange={setChordQuality}
-              compact
-              height={26}
-              fontSize={10.5}
-              padding="2px"
-              C={C}
-            />
+          // Vocals mode: Clean segmented Major / Minor switch matching Add/Edit song style
+          <div style={{ display: "flex", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 3, gap: 4 }}>
+            {["Major", "Minor"].map((q) => {
+              const active = chordQuality === q;
+              return (
+                <button
+                  key={q}
+                  onClick={() => setChordQuality(q)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 7,
+                    border: "none",
+                    fontFamily: FONT,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    background: active ? C.accentSoft : "transparent",
+                    color: active ? C.accent : C.textMuted,
+                    cursor: "pointer",
+                    transition: "all 150ms ease"
+                  }}
+                >
+                  {q}
+                </button>
+              );
+            })}
           </div>
         ) : (
           // Other modes: octave up/down
@@ -2734,14 +2747,12 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
         return (
           <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
-              // Compute total width needed for any tag in this group so long drum/chord tags never get truncated
-              const tagDrivenWidth = g.items.reduce((maxW, it, idx) => {
-                if (!it.tok.tag) return maxW;
+              const maxTagLen = g.items.reduce((max, it) => {
+                if (!it.tok.tag) return max;
                 const label = flatify(it.tok.tag);
-                const neededWidth = idx + (label.length * (tagSize / fontSize));
-                return Math.max(maxW, neededWidth);
-              }, g.items.length);
-
+                return Math.max(max, label.length);
+              }, 0);
+              const tagDrivenWidth = maxTagLen * (tagSize / fontSize);
               if (g.type !== "word") {
                 const repItem = g.items.find((it) => it.tok.tag) || g.items[0];
                 const hasTag = Boolean(repItem?.tok?.tag);
@@ -2760,7 +2771,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   </span>
                 );
               }
-              const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : Math.max(g.items.length, tagDrivenWidth);
+              const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
                   {g.items.map(renderChar)}
@@ -3858,7 +3869,7 @@ function SongDetailScreen({
               {isVocals ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
               ) : (
-                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={true} letterSpacing={letterSpacing} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} letterSpacing={letterSpacing} />
               )}
             </div>
           ));
@@ -4114,7 +4125,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
           autoFocus
           value={draftTamil}
           onChange={(e) => setDraftTamil(e.target.value)}
-          onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+          onFocus={scrollFieldIntoView}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="தமிழ்"
@@ -4122,7 +4133,7 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
         <input
           value={draftLatin}
           onChange={(e) => setDraftLatin(e.target.value)}
-          onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+          onFocus={scrollFieldIntoView}
           onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
           style={inputStyle}
           placeholder="Tanglish"
@@ -4229,20 +4240,23 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
 
   return (
     <div
+      className="scroll-list"
       onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
       style={{
-        position: "fixed", inset: 0, width: "100%", height: "100%",
+        position: "fixed", inset: 0, zIndex: 150,
         background: C.bg, color: C.text, fontFamily: FONT,
-        zIndex: 110, display: "flex", flexDirection: "column", overflow: "hidden",
-        paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box",
+        overflowY: dragging ? "hidden" : "auto",
+        touchAction: dragging ? "none" : "pan-y",
+        boxSizing: "border-box",
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60,
         transform: `translateX(${dragX}px)`,
-        transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none",
-        touchAction: dragging ? "none" : "pan-y"
+        transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none"
       }}
       {...handlers}
     >
-      {/* Header */}
-      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+      {/* Sticky Header matching SongForm */}
+      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button
           onClick={(e) => { e.stopPropagation(); handleBack(); }}
           style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6 }}
@@ -4252,16 +4266,14 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         <div style={{ fontSize: 17, fontWeight: 700 }}>Spelling Chart</div>
       </div>
 
-      {/* Scrollable content — dynamic bottom padding expands when keyboard is up, clean normal padding when closed */}
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: "0 20px", paddingBottom: keyboardInset ? `${keyboardInset + 60}px` : "40px", boxSizing: "border-box" }}>
-
+      <div style={{ padding: 20, width: "100%", boxSizing: "border-box" }}>
         {/* Subtitle */}
-        <div style={{ padding: "10px 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
+        <div style={{ padding: "0 0 12px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.5 }}>
           Custom transliteration overrides. Tap any row to edit.
         </div>
 
         {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, marginBottom: 4, padding: "0 12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, marginBottom: 6, padding: "0 12px" }}>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tamil</div>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
         </div>
@@ -4280,7 +4292,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="தமிழ்"
                 value={draftTamil}
                 onChange={(e) => setDraftTamil(e.target.value)}
-                onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4288,7 +4300,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
                 placeholder="Tanglish"
                 value={draftLatin}
                 onChange={(e) => setDraftLatin(e.target.value)}
-                onFocus={(e) => { const el = e.currentTarget; setTimeout(() => el.scrollIntoView({ block: "center", behavior: "smooth" }), 200); }}
+                onFocus={scrollFieldIntoView}
                 onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
                 style={inputStyle}
               />
@@ -4472,7 +4484,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     editable={false} dim={true} showLyrics={true} brightTags={true}
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
-                    padWordForTag={true}
+                    padWordForTag={false}
                   />
                 ) : (
                   <ChordText
