@@ -1621,22 +1621,25 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
 
-    // Rich full voicing: deep bass root (-24), bass root (-12), root (0), 3rd, 5th, high 5th (+19)
-    // The sub-bass and bass give the chord fullness without jarring; we keep them
-    // soft and heavily low-passed so they don't distort on phone speakers.
-    const majorIntervals = [-24, -12, 0, 4, 7, 19];
-    const minorIntervals = [-24, -12, 0, 3, 7, 19];
-    const intervals = quality === "Minor" ? minorIntervals : majorIntervals;
-
-    // Per-note gain weights: sub-bass is very soft, bass is moderate, upper notes normal
-    const gainForInterval = (i) => {
-      if (i <= -24) return 0.18;  // sub-bass – present but never boomy
-      if (i <= -12) return 0.30;  // bass root – anchors the chord
-      if (i === 0)  return 0.22;  // root
-      if (i === 4 || i === 3) return 0.18;  // 3rd
-      if (i === 7)  return 0.16;  // 5th
-      return 0.13;  // upper extension
-    };
+    // Always anchor the pad to octave 2 (C2 = MIDI 36 … B2 = MIDI 47) so the
+    // chord sounds warm and full regardless of which piano key the user presses.
+    // Pressing higher keys (F#, G, A, B…) would have previously played thin,
+    // sharp-sounding pads; now every key produces a rich low voicing.
+    //
+    // Voicing: [bass root, 3rd, 5th, root+octave]
+    //   C key  → C2, E2/Eb2, G2, C3
+    //   G key  → G2, B2/Bb2, D3, G3
+    //   B key  → B2, D#3/D3, F#3, B3
+    // — never goes above ~B3 (MIDI 59, ~247Hz), always warm.
+    const rootMidi = 36 + rootSemitone; // fixed to octave 2
+    const thirdInterval = quality === "Minor" ? 3 : 4;
+    const notesMidi = [
+      rootMidi,                   // bass root (C2 range)
+      rootMidi + thirdInterval,   // 3rd
+      rootMidi + 7,               // 5th
+      rootMidi + 12,              // root +octave (the "one extra root note")
+    ];
+    const noteGains = [0.32, 0.22, 0.20, 0.18];
 
     // Master low-pass: 1600Hz is warm and phone-safe; Q=0.6 avoids resonance peak
     const masterFilter = ctx.createBiquadFilter();
@@ -1651,24 +1654,19 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     masterGain.connect(dest);
 
     const oscs = [];
-    intervals.forEach((interval) => {
-      const midi = (octaveStartRef.current + 1) * 12 + rootSemitone + interval;
+    notesMidi.forEach((midi, idx) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
-      // Per-note filter: bass notes get a tight low-pass so no harsh harmonics reach the speaker
+      // Per-note low-pass: keep bass notes dark so they don't muddy phone speakers
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      if (interval <= -24) {
-        filt.frequency.value = Math.min(400, freq * 2.5);  // sub-bass stays very dark
-      } else if (interval <= -12) {
-        filt.frequency.value = Math.min(700, freq * 2.8);  // bass – warm but not muddy
-      } else {
-        filt.frequency.value = Math.min(2200, freq * 2.8); // upper notes – full but not harsh
-      }
+      filt.frequency.value = idx === 0
+        ? Math.min(600, freq * 2.5)   // bass root — very warm
+        : Math.min(1800, freq * 2.8); // upper notes — full but not harsh
       filt.Q.value = 0.5;
 
       const noteGain = ctx.createGain();
-      noteGain.gain.value = gainForInterval(interval);
+      noteGain.gain.value = noteGains[idx];
 
       const osc = ctx.createOscillator();
       osc.type = "sine";
