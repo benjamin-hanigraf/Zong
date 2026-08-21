@@ -1636,10 +1636,11 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     //   • 3rd and 5th — detuned sine pairs, softer than root. Give the chord
     //     harmonic context so it sounds "complete" rather than just a single note.
     //
-    // Register: sub-root in C3, main chord in C4–G4 — exactly the register a
-    // keyboard player uses to give a vocalist their starting pitch.
-
-    const rootMidi = 60 + rootSemitone; // C4 (middle C) range — vocal register
+    // Register: Centered vocal sweet spot (F3 to F4) via Octave Folding:
+    // C through F (semitones 0-5) are in Octave 4 (C4-F4).
+    // F# through B (semitones 6-11) fold down to Octave 3 (F#3-B3).
+    // This prevents high notes like G, A, B from screeching into soprano/tinny registers on phone speakers.
+    const rootMidi = (rootSemitone >= 6 ? 48 : 60) + rootSemitone;
     const thirdInterval = quality === "Minor" ? 3 : 4;
 
     // [midi, gain, lowpassCutoffHz, detuneCents, waveType]
