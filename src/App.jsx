@@ -1631,7 +1631,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     //   G key  → G2, B2/Bb2, D3, G3
     //   B key  → B2, D#3/D3, F#3, B3
     // — never goes above ~B3 (MIDI 59, ~247Hz), always warm.
-    const rootMidi = 36 + rootSemitone; // fixed to octave 2
+    const rootMidi = 48 + rootSemitone; // fixed to octave 3 (C3–B3)
     const thirdInterval = quality === "Minor" ? 3 : 4;
     const notesMidi = [
       rootMidi,                   // bass root (C2 range)
