@@ -1267,11 +1267,18 @@ function resyncContentWithLyrics(content, newLyricsText) {
 /* =========================================================================
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
-function PianoIcon({ size = 20, color }) {
+function PianoIcon({ size = 20, height, color, strokeWidth }) {
+  // Render at a landscape aspect ratio (~1.55:1) so that the visual weight
+  // matches the square Lucide icons at the same HEIGHT. The caller can
+  // pass either `size` (square) or a separate `height` to constrain only
+  // the vertical dimension and let the icon be naturally wider.
+  const h = height ?? size;
+  const w = Math.round(h * 1.55);
+  const sw = strokeWidth ?? 1.5;
   return (
-    <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      <rect x="4" y="6" width="16" height="12" rx="2" stroke={color} strokeWidth="1.5" />
-      <path d="M9.5 6v7M14.5 6v7" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 31 20" fill="none">
+      <rect x="1" y="1" width="29" height="18" rx="2" stroke={color} strokeWidth={sw} />
+      <path d="M7 1v18M13 1v18M19 1v18M25 1v18M10 1v11M16 1v11M22 1v11" stroke={color} strokeWidth={sw} strokeLinecap="round" />
     </svg>
   );
 }
@@ -1487,7 +1494,7 @@ function unlockAudioPlayback() {
   }
 }
 
-function PianoScreen({ C }) {
+function PianoScreen({ C, mode }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const audioCtxRef = useRef(null);
@@ -1497,6 +1504,10 @@ function PianoScreen({ C }) {
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
   const isLandscapeScreen = useIsLandscapeScreen();
+  const isVocals = mode === "vocals";
+  const [chordQuality, setChordQuality] = useState("Major");
+  const chordQualityRef = useRef("Major");
+  useEffect(() => { chordQualityRef.current = chordQuality; }, [chordQuality]);
 
   useEffect(() => { octaveStartRef.current = octaveStart; }, [octaveStart]);
   const setOctaveStart = (n) => setOctaveStartState(Math.min(5, Math.max(3, n)));
@@ -1644,6 +1655,68 @@ function PianoScreen({ C }) {
       voice.oscillators.forEach((node) => { try { node.stop(now + 0.20); } catch { } });
     } catch { }
   };
+
+  // --- Warm pad chord voice for Vocals mode -----------------------------------
+  // Plays a 6-note two-octave chord (root triad + octave triad) using sine
+  // oscillators through a warm lowpass filter. Sustains until stopPadChord()
+  // is called on pointer-up. A single piano-tone root note plays alongside it
+  // so the root pitch is easy to hear.
+  const startPadChord = (rootSemitone) => {
+    const ctx = ensureCtx();
+    const now = ctx.currentTime;
+    const dest = masterCompRef.current || ctx.destination;
+    const quality = chordQualityRef.current;
+    const majorIntervals = [0, 4, 7, 12, 16, 19];
+    const minorIntervals = [0, 3, 7, 12, 15, 19];
+    const intervals = quality === "Minor" ? minorIntervals : majorIntervals;
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0, now);
+    masterGain.gain.linearRampToValueAtTime(0.48, now + 0.2);
+    masterGain.connect(dest);
+
+    const oscs = [];
+    intervals.forEach((interval, i) => {
+      const midi = (octaveStartRef.current + 1) * 12 + rootSemitone + interval;
+      const freq = 440 * Math.pow(2, (midi - 69) / 12);
+
+      const filt = ctx.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.value = Math.min(4200, freq * 5.5);
+      filt.Q.value = 0.5;
+
+      const noteGain = ctx.createGain();
+      // Lower octave slightly louder; upper voices sit back
+      noteGain.gain.value = i < 3 ? 0.72 : 0.46;
+
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      // Tiny random detune per partial for warmth / chorus
+      osc.detune.value = (Math.random() - 0.5) * 9;
+      osc.connect(filt);
+      filt.connect(noteGain);
+      noteGain.connect(masterGain);
+      osc.start(now);
+      oscs.push(osc);
+    });
+
+    return { masterGain, oscillators: oscs };
+  };
+
+  const stopPadChord = (padVoice) => {
+    if (!padVoice || !audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    const now = ctx.currentTime;
+    try {
+      padVoice.masterGain.gain.cancelScheduledValues(now);
+      padVoice.masterGain.gain.setValueAtTime(padVoice.masterGain.gain.value, now);
+      padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      padVoice.oscillators.forEach(osc => { try { osc.stop(now + 0.38); } catch { } });
+    } catch { }
+  };
+  // ---------------------------------------------------------------------------
+
   const keyAt = (x, y) => {
     const hitEl = document.elementFromPoint(x, y);
     if (!hitEl) return null;
@@ -1660,12 +1733,24 @@ function PianoScreen({ C }) {
     e.preventDefault();
     const hit = keyAt(e.clientX, e.clientY);
     if (!hit) return;
-    const voice = startVoice(hit.semitone);
-    activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, keyEl: hit.el });
+    if (isVocals) {
+      // Chord pad + root piano note for pitch clarity
+      const padVoice = startPadChord(hit.semitone);
+      const pianoVoice = startVoice(hit.semitone);
+      activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: pianoVoice, padVoice, keyEl: hit.el });
+    } else {
+      const voice = startVoice(hit.semitone);
+      activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
+    }
     paintKey(hit.el, true);
   };
 
   useEffect(() => {
+    const stopEntry = (entry) => {
+      if (!entry) return;
+      stopVoice(entry.voice);
+      if (entry.padVoice) stopPadChord(entry.padVoice);
+    };
     const handleMove = (e) => {
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
@@ -1673,11 +1758,17 @@ function PianoScreen({ C }) {
       const hit = keyAt(e.clientX, e.clientY);
       const newSemitone = hit ? hit.semitone : null;
       if (newSemitone === entry.semitone) return;
-      stopVoice(entry.voice);
+      stopEntry(entry);
       paintKey(entry.keyEl, false);
       if (hit) {
-        const voice = startVoice(hit.semitone);
-        activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, keyEl: hit.el });
+        if (isVocals) {
+          const padVoice = startPadChord(hit.semitone);
+          const voice = startVoice(hit.semitone);
+          activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice, keyEl: hit.el });
+        } else {
+          const voice = startVoice(hit.semitone);
+          activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
+        }
         paintKey(hit.el, true);
       } else {
         activeRef.current.delete(e.pointerId);
@@ -1686,13 +1777,13 @@ function PianoScreen({ C }) {
     const handleUp = (e) => {
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
-      stopVoice(entry.voice);
+      stopEntry(entry);
       paintKey(entry.keyEl, false);
       activeRef.current.delete(e.pointerId);
     };
     const handleVisibility = () => {
       if (document.visibilityState !== "hidden") return;
-      activeRef.current.forEach((v) => stopVoice(v.voice));
+      activeRef.current.forEach((entry) => { stopVoice(entry.voice); if (entry.padVoice) stopPadChord(entry.padVoice); });
       activeRef.current.clear();
       if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
     };
@@ -1705,11 +1796,11 @@ function PianoScreen({ C }) {
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleUp);
       document.removeEventListener("visibilitychange", handleVisibility);
-      activeRef.current.forEach((v) => stopVoice(v.voice));
+      activeRef.current.forEach((entry) => { stopVoice(entry.voice); if (entry.padVoice) stopPadChord(entry.padVoice); });
       activeRef.current.clear();
       if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
     };
-  }, []);
+  }, [isVocals]);
 
   // Close AudioContext fully on unmount so pitch/sample-rate state doesn't accumulate
   useEffect(() => {
@@ -1756,22 +1847,37 @@ function PianoScreen({ C }) {
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.border}`, gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>Piano</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
-            width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
-            color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
-          }}>
-            <ChevronLeft size={15} />
-          </button>
-          <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
-          <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
-            width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
-            color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
-          }}>
-            <ChevronRight size={15} />
-          </button>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>
+          {isVocals ? "Chord Piano" : "Piano"}
         </div>
+        {isVocals ? (
+          // Vocals mode: Major / Minor chord quality toggle
+          <div style={{ maxWidth: 200, flex: 1, marginLeft: 12 }}>
+            <TabSelect
+              options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]}
+              value={chordQuality}
+              onChange={setChordQuality}
+              C={C}
+            />
+          </div>
+        ) : (
+          // Other modes: octave up/down
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
+              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
+              color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
+            }}>
+              <ChevronLeft size={15} />
+            </button>
+            <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
+            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
+              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
+              color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
+            }}>
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div
@@ -1874,12 +1980,18 @@ function useMetronomeEngine(settings) {
   useEffect(() => () => clearInterval(schedulerRef.current), []);
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState !== "visible" || !audioCtxRef.current) return;
-      if (audioCtxRef.current.state === "closed") {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      } else if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
-        audioCtxRef.current.resume().catch(() => { });
+      if (document.visibilityState === "hidden") {
+        // Screen locked / app backgrounded: stop the metronome entirely.
+        // iOS can throttle JS execution when hidden, causing sporadic ticks
+        // (every-other-beat effect). Stopping cleanly is the right behaviour
+        // for a PWA — the user must explicitly restart when they return.
+        if (schedulerRef.current !== null) {
+          stop();
+        }
       }
+      // Do NOT try to auto-resume on becoming visible here — the user
+      // pressed Stop intentionally. The onstatechange handler in start()
+      // takes care of resuming the context if iOS suspends it mid-session.
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
@@ -1889,11 +2001,10 @@ function useMetronomeEngine(settings) {
     const clamped = Math.min(300, Math.max(30, Math.round(v)));
     setBpmState(clamped);
     if (!keepSong) setLoadedSong(null);
-    if (playing) {
-      bpmRef.current = clamped;
-      stop();
-      start();
-    }
+    // Update the ref directly — the scheduler reads it on every 25ms tick so
+    // it picks up the new tempo immediately without stopping/restarting (which
+    // would cause the accented first-beat "crank" sound on each change).
+    bpmRef.current = clamped;
   };
   const setTimeSig = (ts) => {
     setTimeSigState(ts);
@@ -2009,16 +2120,28 @@ function useMetronomeEngine(settings) {
     unlockAudioPlayback();
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      audioCtxRef.current.onstatechange = () => {
-        const ctx = audioCtxRef.current;
-        if (ctx && (ctx.state === "suspended" || ctx.state === "interrupted") && schedulerRef.current) {
-          ctx.resume().catch(() => { });
-        }
-      };
+      const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = new AudioCtxCls();
     }
+    // Only auto-resume via onstatechange when the page is actually visible;
+    // if the screen is locked iOS suspends the context and we should NOT
+    // fight that (doing so caused the every-other-beat bleed-through).
+    audioCtxRef.current.onstatechange = () => {
+      const ctx = audioCtxRef.current;
+      if (!ctx || !schedulerRef.current) return;
+      if ((ctx.state === "suspended" || ctx.state === "interrupted") && document.visibilityState === "visible") {
+        ctx.resume().catch(() => { });
+      }
+    };
     if (audioCtxRef.current.state === "suspended" || audioCtxRef.current.state === "interrupted") {
       await audioCtxRef.current.resume();
+    }
+    // Always create a fresh compressor to reset its internal gain-reduction
+    // state — but keep the AudioContext alive so that re-starting is instant
+    // (no 150-300ms context creation delay on the first beat).
+    if (masterCompRef.current) {
+      try { masterCompRef.current.disconnect(); } catch { }
+      masterCompRef.current = null;
     }
     ensureMasterChain(audioCtxRef.current);
     beatRef.current = 0;
@@ -2033,19 +2156,18 @@ function useMetronomeEngine(settings) {
     schedulerRef.current = null;
     setPlaying(false);
     setFlashBeat(-1);
-    // Fully tear down the audio graph rather than leaving the context
-    // suspended. Reusing the same context/compressor across many
-    // start/stop cycles let internal node state (the compressor's
-    // reduction/release state in particular) carry over from one session
-    // to the next, which is what made the click perceptibly louder each
-    // time the metronome was toggled back on. Closing here forces start()
-    // to build a brand-new context and compressor from scratch every time.
+    // Suspend the context (not close) so the next start() is instant — no
+    // AudioContext creation latency, no first-beat delay. Disconnect and null
+    // the compressor so its internal reduction state is discarded, preventing
+    // the accumulating loudness bug across start/stop cycles.
     const ctx = audioCtxRef.current;
-    if (ctx && ctx.state !== "closed") {
-      try { ctx.onstatechange = null; ctx.close().catch(() => { }); } catch { }
+    if (masterCompRef.current) {
+      try { masterCompRef.current.disconnect(); } catch { }
+      masterCompRef.current = null;
     }
-    audioCtxRef.current = null;
-    masterCompRef.current = null;
+    if (ctx && ctx.state !== "closed") {
+      try { ctx.suspend().catch(() => { }); } catch { }
+    }
   };
   const toggle = () => (playing ? stop() : start());
 
@@ -2175,7 +2297,7 @@ function Knob({ value, min = 30, max = 300, onChange, size = 220, playing, onTog
           <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: "38%", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: size * 0.09 }}>
             <ChevronRight size={size * 0.1} color={C.textFaint} />
           </div>
-          <button onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onToggle(); }} style={{
+          <button onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }} style={{
             position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
             width: size * 0.34, height: size * 0.34, borderRadius: "50%", border: "none", background: "transparent", pointerEvents: "auto",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -2254,7 +2376,8 @@ function BeatAccentControl({ count, flashBeat, accents, onChange, size = 9, open
 
 function SubdivisionIcon({ value, size = 18, color }) {
   if (value === 1) {
-    return (<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><ellipse cx="7.5" cy="18" rx="4" ry="3" fill={color} /><line x1="11.3" y1="18" x2="11.3" y2="4" stroke={color} strokeWidth="2" strokeLinecap="round" /></svg>);
+    // Shift the notehead right so it reads as centered within the bounding box
+    return (<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><ellipse cx="13" cy="18" rx="4" ry="3" fill={color} /><line x1="16.8" y1="18" x2="16.8" y2="4" stroke={color} strokeWidth="2" strokeLinecap="round" /></svg>);
   }
   if (value === 2) {
     return (<svg width={size * 1.15} height={size} viewBox="0 0 28 24" fill="none"><ellipse cx="6.5" cy="19" rx="3.4" ry="2.6" fill={color} /><ellipse cx="21.5" cy="19" rx="3.4" ry="2.6" fill={color} /><line x1="9.7" y1="19" x2="9.7" y2="6" stroke={color} strokeWidth="2" strokeLinecap="round" /><line x1="24.7" y1="19" x2="24.7" y2="6" stroke={color} strokeWidth="2" strokeLinecap="round" /><line x1="9.7" y1="6" x2="24.7" y2="6" stroke={color} strokeWidth="2.2" strokeLinecap="round" /></svg>);
@@ -2584,7 +2707,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   userSelect: "none",
                 }}>+</span>
               ) : null}
-              <span style={{ color: showLyrics ? (dim ? C.textMuted : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
+              <span style={{ color: showLyrics ? (dim ? "#4D4D50" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
                 {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
               </span>
             </span>
@@ -2635,14 +2758,14 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
 /* =========================================================================
    Swipe hooks
    ========================================================================= */
-function useEdgeSwipeBack(onBack) {
+function useEdgeSwipeBack(onBack, edgeZone = 24) {
   const touchStartRef = useRef(null);
   const [dragX, setDragX] = useState(0);
   const [leaving, setLeaving] = useState(false);
   const mouseActiveRef = useRef(false);
   const start = (x, y) => {
     if (leaving) return;
-    if (x > 24) { touchStartRef.current = null; return; }
+    if (x > edgeZone) { touchStartRef.current = null; return; }
     touchStartRef.current = { x, y };
   };
   const move = (x, y) => {
@@ -3266,6 +3389,17 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
    ========================================================================= */
 function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, deleteConfirmMessage = "Delete this song?", C }) {
   const MENU_WIDTH = 170;
+  const mountTimeRef = useRef(Date.now());
+  const handleClose = (e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (Date.now() - mountTimeRef.current < 350) {
+      return;
+    }
+    onClose();
+  };
   // Anchor to the actual long-press point, clamped so the menu stays fully
   // on screen — it was previously pinned to a fixed right-edge x regardless
   // of where the press happened, so it always showed up near the bottom
@@ -3280,12 +3414,21 @@ function PositionedActionMenu({ x, y, onEdit, onShare, onDelete, onClose, delete
   // was anchoring to that row's transformed box instead of the screen,
   // landing in a different spot depending on which row/scroll position it
   // opened from.
+  // Track whether the backdrop received a touchstart — if it didn't, the
+  // touchend that follows is the release of the long-press that *opened*
+  // this menu, and we must not close on it.
+  const backdropTouchStartRef = useRef(false);
   return createPortal(
     <>
       <div
-        onClick={(e) => { stop(e); onClose(); }}
-        onTouchStart={(e) => e.stopPropagation()}
-        onTouchEnd={(e) => { stop(e); onClose(); }}
+        onTouchStart={(e) => { e.stopPropagation(); backdropTouchStartRef.current = true; }}
+        onTouchEnd={(e) => {
+          e.stopPropagation();
+          if (!backdropTouchStartRef.current) return;
+          backdropTouchStartRef.current = false;
+          onClose();
+        }}
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
         onMouseDown={(e) => e.stopPropagation()}
         style={{ position: "fixed", inset: 0, zIndex: 210 }}
       />
@@ -3366,7 +3509,7 @@ function SongRow({ song, onOpen, onEdit, onShare, onDelete, onLoadToMetronome, m
   };
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", opacity: dimmed ? 0.3 : 1, transition: dimmed ? "opacity 150ms ease" : "transform 120ms ease", transform: `translateX(${swipeDx}px)`, background: C.bg, zIndex: menuPos ? 130 : 1 }}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", opacity: dimmed ? 0.3 : 1, transition: dimmed ? "opacity 150ms ease" : "transform 120ms ease", transform: `translateX(${swipeDx}px)`, background: C.bg, zIndex: menuPos ? 130 : 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3569,7 +3712,7 @@ function SongDetailScreen({
   const decBpmHold = useHoldRepeat(() => stepBpm(-1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
   const incBpmHold = useHoldRepeat(() => stepBpm(1), { onStart: pauseForAdjust, onEnd: resumeAfterAdjust });
 
-  const edgeBack = useEdgeSwipeBack(onBack);
+  const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
   const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
   const { dragX, leaving, dragging, handlers } = isInSetlist ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers } : edgeBack;
 
@@ -3706,7 +3849,7 @@ function SongDetailScreen({
       {showBottomBar && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C" }}>
           <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
-          <button onClick={engine.toggle} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onPointerDown={(e) => { e.preventDefault(); engine.toggle(); }} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {engine.playing ? <Square size={26} color={C.accent} fill={C.accent} /> : <Play size={26} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
           </button>
           <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
@@ -3968,11 +4111,10 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
   return (
     <button
       onClick={(e) => onStartEdit(tamilKey, value, e)}
-      style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr auto", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rowBorder, background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+      style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rowBorder, background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
     >
       <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{tamilKey}</div>
       <div style={{ fontSize: 14, fontWeight: 500, color: C.textMuted, paddingRight: 8 }}>{value}</div>
-      <Pencil size={13} color={C.textFaint} />
     </button>
   );
 }
@@ -4086,52 +4228,14 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
           Custom transliteration overrides. Tap any row to edit.
         </div>
 
-        {/* ADD WORD — always at top */}
-        {activeEditKey === "__NEW__" ? (
-          <div
-            ref={activeRowRef}
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 12px", marginBottom: 12 }}
-          >
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                autoFocus
-                placeholder="தமிழ்"
-                value={draftTamil}
-                onChange={(e) => setDraftTamil(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
-              <input
-                placeholder="Tanglish"
-                value={draftLatin}
-                onChange={(e) => setDraftLatin(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={handleStartAdd}
-            style={{ width: "100%", height: 44, borderRadius: 11, border: `1px solid ${C.border}`, background: C.surface2, color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 12 }}
-          >
-            <Plus size={16} /> Add word
-          </button>
-        )}
-
         {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 0, marginBottom: 4, padding: "0 12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, marginBottom: 4, padding: "0 12px" }}>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tamil</div>
           <div style={{ fontSize: 10.5, letterSpacing: 1.4, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Tanglish</div>
-          <div style={{ width: 30 }} />
         </div>
 
         {/* Rows */}
         <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
-          {rows.length === 0 && (
-            <div style={{ padding: "24px 16px", textAlign: "center", color: C.textMuted, fontSize: 14 }}>No entries yet.</div>
-          )}
           {rows.map((key, i) => (
             <SpellingChartRow
               key={key}
@@ -4150,6 +4254,40 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
               C={C}
             />
           ))}
+          {/* Add Word row — lives at the bottom like any other row */}
+          {activeEditKey === "__NEW__" ? (
+            <div
+              ref={activeRowRef}
+              onClick={(e) => e.stopPropagation()}
+              style={{ borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 8, background: C.surface3, boxSizing: "border-box" }}
+            >
+              <input
+                autoFocus
+                placeholder="தமிழ்"
+                value={draftTamil}
+                onChange={(e) => setDraftTamil(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
+              <input
+                placeholder="Tanglish"
+                value={draftLatin}
+                onChange={(e) => setDraftLatin(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
+                style={inputStyle}
+              />
+            </div>
+          ) : (
+            <button
+              onClick={handleStartAdd}
+              style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rows.length > 0 ? `1px solid ${C.border}` : "none", background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.accent, display: "flex", alignItems: "center", gap: 6 }}>
+                <Plus size={15} /> Add word...
+              </div>
+              <div style={{ fontSize: 13.5, color: C.textFaint }}>Custom transliteration</div>
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -4388,10 +4526,12 @@ function BottomNav({ active, onChange, mode, C }) {
       <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
         {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
+          const isPiano = Icon === PianoIcon;
           return (
             <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
-              <div style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Icon size={18} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
+              {/* Allow the piano icon to be naturally wider than 18px; constrain only height */}
+              <div style={{ height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon size={18} height={isPiano ? 18 : undefined} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />
               </div>
               <span style={{ fontSize: 8, color: isActive ? C.accent : C.textMuted, fontWeight: isActive ? 600 : 400 }}>{label}</span>
             </button>
@@ -4490,10 +4630,20 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
 
 function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
   const [draft, setDraft] = useState(initialKey || "");
+  const [error, setError] = useState("");
   const keyboardInset = useKeyboardInset();
-  useEffect(() => { setDraft(initialKey || ""); }, [initialKey, isOpen]);
+  useEffect(() => { setDraft(initialKey || ""); setError(""); }, [initialKey, isOpen]);
   if (!isOpen) return null;
   const isConnected = Boolean(initialKey && initialKey.trim());
+  const handleSave = (val) => {
+    const clean = val.trim();
+    if (clean && clean.toUpperCase() !== "FACA") {
+      setError("Invalid Team Key");
+      return;
+    }
+    setError("");
+    onSave(clean);
+  };
   return createPortal(
     <div
       onClick={onClose}
@@ -4526,19 +4676,24 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
         <input
           autoFocus
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); setError(""); }}
           placeholder="Team code"
           style={{
             width: "100%", height: 42, background: C.surface3,
             border: `1px solid ${C.border}`,
             borderRadius: 10, padding: "0 12px", color: C.text,
             fontFamily: FONT, fontSize: 15, fontWeight: 600,
-            boxSizing: "border-box", outline: "none", marginBottom: 16
+            boxSizing: "border-box", outline: "none", marginBottom: error ? 12 : 16
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") onSave(draft.trim());
+            if (e.key === "Enter") handleSave(draft);
           }}
         />
+        {error && (
+          <div style={{ fontSize: 12.5, color: C.danger, fontWeight: 600, marginBottom: 16, paddingLeft: 2 }}>
+            {error}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10 }}>
           <button
             onClick={onClose}
@@ -4553,7 +4708,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
           </button>
           {isConnected && (
             <button
-              onClick={() => onSave("")}
+              onClick={() => handleSave("")}
               style={{
                 flex: 1, height: 40, borderRadius: 10,
                 border: `1px solid ${C.border}`, background: "transparent",
@@ -4565,7 +4720,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
             </button>
           )}
           <button
-            onClick={() => onSave(draft.trim())}
+            onClick={() => handleSave(draft)}
             style={{
               flex: 1, height: 40, borderRadius: 10, border: "none",
               background: C.accent, color: "#fff",
@@ -4641,11 +4796,18 @@ function AppInner() {
   const [exportPickerOpen, setExportPickerOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
 
-  const saveSongs = (next) => { syncDirty.current = true; setSongs(next); };
-  const saveSetlists = (next) => { syncDirty.current = true; setSetlists(next); };
-  const saveSpellingChart = (next) => { syncDirty.current = true; setSpellingChart(next); };
+  // A stable ref that always holds the latest performSync so that save functions
+  // defined before performSync's useCallback can still trigger an immediate push.
+  const performSyncRef = useRef(null);
+
+  const saveSongs = (next) => { syncDirty.current = true; setSongs(next); setTimeout(() => performSyncRef.current?.(true), 0); };
+  const saveSetlists = (next) => { syncDirty.current = true; setSetlists(next); setTimeout(() => performSyncRef.current?.(true), 0); };
+  const saveSpellingChart = (next) => { syncDirty.current = true; setSpellingChart(next); setTimeout(() => performSyncRef.current?.(true), 0); };
 
   const performSync = useCallback(async (force = false) => {
+    // Keep the ref in sync so save functions can call the latest closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    performSyncRef.current = performSync;
     if (!navigator.onLine || syncing.current) return;
     syncing.current = true;
     if (bandKey) setSyncStatus("Syncing…");
@@ -4723,7 +4885,13 @@ function AppInner() {
         setSongs(mergedSongs);
         setSpellingChart(mergedSpelling);
         setSetlists(mergedSetlists);
-        syncDirty.current = false;
+        if (result.conflict) {
+          // The merge produced a superset of both sides — push it back so the
+          // server is up to date and other devices can receive it.
+          syncDirty.current = true;
+        } else {
+          syncDirty.current = false;
+        }
         if (bandKey) setSyncStatus("Up to date");
       } else {
         syncDirty.current = false;
@@ -4744,8 +4912,12 @@ function AppInner() {
   }, [performSync]);
 
   const handleSaveTeamKey = (newKey) => {
-    setTeamKeyModalOpen(false);
     const clean = newKey.trim();
+    if (clean && clean.toUpperCase() !== "FACA") {
+      flash("Invalid Team Key");
+      return;
+    }
+    setTeamKeyModalOpen(false);
     localStorage.setItem("zong:access-key", clean);
     localStorage.removeItem("zong:revision");
     syncRevision.current = 0;
@@ -5011,7 +5183,7 @@ function AppInner() {
         {tab === "practice" && (
           mode === "drums"
             ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
-            : <PianoScreen C={C} />
+            : <PianoScreen C={C} mode={mode} />
         )}
         {tab === "songs" && (
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onShare={exportSingleSong} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
