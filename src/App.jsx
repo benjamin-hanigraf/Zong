@@ -1636,19 +1636,18 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     //   • 3rd and 5th — detuned sine pairs, softer than root. Give the chord
     //     harmonic context so it sounds "complete" rather than just a single note.
     //
-    // Register: Centered vocal sweet spot (F3 to F4) via Octave Folding:
-    // C through F (semitones 0-5) are in Octave 4 (C4-F4).
-    // F# through B (semitones 6-11) fold down to Octave 3 (F#3-B3).
-    // This prevents high notes like G, A, B from screeching into soprano/tinny registers on phone speakers.
-    const rootMidi = (rootSemitone >= 6 ? 48 : 60) + rootSemitone;
+    // Register: Smooth continuous Open Voicing (Root_Low + 5th + Root_High + 3rd):
+    // Spans Octaves 3 & 4 smoothly for all keys (no sudden cliff/drop between adjacent keys).
+    // Every key has BOTH a warm lower anchor (C3-B3) and a clear vocal guide note (C4-B4).
+    const baseMidi = 48 + rootSemitone; // C3 (MIDI 48) to B3 (MIDI 59)
     const thirdInterval = quality === "Minor" ? 3 : 4;
 
     // [midi, gain, lowpassCutoffHz, detuneCents, waveType]
     const notes = [
-      { midi: rootMidi - 12,             gain: 0.14, cutoff: 300,  detune: 0, wave: "triangle" }, // sub-root  — body
-      { midi: rootMidi,                  gain: 0.30, cutoff: 1500, detune: 7, wave: "sine"     }, // root      — anchor (dominant)
-      { midi: rootMidi + thirdInterval,  gain: 0.19, cutoff: 2000, detune: 6, wave: "sine"     }, // 3rd       — color
-      { midi: rootMidi + 7,              gain: 0.17, cutoff: 2000, detune: 6, wave: "sine"     }, // 5th       — stability
+      { midi: baseMidi,                   gain: 0.24, cutoff: 800,  detune: 0, wave: "sine" }, // Low Root   — warm body (130-246 Hz)
+      { midi: baseMidi + 7,               gain: 0.16, cutoff: 1600, detune: 5, wave: "sine" }, // 5th        — harmonic depth
+      { midi: baseMidi + 12,              gain: 0.28, cutoff: 1800, detune: 6, wave: "sine" }, // High Root  — vocal guide pitch (dominant)
+      { midi: baseMidi + 12 + thirdInterval, gain: 0.16, cutoff: 2000, detune: 5, wave: "sine" }, // 3rd       — major/minor color
     ];
 
     // Master low-pass: 2200 Hz is warm and phone-safe.
