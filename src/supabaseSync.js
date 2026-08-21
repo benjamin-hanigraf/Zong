@@ -12,8 +12,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL      = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_URL) || (typeof process !== "undefined" && process.env?.VITE_SUPABASE_URL);
+const SUPABASE_ANON_KEY = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_ANON_KEY) || (typeof process !== "undefined" && process.env?.VITE_SUPABASE_ANON_KEY);
 
 let _client = null;
 function client() {
@@ -295,6 +295,9 @@ export async function syncLibrary({ key, state, revision = 0, changed }) {
     }
   }
 
+  const hasGlobalUpdate = remote.revision !== rev.global;
+  const hasTeamUpdate   = isTeam && nextTeam.revision !== rev.team;
+
   return {
     revision: { global: nextGlobal.revision, team: nextTeam.revision },
     state: {
@@ -303,7 +306,7 @@ export async function syncLibrary({ key, state, revision = 0, changed }) {
       sharedSetlists: nextTeam.sharedSetlists
     },
     conflict: globalConflict || teamConflict,
-    pulled:   !changed && remote.revision > rev.global
+    pulled:   !changed && (hasGlobalUpdate || hasTeamUpdate || remote.songs.length > (state.songs?.length || 0))
   };
 }
 
@@ -323,13 +326,14 @@ let _teamChannel   = null;
 export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
   const sb = client();
 
-  // Global channel
+  // Global channel — listen to ALL events (INSERT, UPDATE, DELETE)
   _globalChannel = sb
     .channel("zong_global_changes")
     .on(
       "postgres_changes",
-      { event: "UPDATE", schema: "public", table: "zong_global", filter: "id=eq.main" },
+      { event: "*", schema: "public", table: "zong_global" },
       (payload) => {
+        console.log("[Zong Realtime] Received global change from Supabase:", payload);
         const row = payload.new;
         if (row && onGlobal) {
           onGlobal({
@@ -340,7 +344,9 @@ export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
         }
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log("[Zong Realtime] Global channel status:", status);
+    });
 
   // Team channel (only if a team key is set)
   if (teamKey && onTeam) {
@@ -350,6 +356,7 @@ export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
         "postgres_changes",
         { event: "*", schema: "public", table: "zong_teams", filter: `team_key=eq.${teamKey}` },
         (payload) => {
+          console.log("[Zong Realtime] Received team change from Supabase:", payload);
           const row = payload.new;
           if (row && onTeam) {
             onTeam({
@@ -359,7 +366,9 @@ export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`[Zong Realtime] Team (${teamKey}) channel status:`, status);
+      });
   }
 
   return function unsubscribe() {

@@ -4931,14 +4931,19 @@ function AppInner() {
       const latestSpelling = spellingChartRef.current;
       const latestSetlists = setlistsRef.current;
       const sharedSetlists = latestSetlists.filter((sl) => sl.shared);
+      const isChanged = force || syncDirty.current;
+      if (isChanged) {
+        console.log("[Zong Sync] Pushing updates to Supabase...", { songsCount: latestSongs.length, sharedSetlistsCount: sharedSetlists.length });
+      }
       const result = await syncLibrary({
         key: bandKey,
         state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists },
         revision: syncRevision.current,
-        changed: force || syncDirty.current
+        changed: isChanged
       });
       syncRevision.current = result.revision;  // { global: N, team: M }
       localStorage.setItem("zong:revision", JSON.stringify(result.revision));
+      console.log("[Zong Sync] Sync successful. Current revision:", result.revision);
 
       if (result.conflict || result.pulled) {
         const remoteSongs = result.state?.songs || [];
@@ -5040,24 +5045,20 @@ function AppInner() {
     if (isSupabaseConfigured()) {
       unsubscribeRealtime = subscribeToChanges({
         teamKey: bandKey || null,
-        onGlobal: ({ revision, songs: remoteSongs, spellingChart: remoteSpelling }) => {
-          // A remote device pushed new global data — trigger a pull-only sync
-          if (revision > (syncRevision.current?.global ?? 0)) {
-            performSync(false);
-          }
+        onGlobal: () => {
+          console.log("[Zong App] Realtime global update event received -> pulling updates");
+          performSync(false);
         },
-        onTeam: ({ revision, sharedSetlists }) => {
-          // A remote device updated this team's setlists
-          if (revision > (syncRevision.current?.team ?? 0)) {
-            performSync(false);
-          }
+        onTeam: () => {
+          console.log("[Zong App] Realtime team update event received -> pulling updates");
+          performSync(false);
         }
       });
-      // Also keep a 30-second fallback poll for reconnections after going offline
-      timer = window.setInterval(() => performSync(), 30000);
+      // Fallback fast background polling (5 seconds) to ensure guaranteed sync even without WebSockets
+      timer = window.setInterval(() => performSync(false), 5000);
     } else {
       // No Supabase — keep the original 10-second Google Sheets poll
-      timer = window.setInterval(() => performSync(), 10000);
+      timer = window.setInterval(() => performSync(false), 10000);
     }
 
     return () => {
