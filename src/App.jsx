@@ -223,7 +223,7 @@ function flatify(str) {
    ========================================================================= */
 const uid = () => "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 function toTitleCase(str) {
-  return String(str || "").toLowerCase().replace(/(^|\s|-)\S/g, (c) => c.toUpperCase());
+  return String(str || "").replace(/(^|[\s.\-_/])([a-z])/g, (_, p, c) => p + c.toUpperCase());
 }
 function parseTimeSig(str) {
   const m = String(str || "").match(/^(\d+)\s*\/\s*(\d+)$/);
@@ -375,7 +375,11 @@ function transliterateTamilWordWithOffsets(word, prevWordEndedWithSach = false) 
     if (TANGLISH_CONSONANTS[ch]) {
       const next = word[i + 1];
       const isGeminate = next === TANGLISH_PULLI && word[i + 2] === ch;
-      const voiced = TANGLISH_VOICED[ch] && !isGeminate && prevKind === "nasal";
+      // Positional voicing rule (user-specified):
+      // க, ச, ப, ட, த are voiced (ga/sa/ba/da/dha) when they appear in the
+      // middle or end of a word AND are NOT part of a geminate cluster.
+      // They are unvoiced (ka/cha/pa/ta/tha) at word-start or after their own pulli.
+      const voiced = TANGLISH_VOICED[ch] && !isGeminate && prevKind !== "start";
       // ற்ற (geminate ற) carries a "t" sound, not "rr" — e.g. ற்றி -> "tri"
       // (the first ற becomes "t", the second ற plus its vowel becomes "ri").
       const isGeminateRa = isGeminate && ch === "\u0BB1";
@@ -526,12 +530,22 @@ function transliterateTanglish(input) {
 function capitalizeTanglishLines(text) {
   return String(text || "").split("\n").map((line) => line.replace(/[a-z]/, (c) => c.toUpperCase())).join("\n");
 }
+// Capitalises the first letter of every Latin word — used for titles and
+// artist names so they read as proper-cased (e.g. "Oru Naal Kaanom").
+function capitalizeTanglishWords(text) {
+  return String(text || "").replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
 // Runs transliteration only when Tanglish mode is on and the text actually
 // contains Tamil script; otherwise passes the original text through
 // untouched (English/mixed text, or Tanglish mode off).
 function maybeTanglish(text, tanglishMode) {
   if (!tanglishMode || !text) return text;
   return TAMIL_RANGE_RE.test(text) ? capitalizeTanglishLines(transliterateTanglish(text)) : text;
+}
+// Title/artist variant: capitalises every word instead of just every line-start.
+function maybeTanglishTitle(text, tanglishMode) {
+  if (!tanglishMode || !text) return text;
+  return TAMIL_RANGE_RE.test(text) ? capitalizeTanglishWords(transliterateTanglish(text)) : text;
 }
 // Tanglish (Latin transliteration of Tamil) is harder to read letter-by-
 // letter than either script alone, so we tighten tracking slightly whenever
@@ -1650,49 +1664,86 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       { midi: baseMidi + 12 + thirdInterval, gain: 0.16, cutoff: 2000, detune: 5, wave: "sine" }, // 3rd       — major/minor color
     ];
 
-    // Master low-pass: 2200 Hz is warm and phone-safe.
-    // Rolls off any residual harshness while letting the chord breathe.
+    // ── Signal chain ──────────────────────────────────────────────────────────
+    // Master low-pass at 2200 Hz — warm and phone-safe, trims harsh overtones.
+    // Followed by a gentle compressor-friendly master gain.
+    // Each note gets a stereo panner for a wider, fuller stereo image,
+    // and two slightly-detuned sine oscillators (chorus pair) for richness.
+    // A third oscillator at the same note but one harmonic octave up (×2 freq)
+    // at very low gain adds "air" and presence without raising perceived pitch.
+
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
     masterFilter.frequency.value = 2200;
     masterFilter.Q.value = 0.5;
 
-    // Slow pad attack over 80 ms — no click, sounds like a held organ/pad chord
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.20, now + 0.08);
+    masterGain.gain.linearRampToValueAtTime(0.18, now + 0.09); // gentle attack, no pop
     masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
+    // Pan positions: Low Root slightly left, 5th slightly right, High Root center,
+    // 3rd slightly right — creates a balanced stereo spread across all 4 notes.
+    const panValues = [-0.30, 0.25, 0.00, 0.20];
+
     const oscs = [];
-    notes.forEach(({ midi, gain: noteGainVal, cutoff, detune, wave }) => {
+    notes.forEach(({ midi, gain: noteGainVal, cutoff, detune }, idx) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
-      // Per-note low-pass — sub-root gets very dark (300 Hz) to strip harmonics
-      // and prevent low-mid muddiness on phone speakers
+      // Per-note low-pass — keeps each note warm without muddiness
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
       filt.frequency.value = cutoff;
       filt.Q.value = 0.4;
 
-      // Detuned chorus pair (single osc for sub-root to keep the bass clean)
-      const detunes = detune > 0 ? [-detune / 2, detune / 2] : [0];
+      // Stereo panner for width
+      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+      if (panner) panner.pan.value = panValues[idx] ?? 0;
 
       const noteGain = ctx.createGain();
-      // Divide by pair count so total per-note level matches intended balance
-      noteGain.gain.value = noteGainVal / detunes.length;
-      filt.connect(noteGain);
+      noteGain.gain.value = noteGainVal;
+
+      // Route: filt → panner (if available) → noteGain → masterFilter
+      if (panner) {
+        filt.connect(panner);
+        panner.connect(noteGain);
+      } else {
+        filt.connect(noteGain);
+      }
       noteGain.connect(masterFilter);
 
+      // --- Chorus pair: two slightly-detuned sines for warmth & fullness ---
+      const detunes = detune > 0 ? [-detune / 2, detune / 2] : [0];
       detunes.forEach((dt) => {
         const osc = ctx.createOscillator();
-        osc.type = wave;
+        osc.type = "sine";
         osc.frequency.value = freq;
         osc.detune.value = dt;
         osc.connect(filt);
         osc.start(now);
         oscs.push(osc);
       });
+
+      // --- Harmonic air layer: quiet octave-up sine adds presence without
+      //     changing perceived pitch (inaudible as a separate note; felt as
+      //     brightness/fullness). Skip for the lowest note to avoid mud. ---
+      if (idx > 0) {
+        const airGain = ctx.createGain();
+        airGain.gain.value = noteGainVal * 0.08; // very soft — blend, not melody
+        const airFilt = ctx.createBiquadFilter();
+        airFilt.type = "lowpass";
+        airFilt.frequency.value = Math.min(cutoff * 1.4, 3000);
+        airFilt.Q.value = 0.4;
+        const airOsc = ctx.createOscillator();
+        airOsc.type = "sine";
+        airOsc.frequency.value = freq * 2; // one octave up
+        airOsc.connect(airFilt);
+        airFilt.connect(airGain);
+        airGain.connect(masterFilter);
+        airOsc.start(now);
+        oscs.push(airOsc);
+      }
     });
 
     return { masterGain, oscillators: oscs };
@@ -3307,7 +3358,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           </div>
         )}
         <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={(v) => { setTitle(v); setError(""); }} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
-        <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(v); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
+        <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(toTitleCase(v)); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
 
         <div style={{ display: "flex", gap: 14 }}>
           <div style={{ flex: 1, minWidth: 0 }}><Field label="TIME SIGNATURE"><TimeSigPicker value={timeSig} onChange={handleTimeSigChange} fullWidth C={C} /></Field></div>
@@ -3454,8 +3505,8 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
-        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -3640,8 +3691,8 @@ function SongDetailScreen({
           onMouseDown={startTitlePress} onMouseUp={cancelTitlePress} onMouseLeave={cancelTitlePress}
           style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", maxWidth: "calc(100% - 140px)", textAlign: "center", cursor: "pointer" }}
         >
-          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
-          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode)}</div>}
+          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode)}</div>}
         </div>
         {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
@@ -3761,8 +3812,8 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
   return (
     <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.title, tanglishMode)}</div>
-        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglish(song.artist, tanglishMode) || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -3968,74 +4019,160 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
    SpellingChartScreen — full-screen overlay listing every TANGLISH_EXCEPTIONS
    entry as a Tamil → Tanglish table, with inline add / edit / delete support.
    ========================================================================= */
-function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, setDraftTamil, draftLatin, setDraftLatin, onStartEdit, onDelete, onCommit, C, activeRef, scrollContainerRef }) {
-  const inputStyle = {
-    flex: 1, height: 38, borderRadius: 8, border: `1px solid ${C.border}`,
-    background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14,
-    fontWeight: 500, padding: "0 8px", outline: "none", boxSizing: "border-box", minWidth: 0,
+function SpellingChartModal({ initialTamil = "", initialLatin = "", isNew = false, onSave, onDelete, onClose, C }) {
+  const [tamil, setTamil] = useState(initialTamil);
+  const [latin, setLatin] = useState(initialLatin);
+  const [error, setError] = useState("");
+  const keyboardInset = useKeyboardInset();
+  const latinInputRef = useRef(null);
+
+  const handleSave = () => {
+    const t = tamil.trim();
+    const l = latin.trim();
+    if (!t) {
+      setError("Please enter a Tamil word");
+      return;
+    }
+    if (!l) {
+      setError("Please enter its Tanglish transliteration");
+      return;
+    }
+    onSave(t, l);
   };
 
-  const rowBorder = isFirst ? "none" : `1px solid ${C.border}`;
-
-  // On focus, scroll the row above the keyboard using direct scrollTop math.
-  // scrollIntoView() inside position:fixed containers is unreliable on Android.
-  const scrollRowIntoView = (e) => {
-    const input = e.currentTarget;
-    setTimeout(() => {
-      const container = scrollContainerRef?.current;
-      if (!container || !input) return;
-      const containerRect = container.getBoundingClientRect();
-      const inputRect = input.getBoundingClientRect();
-      // Estimate keyboard height from visualViewport if available
-      const kbHeight = window.visualViewport
-        ? Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop)
-        : 0;
-      const visibleBottom = containerRect.bottom - kbHeight;
-      if (inputRect.bottom > visibleBottom) {
-        container.scrollTop += inputRect.bottom - visibleBottom + 16;
-      }
-    }, 380);
-  };
-
-  if (isEditing) {
-    return (
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 300,
+        background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20,
+        paddingBottom: keyboardInset ? `${keyboardInset + 20}px` : 20,
+        transition: "padding-bottom 150ms ease-out",
+        overflowY: "auto",
+        boxSizing: "border-box"
+      }}
+    >
       <div
-        ref={activeRef}
         onClick={(e) => e.stopPropagation()}
-        style={{ borderTop: rowBorder, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, background: C.surface3 }}
+        style={{
+          width: "100%", maxWidth: 360, background: C.surface2,
+          border: `1px solid ${C.borderStrong}`, borderRadius: 16,
+          padding: "22px 20px 20px", boxSizing: "border-box",
+          boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT
+        }}
       >
-        <input
-          autoFocus
-          value={draftTamil}
-          onChange={(e) => setDraftTamil(e.target.value)}
-          onFocus={scrollRowIntoView}
-          onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
-          style={inputStyle}
-          placeholder="தமிழ்"
-        />
-        <input
-          value={draftLatin}
-          onChange={(e) => setDraftLatin(e.target.value)}
-          onFocus={scrollRowIntoView}
-          onKeyDown={(e) => { if (e.key === "Enter") onCommit(null); }}
-          style={inputStyle}
-          placeholder="Tanglish"
-        />
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(tamilKey); }}
-          style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.danger ?? "#FF453A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-          aria-label="Delete"
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
-    );
-  }
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+          {isNew ? <Plus size={18} color={C.accent} /> : <Pencil size={17} color={C.accent} />}
+          {isNew ? "Add Spelling Override" : "Edit Spelling Override"}
+        </div>
 
+        {error && (
+          <div style={{ color: C.danger, fontSize: 13, fontWeight: 600, padding: "8px 12px", background: "rgba(255, 69, 58, 0.12)", border: `1px solid ${C.danger}40`, borderRadius: 8, marginBottom: 14 }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 }}>
+            Tamil Word
+          </label>
+          <input
+            autoFocus
+            value={tamil}
+            onChange={(e) => { setTamil(e.target.value); setError(""); }}
+            placeholder="e.g. இயேசு"
+            style={{
+              width: "100%", height: 42, background: C.surface3,
+              border: `1px solid ${C.border}`, borderRadius: 10,
+              padding: "0 12px", color: C.text, fontFamily: FONT,
+              fontSize: 15, fontWeight: 500, boxSizing: "border-box", outline: "none"
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") latinInputRef.current?.focus();
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 6 }}>
+            Transliteration (Tanglish)
+          </label>
+          <input
+            ref={latinInputRef}
+            value={latin}
+            onChange={(e) => { setLatin(e.target.value); setError(""); }}
+            placeholder="e.g. Yesu"
+            style={{
+              width: "100%", height: 42, background: C.surface3,
+              border: `1px solid ${C.border}`, borderRadius: 10,
+              padding: "0 12px", color: C.text, fontFamily: FONT,
+              fontSize: 15, fontWeight: 500, boxSizing: "border-box", outline: "none"
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSave();
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {!isNew && onDelete && (
+            <button
+              onClick={() => onDelete(initialTamil)}
+              style={{
+                width: 40, height: 40, borderRadius: 10,
+                border: `1px solid ${C.danger ?? "#FF453A"}40`,
+                background: "rgba(255, 69, 58, 0.12)",
+                color: C.danger ?? "#FF453A",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer", flexShrink: 0
+              }}
+              aria-label="Delete override"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1, height: 40, borderRadius: 10,
+              border: `1px solid ${C.border}`, background: "transparent",
+              color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            style={{
+              flex: 1, height: 40, borderRadius: 10, border: "none",
+              background: C.accent, color: "#fff",
+              fontFamily: FONT, fontSize: 14, fontWeight: 700,
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center"
+            }}
+          >
+            {isNew ? "Add" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function SpellingChartRow({ tamilKey, value, isFirst, onClick, C }) {
+  const rowBorder = isFirst ? "none" : `1px solid ${C.border}`;
   return (
     <button
-      onClick={(e) => onStartEdit(tamilKey, value, e)}
-      style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", borderTop: rowBorder, background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+      onClick={() => onClick(tamilKey, value)}
+      style={{
+        width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr",
+        alignItems: "center", gap: 0, padding: "13px 14px",
+        borderTop: rowBorder, background: "none", border: "none",
+        textAlign: "left", cursor: "pointer", boxSizing: "border-box"
+      }}
     >
       <div style={{ fontSize: 16, fontWeight: 500, color: C.text, paddingRight: 8 }}>{tamilKey}</div>
       <div style={{ fontSize: 14, fontWeight: 500, color: C.textMuted, paddingRight: 8 }}>{value}</div>
@@ -4044,18 +4181,8 @@ function SpellingChartRow({ tamilKey, value, isFirst, isEditing, draftTamil, set
 }
 
 function SpellingChartScreen({ chart, onSave, onBack, C }) {
-  const [activeEditKey, setActiveEditKey] = useState(null); // null | "__NEW__" | string
-  const [draftTamil, setDraftTamil] = useState("");
-  const [draftLatin, setDraftLatin] = useState("");
-  const activeRowRef = useRef(null);
-  const scrollContainerRef = useRef(null);
-  const keyboardInset = useKeyboardInset();
-
-  const handleBack = () => {
-    commitActiveEdit(null);
-    onBack();
-  };
-  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(handleBack);
+  const [modalData, setModalData] = useState(null); // null | { isNew: boolean, origTamil?: string, tamil: string, latin: string }
+  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onBack);
 
   // User-added entries on top (newest-first), then seed entries below.
   const seedKeys = Object.keys(TANGLISH_EXCEPTIONS);
@@ -4063,84 +4190,32 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   const presentSeedKeys = seedKeys.filter((k) => k in chart);
   const rows = [...userKeys, ...presentSeedKeys];
 
-  const commitActiveEdit = (newKeyToEdit = null, newDraftT = "", newDraftL = "") => {
-    if (activeEditKey === "__NEW__") {
-      const t = draftTamil.trim();
-      const l = draftLatin.trim();
-      if (t && l && !chart[t]) {
-        // Prepend new custom word to the top
-        onSave({ [t]: l, ...chart });
+  const handleSaveModal = (newTamil, newLatin) => {
+    if (!modalData) return;
+    if (modalData.isNew) {
+      onSave({ [newTamil]: newLatin, ...chart });
+    } else {
+      const origTamil = modalData.origTamil;
+      const next = { ...chart };
+      if (origTamil && origTamil !== newTamil) {
+        delete next[origTamil];
       }
-    } else if (activeEditKey && chart[activeEditKey] !== undefined) {
-      const origTamil = activeEditKey;
-      const origLatin = chart[activeEditKey];
-      const t = draftTamil.trim();
-      const l = draftLatin.trim();
-      if (t && l && (t !== origTamil || l !== origLatin)) {
-        const next = { ...chart };
-        if (origTamil !== t) delete next[origTamil];
-        next[t] = l;
-        onSave(next);
-      }
+      next[newTamil] = newLatin;
+      onSave(next);
     }
-    setActiveEditKey(newKeyToEdit);
-    setDraftTamil(newDraftT);
-    setDraftLatin(newDraftL);
+    setModalData(null);
   };
 
-  const handleStartAdd = (e) => {
-    e.stopPropagation();
-    commitActiveEdit("__NEW__", "", "");
-  };
-
-  const handleStartEditRow = (key, val, e) => {
-    e.stopPropagation();
-    if (activeEditKey === key) return;
-    commitActiveEdit(key, key, val);
-  };
-
-  const handleDelete = (key) => {
-    if (activeEditKey === key) {
-      setActiveEditKey(null);
-    }
+  const handleDeleteModal = (tamilKey) => {
     const next = { ...chart };
-    delete next[key];
+    delete next[tamilKey];
     onSave(next);
-  };
-
-  // Scroll the active editing row into view above the keyboard.
-  // scrollIntoView() is unreliable inside position:fixed overflow containers on
-  // Android Chrome, so we calculate scrollTop directly on the container instead.
-  useEffect(() => {
-    if (!activeEditKey || !activeRowRef.current || !scrollContainerRef.current) return;
-    // Wait for the keyboard to finish animating open (~380 ms on Android)
-    const timer = setTimeout(() => {
-      const container = scrollContainerRef.current;
-      const row = activeRowRef.current;
-      if (!container || !row) return;
-      const containerRect = container.getBoundingClientRect();
-      const rowRect = row.getBoundingClientRect();
-      // The visible height is the total container height minus the keyboard inset
-      const visibleBottom = containerRect.bottom - keyboardInset;
-      if (rowRect.bottom > visibleBottom) {
-        // Row is hidden behind the keyboard — scroll it into view with 16px clearance
-        container.scrollTop += rowRect.bottom - visibleBottom + 16;
-      }
-    }, 380);
-    return () => clearTimeout(timer);
-  }, [activeEditKey, keyboardInset]);
-
-  const inputStyle = {
-    flex: 1, height: 40, borderRadius: 8, border: `1px solid ${C.border}`,
-    background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 15,
-    fontWeight: 500, padding: "0 10px", outline: "none", boxSizing: "border-box", minWidth: 0,
+    setModalData(null);
   };
 
   return (
     <div
-      ref={scrollContainerRef}
       className="scroll-list"
-      onClick={() => { if (activeEditKey) commitActiveEdit(null); }}
       style={{
         position: "fixed", inset: 0, zIndex: 150,
         background: C.bg, color: C.text, fontFamily: FONT,
@@ -4148,7 +4223,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         touchAction: dragging ? "none" : "pan-y",
         boxSizing: "border-box",
         paddingTop: "env(safe-area-inset-top, 0px)",
-        paddingBottom: keyboardInset ? Math.max(80, keyboardInset + 80) : 60,
+        paddingBottom: "max(40px, env(safe-area-inset-bottom, 0px))",
         transform: `translateX(${dragX}px)`,
         transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none"
       }}
@@ -4157,8 +4232,8 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
       {/* Sticky Header matching SongForm */}
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button
-          onClick={(e) => { e.stopPropagation(); handleBack(); }}
-          style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6 }}
+          onClick={onBack}
+          style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6, cursor: "pointer" }}
         >
           <ChevronLeft size={22} />
         </button>
@@ -4173,64 +4248,41 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
 
         {/* Rows with Add Word at the TOP */}
         <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
-          {/* Add Word inline top row */}
-          {activeEditKey === "__NEW__" ? (
-            <div
-              ref={activeRowRef}
-              onClick={(e) => e.stopPropagation()}
-              style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 8, background: C.surface3, boxSizing: "border-box" }}
-            >
-              <input
-                autoFocus
-                placeholder="தமிழ்"
-                value={draftTamil}
-                onChange={(e) => setDraftTamil(e.target.value)}
-                onFocus={scrollFieldIntoView}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
-              <input
-                placeholder="Tanglish"
-                value={draftLatin}
-                onChange={(e) => setDraftLatin(e.target.value)}
-                onFocus={scrollFieldIntoView}
-                onKeyDown={(e) => { if (e.key === "Enter") commitActiveEdit(null); }}
-                style={inputStyle}
-              />
+          {/* Add Word top button */}
+          <button
+            onClick={() => setModalData({ isNew: true, tamil: "", latin: "" })}
+            style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 14px", background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600, color: C.accent, display: "flex", alignItems: "center", gap: 6 }}>
+              <Plus size={15} /> Add word...
             </div>
-          ) : (
-            <button
-              onClick={handleStartAdd}
-              style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", alignItems: "center", gap: 0, padding: "13px 12px", background: "none", border: "none", textAlign: "left", cursor: "pointer", boxSizing: "border-box" }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.accent, display: "flex", alignItems: "center", gap: 6 }}>
-                <Plus size={15} /> Add word...
-              </div>
-              <div style={{ fontSize: 13, color: C.textFaint }}>Custom transliteration</div>
-            </button>
-          )}
+            <div style={{ fontSize: 13, color: C.textFaint }}>Custom transliteration</div>
+          </button>
 
-          {rows.map((key) => (
+          {rows.map((key, idx) => (
             <SpellingChartRow
               key={key}
               tamilKey={key}
               value={chart[key]}
               isFirst={false}
-              isEditing={activeEditKey === key}
-              draftTamil={draftTamil}
-              setDraftTamil={setDraftTamil}
-              draftLatin={draftLatin}
-              setDraftLatin={setDraftLatin}
-              onStartEdit={handleStartEditRow}
-              onDelete={handleDelete}
-              onCommit={commitActiveEdit}
-              activeRef={activeEditKey === key ? activeRowRef : null}
-              scrollContainerRef={scrollContainerRef}
+              onClick={(tKey, val) => setModalData({ isNew: false, origTamil: tKey, tamil: tKey, latin: val })}
               C={C}
             />
           ))}
         </div>
       </div>
+
+      {modalData && (
+        <SpellingChartModal
+          initialTamil={modalData.tamil}
+          initialLatin={modalData.latin}
+          isNew={modalData.isNew}
+          onSave={handleSaveModal}
+          onDelete={handleDeleteModal}
+          onClose={() => setModalData(null)}
+          C={C}
+        />
+      )}
     </div>
   );
 }
