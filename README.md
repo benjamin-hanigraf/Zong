@@ -136,13 +136,29 @@ Located inside `src/App.jsx`, this engine converts Tamil-script song lyrics and 
 
 #### Positional Voicing Rules
 Consonants alternate between unvoiced and voiced forms based on their phonetic position:
-- **Middle / End Voicing**: When **க, ச, ப, ட, த** appear in the middle or end of a word without their twin pulli letter, they are voiced as `ga, sa, ba, da, dha` (e.g., `பகை` → `pagai`).
-- **Geminate Suppression**: When preceded by their own pulli letter (`க்+க`, `ச்+ச`, `ப்+ப`, `ட்+ட`, `த்+த`), they remain unvoiced as `ka, cha, pa, ta, tha` (e.g., `பக்கம்` → `pakkam`).
-- **Special Clusters**:
-  - `ங்க` → `nga` (nasal drops double `g`).
-  - `ற்ற` → `tra` / `tri` (geminate `ற` sounds as `t` + `r`).
-  - `ட்ச` → `cha` (retroflex assimilation).
-  - `ய்` + vowel → diphthong conversion (e.g., `-ஆய்` → `-aai`).
+- **க (KA / GA)**:
+  - At word-start or after twin pulli `க்` (`க்க`): **`ka / kka`** (e.g. `பக்கம்` → `pakkam`).
+  - In middle or end without `க்` in front: **`ga`** (e.g. `பகை` → `pagai`, `மகன்` → `magan`).
+- **ச (SA / CHA)**:
+  - At word-start or in middle without `ச்` in front: **`sa`** (e.g. `விசை` → `visai`, `சமாதானம்` → `samaadhaanam`).
+  - After twin pulli `ச்` (`ச்ச`): **`cha`** (e.g. `பச்சை` → `pachai`, `மகிழ்ச்சி` → `magizhchi`, `பேச்சு` → `pechu`).
+  - After `ட்` (`ட்ச`): **`cha`** (e.g. `காட்சி` → `kaatchi`).
+- **ப (PA / BA)**:
+  - At word-start or after twin pulli `ப்` (`ப்ப`): **`pa / ppa`** (e.g. `படம்` → `padam`, `அப்பம்` → `appam`).
+  - In middle or end without `ப்` in front: **`ba`** (e.g. `கிருபை` → `kirubai`, `சுபாவம்` → `subaavam`, `அன்பு` → `anbu`).
+- **ட (TA / DA)**:
+  - At word-start or after twin pulli `ட்` (`ட்ட`): **`ta / tta`** (e.g. `பாட்டு` → `paattu`, `கூட்டம்` → `koottam`).
+  - In middle or end without `ட்` in front: **`da`** (e.g. `படம்` → `padam`, `நாடகம்` → `naadagam`, `வண்டு` → `vandu`).
+- **த (THA / DHA)**:
+  - At word-start or after twin pulli `த்` (`த்த`): **`tha / ttha`** (e.g. `தமிழ்` → `thamizh`, `பத்து` → `pathu`, `நித்தம்` → `nitham`).
+  - In middle or end without `த்` in front: **`dha`** (e.g. `வேதம்` → `vedham`, `கவிதை` → `kavidhai`, `தந்தை` → `thandhai`).
+- **Special Clusters & Vowel Rules**:
+  - `ன்ற` / `ன்றி` / `ன்று` → **`ndr` + vowel** (e.g. `நன்றி` → `nandri`, `என்று` → `endru`).
+  - `ஞ்ச` / `ஞ்சி` / `ஞ்சு` → **`nj` + vowel** (e.g. `தஞ்சை` → `thanjai`, `பஞ்சு` → `panju`, `மஞ்சள்` → `manjal`).
+  - `ங்க` → **`nga`** (nasal drops double `g` → `தங்கம்` → `thangam`).
+  - `ற்ற` → **`tra / tri`** (geminate `ற` sounds as `t` + `r` → `காற்று` → `kaatru`).
+  - `ஔ` / `ௌ` → **`ou`** (e.g. `கௌரவம்` → `gouravam`, `பௌர்ணமி` → `pournami`).
+  - `ய்` + vowel → diphthong conversion (e.g. `-ஆய்` → `-aai`).
 
 #### Tag-Preserving Character Offset Mapping
 Chord tags embedded inside words (e.g., `ப[G]ரிசுத்த[Am]ரே`) are mapped through an offset-tracking array (`transliterateTamilWordWithOffsets`), ensuring chord markers land on the exact syllable in Tanglish without drift.

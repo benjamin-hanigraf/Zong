@@ -297,7 +297,7 @@ const TANGLISH_PULLI = "\u0BCD";
 // "oo"), ஊ -> "oo" (not "uu" — e.g. பூமி -> "Boomi", not "Buumi").
 const TANGLISH_VOWELS = {
   "\u0B85": "a", "\u0B86": "aa", "\u0B87": "i", "\u0B88": "ee", "\u0B89": "u", "\u0B8A": "oo",
-  "\u0B8E": "e", "\u0B8F": "ae", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "o", "\u0B94": "au",
+  "\u0B8E": "e", "\u0B8F": "ae", "\u0B90": "ai", "\u0B92": "o", "\u0B93": "o", "\u0B94": "ou",
   "\u0B83": "h",
 };
 // Base (unvoiced) forms — used at word-start, when geminated (doubled), and
@@ -320,7 +320,7 @@ const TANGLISH_VOICED = {
 const TANGLISH_NASALS = new Set(["\u0B99", "\u0B9E", "\u0BA3", "\u0BA8", "\u0BAE", "\u0BA9"]);
 const TANGLISH_VOWEL_SIGNS = {
   "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ee", "\u0BC1": "u", "\u0BC2": "oo",
-  "\u0BC6": "e", "\u0BC7": "ae", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "o", "\u0BCC": "au",
+  "\u0BC6": "e", "\u0BC7": "ae", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "o", "\u0BCC": "ou",
 };
 const TANGLISH_DIGITS = {
   "\u0BE6": "0", "\u0BE7": "1", "\u0BE8": "2", "\u0BE9": "3", "\u0BEA": "4",
@@ -343,6 +343,7 @@ const TANGLISH_EXCEPTIONS = {
   "ஆராதனை": "Aaraadhanai", "ஆராதிக்கிறோம்": "Aaraadhikkirom",
   "நன்றி": "Nandri", "மகிழ்ச்சி": "Magizhchi", "சமாதானம்": "Samaadhaanam",
   "நித்தியம்": "Nithiyam", "பாடுவோம்": "Paaduvom", "பாராட்டு": "Paaraattu",
+  "கௌரவம்": "Gouravam",
 };
 // Runtime-mutable copy — replaced by the persisted user dictionary at startup
 // and kept in sync whenever the user edits the Spelling Chart.
@@ -354,93 +355,147 @@ function setActiveTanglishExceptions(map) { activeTanglishExceptions = map; }
 // character later be spliced into the precise corresponding spot in the
 // transliterated output, even mid-syllable (between a consonant and its
 // own vowel sign).
-const SA = "\u0B9A"; // ச
+const KA = "\u0B95";          // க
+const NGA = "\u0B99";         // ங
+const SA = "\u0B9A";          // ச
+const NYA = "\u0B9E";         // ஞ
 const TA_RETROFLEX = "\u0B9F"; // ட
-const THA = "\u0BA4"; // த
-const YA = "\u0BAF"; // ய
+const THA = "\u0BA4";         // த
+const NNNA = "\u0BA9";        // ன
+const PA = "\u0BAA";          // ப
+const YA = "\u0BAF";          // ய
+const RA_HARD = "\u0BB1";     // ற
+
 // Returns true if the word ends with ச் (ச + pulli, with nothing after).
 function wordEndsWithSachPulli(word) {
   const len = word.length;
   return len >= 2 && word[len - 2] === SA && word[len - 1] === TANGLISH_PULLI;
 }
+
 function transliterateTamilWordWithOffsets(word, prevWordEndedWithSach = false) {
   let out = "";
-  let prevKind = "start"; // "start" | "vowel" | "nasal" | "other"
-  let prevCh = ""; // actual previous consonant character (before its pulli)
+  let prevConsonant = "";
+  let prevHadPulli = false;
   const offsets = new Array(word.length + 1);
   let i = 0;
+
   while (i < word.length) {
     offsets[i] = out.length;
     const ch = word[i];
+
     if (TANGLISH_CONSONANTS[ch]) {
       const next = word[i + 1];
-      const isGeminate = next === TANGLISH_PULLI && word[i + 2] === ch;
-      // Positional voicing rule (user-specified):
-      // க, ச, ப, ட, த are voiced (ga/sa/ba/da/dha) when they appear in the
-      // middle or end of a word AND are NOT part of a geminate cluster.
-      // They are unvoiced (ka/cha/pa/ta/tha) at word-start or after their own pulli.
-      const voiced = TANGLISH_VOICED[ch] && !isGeminate && prevKind !== "start";
-      // ற்ற (geminate ற) carries a "t" sound, not "rr" — e.g. ற்றி -> "tri"
-      // (the first ற becomes "t", the second ற plus its vowel becomes "ri").
-      const isGeminateRa = isGeminate && ch === "\u0BB1";
-      // ங்க never doubles its "g" — the nasal ங் drops its own "ng" spelling
-      // down to a bare "n" whenever it's immediately voicing a following க,
-      // so the pair reads as "nga" instead of "ngga".
-      const isNgaCluster = ch === "\u0B99" && next === TANGLISH_PULLI && word[i + 2] === "\u0B95";
-      // த்த geminate: the doubled த produces a single "th" (not "thth").
-      // Suppress the leading த் entirely; the following த will carry the "th" + vowel.
-      const isGeminateTha = isGeminate && ch === THA;
-      // ட்ச cluster: ச after ட் is always "ch" (retroflex stop + sibilant assimilation).
-      const isDotaSa = ch === SA && prevCh === TA_RETROFLEX && prevKind === "other";
-      // ச at word-start when previous word ended with ச் — treat as "cha"-initial.
-      const isSaAfterSach = ch === SA && i === 0 && prevWordEndedWithSach;
-      // ச் at word-end (ச followed by pulli as the very last two chars) → "ch".
-      const isSaWordFinal = ch === SA && next === TANGLISH_PULLI && i + 2 === word.length;
-      // ய followed by pulli: the /y/ offglide becomes an "i" vowel (e.g. -ஆய் → -aai).
-      const isYaPulli = ch === YA && next === TANGLISH_PULLI;
+      const isPulli = next === TANGLISH_PULLI;
+      const isGeminate = isPulli && word[i + 2] === ch;
+      const isAfterTwinPulli = prevConsonant === ch && prevHadPulli;
+      const isWordStart = i === 0;
 
-      let base;
-      if (isGeminateRa) base = "t";
-      else if (isNgaCluster) base = "n";
-      else if (isGeminateTha) base = ""; // suppressed — second த does the work
-      else if (isDotaSa || isSaAfterSach) base = "ch";
-      else if (isSaWordFinal) base = "ch";
-      else if (isYaPulli) base = "i";
-      else if (voiced) base = TANGLISH_VOICED[ch];
-      else base = TANGLISH_CONSONANTS[ch];
+      // Special cluster checks:
+      const isGeminateRa = isGeminate && ch === RA_HARD;
+      const isNgaCluster = ch === NGA && isPulli && word[i + 2] === KA;
+      const isNjaCluster = ch === NYA && isPulli && word[i + 2] === SA;
+      const isNraCluster = ch === NNNA && isPulli && word[i + 2] === RA_HARD;
+      const isDotaSa = ch === SA && prevConsonant === TA_RETROFLEX && prevHadPulli;
+      const isAfterNja = ch === SA && prevConsonant === NYA && prevHadPulli;
+      const isAfterNra = ch === RA_HARD && prevConsonant === NNNA && prevHadPulli;
+      const isSaAfterSach = ch === SA && isWordStart && prevWordEndedWithSach;
+      const isSaWordFinal = ch === SA && isPulli && i + 2 === word.length;
+      const isYaPulli = ch === YA && isPulli;
 
-      const isNasal = TANGLISH_NASALS.has(ch);
+      let base = "";
+
+      if (isPulli) {
+        // --- PURE CONSONANT WITH PULLI (Mei Ezhuthu) ---
+        if (isGeminate && (ch === SA || ch === THA)) {
+          // ச்ச and த்த: suppress the leading pulli so the second twin consonant
+          // produces the full clean cluster (e.g. பச்சை -> pachai, பத்து -> pathu)
+          base = "";
+        } else if (isGeminateRa) {
+          base = "t"; // ற் in ற்ற carries a "t" sound -> "tri"
+        } else if (isNgaCluster || isNjaCluster || isNraCluster) {
+          base = "n"; // ங் in ங்க, ஞ் in ஞ்ச, ன் in ன்ற emit clean "n"
+        } else if (isSaWordFinal) {
+          base = "ch";
+        } else if (isYaPulli) {
+          base = "i"; // ய் offglide vowel
+        } else {
+          base = TANGLISH_CONSONANTS[ch] || "";
+        }
+      } else {
+        // --- CONSONANT WITH VOWEL OR STANDALONE CONSONANT (Uyirmei Ezhuthu) ---
+        if (ch === KA) {
+          // க: word-start or after twin pulli க் -> "k"; middle/end without க் -> "g"
+          base = (isWordStart || isAfterTwinPulli) ? "k" : "g";
+        } else if (ch === SA) {
+          // ச: after twin pulli ச் (ச்ச) -> "ch"; after ட் (ட்ச) -> "ch";
+          // after ஞ் (ஞ்ச) -> "j"; word-start -> "s"; middle/end without ச் -> "s"
+          if (isAfterNja) {
+            base = "j";
+          } else if (isAfterTwinPulli || isDotaSa || isSaAfterSach) {
+            base = "ch";
+          } else {
+            base = "s";
+          }
+        } else if (ch === PA) {
+          // ப: word-start or after twin pulli ப் -> "p"; middle/end without ப் -> "b"
+          base = (isWordStart || isAfterTwinPulli) ? "p" : "b";
+        } else if (ch === TA_RETROFLEX) {
+          // ட: word-start or after twin pulli ட் -> "t"; middle/end without ட் -> "d"
+          base = (isWordStart || isAfterTwinPulli) ? "t" : "d";
+        } else if (ch === THA) {
+          // த: word-start or after twin pulli த் -> "th"; middle/end without த் -> "dh"
+          base = (isWordStart || isAfterTwinPulli) ? "th" : "dh";
+        } else if (ch === RA_HARD) {
+          // ற: after ன் (ன்ற) -> "dr" (e.g. நன்றி -> nandri, என்று -> endru)
+          base = isAfterNra ? "dr" : "r";
+        } else {
+          base = TANGLISH_CONSONANTS[ch] || "";
+        }
+      }
+
       if (isYaPulli) {
-        // ய் → "i" (no separate pulli output, consumed here)
         out += base;
         offsets[i + 1] = out.length;
-        prevKind = "vowel";
-        prevCh = ch;
+        prevConsonant = YA;
+        prevHadPulli = true;
         i += 2;
-      } else if (next === TANGLISH_PULLI) {
+      } else if (isPulli) {
         out += base;
         offsets[i + 1] = out.length;
-        prevKind = isNasal ? "nasal" : "other";
-        prevCh = ch;
+        prevConsonant = ch;
+        prevHadPulli = true;
         i += 2;
       } else if (next && TANGLISH_VOWEL_SIGNS[next]) {
-        // For ட்ச + vowel sign: base is already "ch", add vowel normally.
         out += base;
         offsets[i + 1] = out.length;
         out += TANGLISH_VOWEL_SIGNS[next];
-        prevKind = "vowel";
-        prevCh = ch;
+        prevConsonant = ch;
+        prevHadPulli = false;
         i += 2;
       } else {
-        out += base + (base === "" ? "" : "a"); // suppressed geminate emits nothing
-        prevKind = "vowel";
-        prevCh = ch;
+        out += base + (base === "" ? "" : "a");
+        prevConsonant = ch;
+        prevHadPulli = false;
         i += 1;
       }
-    } else if (TANGLISH_VOWELS[ch]) { out += TANGLISH_VOWELS[ch]; prevKind = "vowel"; prevCh = ""; i += 1; }
-    else if (TANGLISH_DIGITS[ch]) { out += TANGLISH_DIGITS[ch]; prevKind = "other"; prevCh = ""; i += 1; }
-    else { out += ch; prevKind = "start"; prevCh = ""; i += 1; }
+    } else if (TANGLISH_VOWELS[ch]) {
+      out += TANGLISH_VOWELS[ch];
+      prevConsonant = "";
+      prevHadPulli = false;
+      i += 1;
+    } else if (TANGLISH_DIGITS[ch]) {
+      out += TANGLISH_DIGITS[ch];
+      prevConsonant = "";
+      prevHadPulli = false;
+      i += 1;
+    } else {
+      out += ch;
+      prevConsonant = "";
+      prevHadPulli = false;
+      i += 1;
+    }
   }
+
   offsets[word.length] = out.length;
   return { out, offsets };
 }
