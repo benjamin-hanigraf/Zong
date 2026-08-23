@@ -98,8 +98,9 @@ Zong dynamically reorganizes its user interface based on the active musician mod
    - Right-swiping any song row loads that song's key & quality into the Chord Piano.
    - Add/Edit song default section tab opens directly to **Lyrics**.
 2. **Chords Mode**:
-   - Displays chord sheets and chart views with real-time transposition.
-   - Includes quick toggles between **Chords** (inline bracketed notation) and **Chart** (Nashville Number grid).
+   - Displays chord progressions and charts with real-time transposition.
+   - Includes quick toggles between **Chords** tab (pure chord progression sheet without lyrics) and **Chart** tab (chord chart with chords embedded over lyrics).
+   - **Chords Tab Engine**: Uses `ChordsOnlyBlock` to render clean chord lines (Nashville numbers or letter chords) and plain text notes without embedding chords into invisible lyric character grids.
    - Add/Edit song default section tab opens directly to **Chords**.
 3. **Drums Mode**:
    - First tab in bottom navigation is the **Metronome**.

@@ -2883,6 +2883,132 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
 }
 
 /* =========================================================================
+   Chords-only tab renderer (Chords mode -> Chords view)
+   Displays pure chord progressions (Nashville numbers or letter chords)
+   and plain text instructions without embedding onto lyric character grids.
+   ========================================================================= */
+function formatChordsOnlyToken(token, viewKey, keyQuality, nashvilleMode) {
+  const trimmed = String(token || "").trim();
+  if (!trimmed) return token;
+  if (nashvilleMode) {
+    if (isValidNashvilleToken(trimmed)) return flatify(trimmed);
+    const asNumber = chordToNumberToken(trimmed, viewKey, keyQuality);
+    return flatify(asNumber);
+  } else {
+    if (isValidNashvilleToken(trimmed)) {
+      return flatify(tokenToChord(trimmed, viewKey, keyQuality));
+    }
+    return flatify(trimmed);
+  }
+}
+
+function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
+  const line = String(rawLine || "");
+  const segments = [];
+  let i = 0;
+
+  while (i < line.length) {
+    // Bracketed chord token: e.g. [1], [6m], [G], [4/1]
+    if (line[i] === "[") {
+      const end = line.indexOf("]", i);
+      if (end !== -1) {
+        const inner = line.slice(i + 1, end).trim();
+        if (isValidNashvilleToken(inner) || CHORD_ROOT_RE.test(inner)) {
+          const formatted = formatChordsOnlyToken(inner, viewKey, keyQuality, nashvilleMode);
+          segments.push({ type: "chord", text: formatted });
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+
+    // Space run
+    if (/\s/.test(line[i])) {
+      let j = i;
+      while (j < line.length && /\s/.test(line[j])) j++;
+      segments.push({ type: "space", text: line.slice(i, j) });
+      i = j;
+      continue;
+    }
+
+    // Word / punctuation run
+    let j = i;
+    while (j < line.length && !/\s|\[/.test(line[j])) j++;
+    const word = line.slice(i, j);
+
+    if (isValidNashvilleToken(word.trim())) {
+      const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
+      segments.push({ type: "chord", text: formatted });
+    } else if (CHORD_ROOT_RE.test(word.trim()) && !/[a-z]{3,}/i.test(word.trim())) {
+      const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
+      segments.push({ type: "chord", text: formatted });
+    } else {
+      segments.push({ type: "text", text: word });
+    }
+    i = j;
+  }
+
+  return segments;
+}
+
+function ChordsOnlyBlock({ lines, viewKey, keyQuality, nashvilleMode, textAlign = "left", fontSize = 22, chordFontSize, lineSpacing = 1.75, lyricsBold, notesBold, tanglishMode, C }) {
+  const cSize = chordFontSize != null ? chordFontSize : fontSize;
+  const tSize = fontSize * 0.92;
+  const cWeight = notesBold ? 800 : 700;
+  const tWeight = lyricsBold ? 700 : 500;
+
+  return (
+    <div style={{ fontFamily: MONO, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", lineHeight: `${lineSpacing}em` }}>
+      {lines.map((line, li) => {
+        const segments = parseChordsOnlyLine(line, viewKey, keyQuality, nashvilleMode);
+        return (
+          <div key={li} style={{ minHeight: `${lineSpacing * 0.9}em`, marginBottom: Math.max(4, fontSize * 0.2) }}>
+            {segments.map((seg, si) => {
+              if (seg.type === "space") {
+                return <span key={si}>{seg.text}</span>;
+              }
+              if (seg.type === "chord") {
+                return (
+                  <span
+                    key={si}
+                    style={{
+                      display: "inline-block",
+                      fontSize: cSize,
+                      fontWeight: cWeight,
+                      color: C.accent,
+                      fontFamily: MONO,
+                      letterSpacing: 0.5,
+                      padding: "0 1px",
+                    }}
+                  >
+                    {seg.text}
+                  </span>
+                );
+              }
+              const displayText = maybeTanglish(seg.text, tanglishMode);
+              return (
+                <span
+                  key={si}
+                  style={{
+                    display: "inline-block",
+                    fontSize: tSize,
+                    fontWeight: tWeight,
+                    color: C.textMuted,
+                    fontFamily: FONT,
+                  }}
+                >
+                  {displayText}
+                </span>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* =========================================================================
    Swipe hooks
    ========================================================================= */
 function useEdgeSwipeBack(onBack, edgeZone = 24) {
@@ -3825,8 +3951,30 @@ function SongDetailScreen({
           </div>
         )}
         {(() => {
+          if (mode === "chords" && chordsView === "chords") {
+            const rawText = ms.chordsText;
+            return parseTextIntoBlocks(rawText).map((block, idx) => (
+              <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
+                <ChordsOnlyBlock
+                  lines={block.lines}
+                  viewKey={viewKey}
+                  keyQuality={song.keyQuality}
+                  nashvilleMode={nashvilleMode}
+                  textAlign={textAlign}
+                  fontSize={fontSize}
+                  chordFontSize={chordFontSize}
+                  lineSpacing={lineSpacing}
+                  lyricsBold={lyricsBold}
+                  notesBold={notesBold}
+                  tanglishMode={tanglishMode}
+                  C={C}
+                />
+              </div>
+            ));
+          }
+
           let displayText = activeRawText;
-          if (mode === "chords" && chordsView === "chords") displayText = sanitizeChordsOnlyNashville(displayText);
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
