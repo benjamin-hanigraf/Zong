@@ -2975,7 +2975,7 @@ function ChordsOnlyBlock({ lines, viewKey, keyQuality, nashvilleMode, textAlign 
                       display: "inline-block",
                       fontSize: cSize,
                       fontWeight: cWeight,
-                      color: C.accent,
+                      color: C.text,
                       fontFamily: MONO,
                       letterSpacing: 0.5,
                       padding: "0 1px",
