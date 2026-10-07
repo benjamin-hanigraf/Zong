@@ -175,38 +175,50 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision, deviceId, curr
     nextSubs.push(deviceId);
   }
 
+  // Fetch true current remote state so we never clobber existing setlists
+  let remote;
+  try {
+    remote = await readTeam(teamKey);
+  } catch {
+    remote = { revision: 0, sharedSetlists: [], subscribers: [] };
+  }
+
+  // Merge remote setlists with local setlists by ID (newer updatedAt wins)
+  const mergedMap = new Map();
+  (remote.sharedSetlists || []).forEach((rsl) => {
+    mergedMap.set(rsl.id, rsl);
+  });
+  (sharedSetlists || []).forEach((lsl) => {
+    const existing = mergedMap.get(lsl.id);
+    if (!existing || (lsl.updatedAt || 0) >= (existing.updatedAt || 0)) {
+      mergedMap.set(lsl.id, lsl);
+    }
+  });
+  const merged = Array.from(mergedMap.values());
+  const targetRevision = Math.max(remote.revision || 0, baseRevision || 0) + 1;
+
   // UPSERT so the row is created automatically on first push for new teams
   const { data, error } = await client()
     .from("zong_teams")
     .upsert({
       team_key:        teamKey,
-      shared_setlists: sharedSetlists,
-      revision:        baseRevision + 1,
+      shared_setlists: merged,
+      revision:        targetRevision,
       subscribers:     nextSubs,
       updated_at:      new Date().toISOString()
     }, {
       onConflict:       "team_key",
       ignoreDuplicates: false
     })
-    // Supabase upsert doesn't support optimistic locking natively; we'll
-    // use a separate update with the revision check for conflict detection
     .select("revision, shared_setlists, subscribers");
 
   if (error) throw new Error(`Team push failed: ${error.message}`);
 
-  // Check if another device already bumped the revision ahead of us.
-  // Supabase upsert always writes, so we verify the written revision is
-  // exactly baseRevision + 1 (meaning no race happened).
   const written = data?.[0];
-  if (!written || written.revision !== baseRevision + 1) {
-    // Conflict: re-read and return the latest
-    return null;
-  }
-
   return {
-    revision:       written.revision,
-    sharedSetlists: written.shared_setlists ?? sharedSetlists,
-    subscribers:    written.subscribers     ?? nextSubs
+    revision:       written?.revision ?? targetRevision,
+    sharedSetlists: written?.shared_setlists ?? merged,
+    subscribers:    written?.subscribers     ?? nextSubs
   };
 }
 
@@ -351,15 +363,22 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       });
       if (!pushedTeam) {
         teamConflict = true;
-        // Keep remote team state on conflict
       } else {
         nextTeam = pushedTeam;
       }
+    } else {
+      // Pulling: combine remote shared setlists with local so unsynced local shared setlists aren't erased
+      const mergedMap = new Map();
+      (remoteTeam.sharedSetlists || []).forEach((rsl) => mergedMap.set(rsl.id, rsl));
+      (state.sharedSetlists || []).forEach((lsl) => {
+        if (!mergedMap.has(lsl.id)) mergedMap.set(lsl.id, lsl);
+      });
+      nextTeam.sharedSetlists = Array.from(mergedMap.values());
     }
   }
 
   const hasGlobalUpdate = remote.revision !== rev.global;
-  const hasTeamUpdate   = isTeam && nextTeam.revision !== rev.team;
+  const hasTeamUpdate   = isTeam && (nextTeam.revision !== rev.team || nextTeam.sharedSetlists.length !== (state.sharedSetlists?.length || 0));
 
   return {
     revision: { global: nextGlobal.revision, team: nextTeam.revision },
@@ -369,7 +388,7 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       sharedSetlists: nextTeam.sharedSetlists
     },
     conflict: globalConflict || teamConflict,
-    pulled:   !changed && (hasGlobalUpdate || hasTeamUpdate || remote.songs.length > (state.songs?.length || 0))
+    pulled:   !changed && (hasGlobalUpdate || hasTeamUpdate || remote.songs.length > (state.songs?.length || 0) || (isTeam && (nextTeam.sharedSetlists?.length || 0) > 0))
   };
 }
 

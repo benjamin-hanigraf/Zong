@@ -152,6 +152,8 @@ const CLICK_TONES = [
   { id: "sharp", name: "Sharp" },
   { id: "cowbell", name: "Cowbell" },
 ];
+// Global localStorage key for beat subdivision — stored per device, not synced to Supabase.
+const SUBDIVISION_STORAGE_KEY = "zong:global-subdivision";
 const PAN_OPTIONS = [
   { id: "left", label: "Left" },
   { id: "center", label: "Centre" },
@@ -231,14 +233,18 @@ function parseTimeSig(str) {
   return { beats: parseInt(m[1], 10), unit: parseInt(m[2], 10) };
 }
 const formatTimeSig = (ts) => `${ts.beats}/${ts.unit}`;
-const keyLabel = (song) => flatify(`${song.key}${song.keyQuality === "Minor" ? "m" : ""}`);
+const keyLabel = (song) => {
+  if (!song.key || song.key === "") return "–";
+  return flatify(`${song.key}${song.keyQuality === "Minor" ? "m" : ""}`);
+};
 function decomposeKey(keyStr) {
-  const natural = (keyStr || "C")[0];
-  const suffix = (keyStr || "C").slice(1);
+  if (!keyStr) return { natural: "", accidental: "natural" };
+  const natural = keyStr[0];
+  const suffix = keyStr.slice(1);
   const accidental = suffix === "b" ? "flat" : suffix === "#" ? "sharp" : "natural";
   return { natural, accidental };
 }
-const composeKey = (natural, accidental) => natural + (accidental === "flat" ? "b" : accidental === "sharp" ? "#" : "");
+const composeKey = (natural, accidental) => natural ? natural + (accidental === "flat" ? "b" : accidental === "sharp" ? "#" : "") : "";
 const KEY_ENHARMONIC_FIX = { "E#": "F", "B#": "C", Cb: "B", Fb: "E" };
 function parseKeyPaste(raw) {
   const m = String(raw || "").trim().match(/^([A-Ga-g])\s*([#b])?\s*(maj(?:or)?|min(?:or)?|m)?\.?$/i);
@@ -1001,11 +1007,15 @@ function TimeSigPicker({ value, onChange, fullWidth, height = 44, fontSize, styl
 }
 
 const NATURALS = ["C", "D", "E", "F", "G", "A", "B"];
+const NATURAL_OPTIONS = [
+  { id: "", label: "–" },
+  ...NATURALS.map((n) => ({ id: n, label: n }))
+];
 function NaturalDropdown({ value, onChange, C }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const btnRef = useRef(null);
-  const DROPDOWN_HEIGHT = 296;
+  const DROPDOWN_HEIGHT = 320;
   const handleToggle = () => {
     if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
@@ -1021,7 +1031,7 @@ function NaturalDropdown({ value, onChange, C }) {
         border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
         fontFamily: FONT, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <span>{value}</span>
+        <span>{value || "–"}</span>
       </button>
       {open && (
         <>
@@ -1032,14 +1042,14 @@ function NaturalDropdown({ value, onChange, C }) {
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
             boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
-            {NATURALS.map((n) => {
-              const active = n === value;
+            {NATURAL_OPTIONS.map(({ id, label }) => {
+              const active = id === (value || "");
               return (
-                <div key={n} onClick={() => { onChange(n); setOpen(false); }} style={{
+                <div key={label} onClick={() => { onChange(id); setOpen(false); }} style={{
                   padding: "12px 14px", fontFamily: FONT, fontSize: 15, fontWeight: 700, textAlign: "center",
-                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
+                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent", cursor: "pointer",
                 }}>
-                  {n}
+                  {label}
                 </div>
               );
             })}
@@ -1102,7 +1112,7 @@ function GenericDropdown({ value, options, onChange, C }) {
 }
 
 function AccidentalButton({ variant, natural, value, onChange, C }) {
-  const disabled = variant === "flat" ? (natural === "C" || natural === "F") : (natural === "E" || natural === "B");
+  const disabled = !natural || (variant === "flat" ? (natural === "C" || natural === "F") : (natural === "E" || natural === "B"));
   const active = value === variant;
   const icon = variant === "flat" ? "\u266d" : "\u266f";
   return (
@@ -1525,12 +1535,99 @@ function unlockAudioPlayback() {
   }
 }
 
+/* =========================================================================
+   Shared Audio Assets & Loader (Piano samples & Metronome WAVs)
+   ========================================================================= */
+let _sharedAudioCtx = null;
+function getSharedAudioContext() {
+  if (!_sharedAudioCtx || _sharedAudioCtx.state === "closed") {
+    const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+    try {
+      _sharedAudioCtx = new AudioCtxCls({ latencyHint: "interactive", sampleRate: 44100 });
+    } catch {
+      _sharedAudioCtx = new AudioCtxCls({ latencyHint: "interactive" });
+    }
+  }
+  return _sharedAudioCtx;
+}
+
+const PIANO_SAMPLE_DEFS = [
+  { name: "C2",  midi: 36 }, { name: "Ds2", midi: 39 }, { name: "Fs2", midi: 42 }, { name: "A2", midi: 45 },
+  { name: "C3",  midi: 48 }, { name: "Ds3", midi: 51 }, { name: "Fs3", midi: 54 }, { name: "A3", midi: 57 },
+  { name: "C4",  midi: 60 }, { name: "Ds4", midi: 63 }, { name: "Fs4", midi: 66 }, { name: "A4", midi: 69 },
+];
+
+let _pianoBuffers = null; // { [name]: { buffer: AudioBuffer, midi: number } }
+let _metronomeBuffers = null; // { hi: AudioBuffer, low: AudioBuffer }
+let _audioLoadingPromise = null;
+
+function loadAudioSamples(ctx) {
+  if (_audioLoadingPromise) return _audioLoadingPromise;
+  _audioLoadingPromise = (async () => {
+    const pianoPromises = PIANO_SAMPLE_DEFS.map(async ({ name, midi }) => {
+      try {
+        const res = await fetch(`/tones/${name}.mp3`);
+        const ab = await res.arrayBuffer();
+        const buf = await ctx.decodeAudioData(ab);
+        return { name, midi, buf };
+      } catch (err) {
+        return { name, midi, buf: null };
+      }
+    });
+
+    const mHiPromise = fetch("/tones/m_hi.wav")
+      .then(r => r.arrayBuffer())
+      .then(ab => ctx.decodeAudioData(ab))
+      .catch(() => null);
+
+    const mLowPromise = fetch("/tones/m_low.wav")
+      .then(r => r.arrayBuffer())
+      .then(ab => ctx.decodeAudioData(ab))
+      .catch(() => null);
+
+    const [pianoResults, mHi, mLow] = await Promise.all([
+      Promise.all(pianoPromises),
+      mHiPromise,
+      mLowPromise,
+    ]);
+
+    const pMap = {};
+    pianoResults.forEach(({ name, midi, buf }) => {
+      if (buf) pMap[name] = { buffer: buf, midi };
+    });
+    _pianoBuffers = pMap;
+    _metronomeBuffers = { hi: mHi, low: mLow };
+    return { piano: _pianoBuffers, metronome: _metronomeBuffers };
+  })();
+  return _audioLoadingPromise;
+}
+
+function findNearestPianoSample(midi) {
+  if (!_pianoBuffers) return null;
+  let best = null;
+  let minDist = Infinity;
+  for (const def of PIANO_SAMPLE_DEFS) {
+    const entry = _pianoBuffers[def.name];
+    if (!entry) continue;
+    const dist = Math.abs(midi - def.midi);
+    if (dist < minDist) {
+      minDist = dist;
+      best = entry;
+    }
+  }
+  return best;
+}
+
 function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
-  const audioCtxRef = useRef(null);
   const masterCompRef = useRef(null);
+  // pointerId -> { semitone, voice, padVoice, keyEl }
   const activeRef = useRef(new Map());
+  // semitone -> voice — notes held alive by sustain pedal
+  const sustainedRef = useRef(new Map());
+  const [sustainPedal, setSustainPedal] = useState(false);
+  const sustainPedalRef = useRef(false);
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
@@ -1538,6 +1635,17 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const isVocals = mode === "vocals";
   const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
   const chordQualityRef = useRef(loadedQuality || "Major");
+  const [samplesReady, setSamplesReady] = useState(false);
+
+  useEffect(() => {
+    sustainPedalRef.current = sustainPedal;
+    if (!sustainPedal) {
+      sustainedRef.current.forEach((voice) => {
+        releaseVoice(voice);
+      });
+      sustainedRef.current.clear();
+    }
+  }, [sustainPedal]);
 
   useEffect(() => {
     if (loadedQuality && loadedQuality !== chordQuality) {
@@ -1557,209 +1665,131 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const BLACK_PRESSED = C.accent;
 
   const ensureCtx = () => {
-    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
-      let ctx;
-      try {
-        ctx = new AudioCtxCls({ latencyHint: "interactive", sampleRate: 44100 });
-      } catch {
-        ctx = new AudioCtxCls({ latencyHint: "interactive" });
-      }
+    const ctx = getSharedAudioContext();
+    if (!masterCompRef.current || masterCompRef.current.context !== ctx) {
       const comp = ctx.createDynamicsCompressor();
       comp.threshold.setValueAtTime(-12, ctx.currentTime);
       comp.knee.setValueAtTime(8, ctx.currentTime);
       comp.ratio.setValueAtTime(3.0, ctx.currentTime);
-      comp.attack.setValueAtTime(0.008, ctx.currentTime);
-      comp.release.setValueAtTime(0.25, ctx.currentTime);
+      comp.attack.setValueAtTime(0.006, ctx.currentTime);
+      comp.release.setValueAtTime(0.22, ctx.currentTime);
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
-      audioCtxRef.current = ctx;
     }
-    if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume().catch(() => { });
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
       silentVideoRef.current.play().catch(() => { videoUnlockedRef.current = false; });
     }
-    return audioCtxRef.current;
+    return ctx;
   };
-  const freqFor = (semitone) => {
-    const midi = (octaveStartRef.current + 1) * 12 + semitone;
-    return 440 * Math.pow(2, (midi - 69) / 12);
-  };
-  const startVoice = (semitone, volume = 1) => {
+
+  useEffect(() => {
     const ctx = ensureCtx();
-    const now = ctx.currentTime;
-    const freq = freqFor(semitone);
-    const dest = masterCompRef.current || ctx.destination;
+    if (_pianoBuffers && Object.keys(_pianoBuffers).length > 0) {
+      setSamplesReady(true);
+    } else {
+      loadAudioSamples(ctx).then(() => setSamplesReady(true));
+    }
+  }, []);
 
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(volume, now);
+  const midiFor = (semitone) => (octaveStartRef.current + 1) * 12 + semitone;
 
-    // Grand Piano soundboard acoustic filter with dynamic attack brightness
-    const bodyFilter = ctx.createBiquadFilter();
-    bodyFilter.type = "lowpass";
-    bodyFilter.Q.value = 1.0;
-    const initCutoff = Math.min(5600, Math.max(2000, freq * 5.5));
-    const warmCutoff = Math.min(2200, Math.max(700, freq * 2.2));
-    bodyFilter.frequency.setValueAtTime(initCutoff, now);
-    bodyFilter.frequency.exponentialRampToValueAtTime(warmCutoff, now + 0.28);
-
-    bodyFilter.connect(gain);
-    gain.connect(dest);
-
-    const B = pianoInharmonicity(freq);
-    const fundamentalTail = pianoFundamentalDecay(freq);
-    const unisonDetunes = freq < 100 ? [0] : [-0.8, 0.8];
-    const oscillators = [];
-
-    unisonDetunes.forEach((detuneCents) => {
-      PIANO_HARMONICS.forEach(({ n, relAmp, decayMult }) => {
-        const stretch = Math.sqrt(1 + B * n * n);
-        const partialFreq = freq * n * stretch;
-        if (partialFreq > 14000) return;
-
-        const amp = relAmp * (0.36 / unisonDetunes.length);
-        const tau = Math.max(0.08, fundamentalTail * decayMult);
-        const stopAt = now + tau + 0.1;
-        const startAt = now;
-
-        const osc = ctx.createOscillator();
-        osc.type = "sine";
-        osc.frequency.value = partialFreq;
-        osc.detune.value = detuneCents;
-
-        const pg = ctx.createGain();
-        const attackTime = n === 1 ? 0.008 : 0.003;
-        pg.gain.setValueAtTime(0, startAt);
-        pg.gain.linearRampToValueAtTime(amp, startAt + attackTime);
-        pg.gain.exponentialRampToValueAtTime(Math.max(0.00001, amp * 0.001), startAt + tau);
-
-        osc.connect(pg);
-        pg.connect(bodyFilter);
-        osc.start(startAt);
-        osc.stop(stopAt);
-        osc.onended = () => { try { osc.disconnect(); pg.disconnect(); } catch { } };
-        oscillators.push(osc);
-      });
-    });
-
-    // Soft felt hammer strike transient
-    const noiseDur = 0.014;
-    const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    const noiseFilter = ctx.createBiquadFilter();
-    noiseFilter.type = "bandpass";
-    noiseFilter.frequency.value = Math.min(2800, Math.max(300, freq * 1.5));
-    noiseFilter.Q.value = 1.0;
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.02, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
-    noise.connect(noiseFilter);
-    noiseFilter.connect(noiseGain);
-    noiseGain.connect(gain);
-
-    noise.start(now);
-    noise.stop(now + noiseDur);
-    noise.onended = () => { try { noise.disconnect(); noiseFilter.disconnect(); noiseGain.disconnect(); } catch { } };
-    oscillators.push(noise);
-
-    return { oscillators, bodyFilter, gain };
-  };
-  const stopVoice = (voice) => {
-    if (!voice || !audioCtxRef.current) return;
-    const ctx = audioCtxRef.current;
+  const releaseVoice = (voice) => {
+    if (!voice || !voice.ctx) return;
+    const { gainNode, source, ctx } = voice;
     const now = ctx.currentTime;
     try {
-      voice.gain.gain.cancelScheduledValues(now);
-      voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-      voice.oscillators.forEach((node) => { try { node.stop(now + 0.20); } catch { } });
-    } catch { }
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+      try { source.stop(now + 0.32); } catch {}
+    } catch {}
   };
 
-  // --- Warm pad chord voice for Vocals mode -----------------------------------
-  // Balanced 5-note voicing with warm lowpass filtering and clean gain staging
+  const startNote = (semitone) => {
+    const ctx = ensureCtx();
+    const now = ctx.currentTime;
+    const dest = masterCompRef.current || ctx.destination;
+    const midi = midiFor(semitone);
+    const nearest = findNearestPianoSample(midi);
+
+    const gainNode = ctx.createGain();
+    const baseGain = isVocals ? 1.5 : 1.0;
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(baseGain, now + 0.008);
+    gainNode.connect(dest);
+
+    if (nearest && nearest.buffer) {
+      const semitoneDiff = midi - nearest.midi;
+      const source = ctx.createBufferSource();
+      source.buffer = nearest.buffer;
+      source.playbackRate.value = Math.pow(2, semitoneDiff / 12);
+      source.connect(gainNode);
+      source.start(now);
+      source.onended = () => {
+        try { source.disconnect(); gainNode.disconnect(); } catch {}
+      };
+      return { source, gainNode, ctx, semitone, midi };
+    } else {
+      const osc = ctx.createOscillator();
+      const freq = 440 * Math.pow(2, (midi - 69) / 12);
+      osc.frequency.value = freq;
+      osc.connect(gainNode);
+      osc.start(now);
+      osc.onended = () => {
+        try { osc.disconnect(); gainNode.disconnect(); } catch {}
+      };
+      return { source: osc, gainNode, ctx, semitone, midi };
+    }
+  };
+
+  // --- Warm pad chord voice for Vocals mode (High volume, clean harmonics) ---
   const startPadChord = (rootSemitone) => {
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
     const quality = chordQualityRef.current;
 
-    // ── Vocal-reference chord pad ─────────────────────────────────────────────
-    // Design goals:
-    //   1. Warm & full — sounds like a real instrument, not a sine-wave beep
-    //   2. Root slightly dominant — vocalist locks onto their pitch immediately
-    //   3. No jarring on phone speakers — nothing harsh above 2.2 kHz
-    //
-    // Architecture:
-    //   • Sub-root (C3 range) — TRIANGLE wave, very tight low-pass. Adds physical
-    //     body and "weight" to the chord without raising its pitch character.
-    //     Triangle has soft odd harmonics (1/n²) — warm like a flute/horn.
-    //   • Root (C4 / middle-C range) — TWO slightly-detuned sines (chorus pair).
-    //     This is the pitch the vocalist hears and matches. Slightly dominant gain.
-    //   • 3rd and 5th — detuned sine pairs, softer than root. Give the chord
-    //     harmonic context so it sounds "complete" rather than just a single note.
-    //
-    // Register: Smooth continuous Open Voicing (Root_Low + 5th + Root_High + 3rd):
-    // Spans Octaves 3 & 4 smoothly for all keys (no sudden cliff/drop between adjacent keys).
-    // Every key has BOTH a warm lower anchor (C3-B3) and a clear vocal guide note (C4-B4).
-    const baseMidi = 48 + rootSemitone; // C3 (MIDI 48) to B3 (MIDI 59)
+    const baseMidi = 48 + rootSemitone; // C3 to B3
     const thirdInterval = quality === "Minor" ? 3 : 4;
 
-    // [midi, gain, lowpassCutoffHz, detuneCents, waveType]
     const notes = [
-      { midi: baseMidi,                   gain: 0.24, cutoff: 800,  detune: 0, wave: "sine" }, // Low Root   — warm body (130-246 Hz)
-      { midi: baseMidi + 7,               gain: 0.16, cutoff: 1600, detune: 5, wave: "sine" }, // 5th        — harmonic depth
-      { midi: baseMidi + 12,              gain: 0.28, cutoff: 1800, detune: 6, wave: "sine" }, // High Root  — vocal guide pitch (dominant)
-      { midi: baseMidi + 12 + thirdInterval, gain: 0.16, cutoff: 2000, detune: 5, wave: "sine" }, // 3rd       — major/minor color
+      { midi: baseMidi,                      gain: 0.28, cutoff: 800,  detune: 0 },
+      { midi: baseMidi + 7,                  gain: 0.18, cutoff: 1600, detune: 5 },
+      { midi: baseMidi + 12,                 gain: 0.32, cutoff: 1800, detune: 6 },
+      { midi: baseMidi + 12 + thirdInterval, gain: 0.20, cutoff: 2000, detune: 5 },
     ];
-
-    // ── Signal chain ──────────────────────────────────────────────────────────
-    // Master low-pass at 2200 Hz — warm and phone-safe, trims harsh overtones.
-    // Followed by a gentle compressor-friendly master gain.
-    // Each note gets a stereo panner for a wider, fuller stereo image,
-    // and two slightly-detuned sine oscillators (chorus pair) for richness.
-    // A third oscillator at the same note but one harmonic octave up (×2 freq)
-    // at very low gain adds "air" and presence without raising perceived pitch.
 
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
-    masterFilter.frequency.value = 2200;
+    masterFilter.frequency.value = 2400;
     masterFilter.Q.value = 0.5;
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0, now);
-    masterGain.gain.linearRampToValueAtTime(0.18, now + 0.09); // gentle attack, no pop
+    // Vocals volume boost: 0.48 (clear, loud, doesn't clip)
+    masterGain.gain.linearRampToValueAtTime(0.48, now + 0.08);
     masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
-    // Pan positions: Low Root slightly left, 5th slightly right, High Root center,
-    // 3rd slightly right — creates a balanced stereo spread across all 4 notes.
     const panValues = [-0.30, 0.25, 0.00, 0.20];
-
     const oscs = [];
+
     notes.forEach(({ midi, gain: noteGainVal, cutoff, detune }, idx) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
-      // Per-note low-pass — keeps each note warm without muddiness
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
       filt.frequency.value = cutoff;
       filt.Q.value = 0.4;
 
-      // Stereo panner for width
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
       if (panner) panner.pan.value = panValues[idx] ?? 0;
 
       const noteGain = ctx.createGain();
       noteGain.gain.value = noteGainVal;
 
-      // Route: filt → panner (if available) → noteGain → masterFilter
       if (panner) {
         filt.connect(panner);
         panner.connect(noteGain);
@@ -1768,7 +1798,6 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       }
       noteGain.connect(masterFilter);
 
-      // --- Chorus pair: two slightly-detuned sines for warmth & fullness ---
       const detunes = detune > 0 ? [-detune / 2, detune / 2] : [0];
       detunes.forEach((dt) => {
         const osc = ctx.createOscillator();
@@ -1780,19 +1809,16 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         oscs.push(osc);
       });
 
-      // --- Harmonic air layer: quiet octave-up sine adds presence without
-      //     changing perceived pitch (inaudible as a separate note; felt as
-      //     brightness/fullness). Skip for the lowest note to avoid mud. ---
       if (idx > 0) {
         const airGain = ctx.createGain();
-        airGain.gain.value = noteGainVal * 0.08; // very soft — blend, not melody
+        airGain.gain.value = noteGainVal * 0.08;
         const airFilt = ctx.createBiquadFilter();
         airFilt.type = "lowpass";
         airFilt.frequency.value = Math.min(cutoff * 1.4, 3000);
         airFilt.Q.value = 0.4;
         const airOsc = ctx.createOscillator();
         airOsc.type = "sine";
-        airOsc.frequency.value = freq * 2; // one octave up
+        airOsc.frequency.value = freq * 2;
         airOsc.connect(airFilt);
         airFilt.connect(airGain);
         airGain.connect(masterFilter);
@@ -1805,17 +1831,16 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   };
 
   const stopPadChord = (padVoice) => {
-    if (!padVoice || !audioCtxRef.current) return;
-    const ctx = audioCtxRef.current;
+    if (!padVoice) return;
+    const ctx = getSharedAudioContext();
     const now = ctx.currentTime;
     try {
       padVoice.masterGain.gain.cancelScheduledValues(now);
       padVoice.masterGain.gain.setValueAtTime(padVoice.masterGain.gain.value, now);
-      padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
-      padVoice.oscillators.forEach(osc => { try { osc.stop(now + 0.28); } catch { } });
-    } catch { }
+      padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+      padVoice.oscillators.forEach((osc) => { try { osc.stop(now + 0.30); } catch {} });
+    } catch {}
   };
-  // ---------------------------------------------------------------------------
 
   const keyAt = (x, y) => {
     const hitEl = document.elementFromPoint(x, y);
@@ -1824,29 +1849,30 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     if (!keyEl || !containerRef.current || !containerRef.current.contains(keyEl)) return null;
     return { semitone: parseInt(keyEl.dataset.semitone, 10), el: keyEl };
   };
+
   const paintKey = (keyEl, pressed) => {
     if (!keyEl) return;
     const isBlack = keyEl.dataset.black === "1";
     keyEl.style.background = pressed ? (isBlack ? BLACK_PRESSED : WHITE_PRESSED) : (isBlack ? BLACK_KEY_BG : WHITE_KEY_BG);
   };
+
   const handlePointerDown = (e) => {
     e.preventDefault();
     const hit = keyAt(e.clientX, e.clientY);
     if (!hit) return;
+    unlockAudioPlayback();
     if (isVocals) {
-      // In vocals mode, single-touch only: stop all existing active chord voices immediately
       activeRef.current.forEach((entry) => {
-        stopVoice(entry.voice);
         if (entry.padVoice) stopPadChord(entry.padVoice);
+        else if (entry.voice) releaseVoice(entry.voice);
         paintKey(entry.keyEl, false);
       });
       activeRef.current.clear();
 
-      // Pure rich warm chord pad
       const padVoice = startPadChord(hit.semitone);
-      activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: null, padVoice, keyEl: hit.el });
+      activeRef.current.set(e.pointerId, { semitone: hit.semitone, padVoice, voice: null, keyEl: hit.el });
     } else {
-      const voice = startVoice(hit.semitone, 1.0);
+      const voice = startNote(hit.semitone);
       activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
     }
     paintKey(hit.el, true);
@@ -1855,9 +1881,16 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   useEffect(() => {
     const stopEntry = (entry) => {
       if (!entry) return;
-      stopVoice(entry.voice);
       if (entry.padVoice) stopPadChord(entry.padVoice);
+      else if (entry.voice) {
+        if (sustainPedalRef.current && !isVocals) {
+          sustainedRef.current.set(entry.semitone, entry.voice);
+        } else {
+          releaseVoice(entry.voice);
+        }
+      }
     };
+
     const handleMove = (e) => {
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
@@ -1870,9 +1903,9 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       if (hit) {
         if (isVocals) {
           const padVoice = startPadChord(hit.semitone);
-          activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice: null, padVoice, keyEl: hit.el });
+          activeRef.current.set(e.pointerId, { semitone: hit.semitone, padVoice, voice: null, keyEl: hit.el });
         } else {
-          const voice = startVoice(hit.semitone, 1.0);
+          const voice = startNote(hit.semitone);
           activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
         }
         paintKey(hit.el, true);
@@ -1880,19 +1913,28 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         activeRef.current.delete(e.pointerId);
       }
     };
+
     const handleUp = (e) => {
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
-      stopEntry(entry);
       paintKey(entry.keyEl, false);
+      stopEntry(entry);
       activeRef.current.delete(e.pointerId);
     };
+
     const handleVisibility = () => {
       if (document.visibilityState !== "hidden") return;
-      activeRef.current.forEach((entry) => { stopVoice(entry.voice); if (entry.padVoice) stopPadChord(entry.padVoice); });
+      activeRef.current.forEach((entry) => {
+        if (entry.padVoice) stopPadChord(entry.padVoice);
+        else if (entry.voice) releaseVoice(entry.voice);
+      });
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
+      sustainedRef.current.forEach((v) => releaseVoice(v));
+      sustainedRef.current.clear();
+      const ctx = getSharedAudioContext();
+      if (ctx && ctx.state === "running") ctx.suspend().catch(() => {});
     };
+
     window.addEventListener("pointermove", handleMove, { passive: false });
     window.addEventListener("pointerup", handleUp);
     window.addEventListener("pointercancel", handleUp);
@@ -1902,22 +1944,15 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleUp);
       document.removeEventListener("visibilitychange", handleVisibility);
-      activeRef.current.forEach((entry) => { stopVoice(entry.voice); if (entry.padVoice) stopPadChord(entry.padVoice); });
+      activeRef.current.forEach((entry) => {
+        if (entry.padVoice) stopPadChord(entry.padVoice);
+        else if (entry.voice) releaseVoice(entry.voice);
+      });
       activeRef.current.clear();
-      if (audioCtxRef.current && audioCtxRef.current.state === "running") audioCtxRef.current.suspend().catch(() => { });
+      sustainedRef.current.forEach((v) => releaseVoice(v));
+      sustainedRef.current.clear();
     };
   }, [isVocals]);
-
-  // Close AudioContext fully on unmount so pitch/sample-rate state doesn't accumulate
-  useEffect(() => {
-    return () => {
-      if (audioCtxRef.current) {
-        try { audioCtxRef.current.close(); } catch { }
-        audioCtxRef.current = null;
-        masterCompRef.current = null;
-      }
-    };
-  }, []);
 
   const renderOctaveKeys = () => (
     <>
@@ -1957,7 +1992,6 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
           {isVocals ? "Chord Piano" : "Piano"}
         </div>
         {isVocals ? (
-          // Vocals mode: Clean segmented Major / Minor switch matching Add/Edit song style
           <div style={{ display: "flex", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 3, gap: 4 }}>
             {["Major", "Minor"].map((q) => {
               const active = chordQuality === q;
@@ -1984,24 +2018,49 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
             })}
           </div>
         ) : (
-          // Other modes: octave up/down
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
-              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
-              color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
-            }}>
-              <ChevronLeft size={15} />
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Sustain pedal button */}
+            <button
+              onClick={() => setSustainPedal((p) => !p)}
+              style={{
+                height: 32,
+                padding: "0 12px",
+                borderRadius: 8,
+                border: `1px solid ${sustainPedal ? C.accentDim : C.borderStrong}`,
+                background: sustainPedal ? C.accentSoft : C.surface2,
+                color: sustainPedal ? C.accent : C.textMuted,
+                fontFamily: FONT,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer"
+              }}
+            >
+              Sustain {sustainPedal ? "ON" : "OFF"}
             </button>
-            <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
-            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
-              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
-              color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
-            }}>
-              <ChevronRight size={15} />
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
+                width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
+                color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
+              }}>
+                <ChevronLeft size={15} />
+              </button>
+              <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
+              <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
+                width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
+                color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
+              }}>
+                <ChevronRight size={15} />
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {!samplesReady && (
+        <div style={{ position: "absolute", inset: 0, top: 56, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", zIndex: 10 }}>
+          <div style={{ color: C.textMuted, fontSize: 14, fontWeight: 600 }}>Loading piano…</div>
+        </div>
+      )}
 
       <div
         ref={containerRef}
@@ -2207,6 +2266,23 @@ function useMetronomeEngine(settings) {
       osc.start(scheduledTime); osc.stop(scheduledTime + 0.03);
       return;
     }
+    // "classic" tone: pre-decoded m_hi.wav (accent) and m_low.wav (normal beat)
+    if (_metronomeBuffers && (_metronomeBuffers.hi || _metronomeBuffers.low)) {
+      const buf = isAccent ? _metronomeBuffers.hi : _metronomeBuffers.low;
+      if (buf) {
+        const source = ctx.createBufferSource();
+        source.buffer = buf;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(isAccent ? 1.0 : 0.85, scheduledTime);
+        source.connect(gain);
+        gain.connect(dest);
+        source.start(scheduledTime);
+        source.onended = () => {
+          try { source.disconnect(); gain.disconnect(); } catch {}
+        };
+        return;
+      }
+    }
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     osc.frequency.value = isAccent ? 1500 : 1000;
     gain.gain.setValueAtTime(isAccent ? 0.7 : 0.4, scheduledTime);
@@ -2247,8 +2323,10 @@ function useMetronomeEngine(settings) {
     unlockAudioPlayback();
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
-      audioCtxRef.current = new AudioCtxCls();
+      audioCtxRef.current = getSharedAudioContext();
+    }
+    if (!_metronomeBuffers) {
+      loadAudioSamples(audioCtxRef.current).catch(() => {});
     }
     // Only auto-resume via onstatechange when the page is actually visible;
     // if the screen is locked iOS suspends the context and we should NOT
@@ -2318,7 +2396,7 @@ function useMetronomeEngine(settings) {
     setTimeSigState({ beats, unit });
     const effBeats = (beats === 6 && unit === 8) ? 4 : beats;
     setAccentsState(song.accents && song.accents.length === effBeats ? song.accents : defaultAccents(effBeats));
-    setSubdivisionState(song.subdivision || 1);
+    // Keep user's per-device subdivision choice (requirement 12)
     beatRef.current = 0;
   };
   const loadSongAndPlay = (song) => {
@@ -2326,7 +2404,7 @@ function useMetronomeEngine(settings) {
     const unit = parseTimeSig(song.timeSignature).unit || 4;
     const effBeats = (beats === 6 && unit === 8) ? 4 : beats;
     const pattern = song.accents && song.accents.length === effBeats ? song.accents : defaultAccents(effBeats);
-    const sub = song.subdivision || 1;
+    const sub = subdivisionRef.current;
     bpmRef.current = song.tempo || 120;
     timeSigRef.current = { beats: effBeats, unit };
     accentsRef.current = pattern;
@@ -2572,7 +2650,6 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
   const cycleSubdivision = () => {
     const next = (subdivision % 3) + 1;
     setSubdivision(next);
-    if (loadedSong) onUpdateSongSubdivision(loadedSong.id, next);
   };
 
   const NAV_H = "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))";
@@ -2860,6 +2937,49 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                     </span>
                   );
                 }
+                if (hasTag && !editable) {
+                  const tagText = flatify(repItem.tok.tag);
+                  return (
+                    <span
+                      key={gi}
+                      style={{
+                        display: "inline-block",
+                        verticalAlign: "bottom",
+                        margin: "0 0.35em",
+                        textAlign: "center",
+                        lineHeight: 1,
+                        paddingTop: topPad,
+                        position: "relative"
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          textAlign: "center",
+                          fontSize: tagSize,
+                          fontWeight: noteWeightBold ? 800 : 600,
+                          color: brightTags ? C.text : accent,
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        {tagText}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: tagSize,
+                          fontWeight: noteWeightBold ? 800 : 600,
+                          visibility: "hidden",
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        {tagText}
+                      </span>
+                    </span>
+                  );
+                }
                 const minWidthCh = Math.max(1, tagDrivenWidth);
                 const minWidthVal = showTags ? `${minWidthCh}ch` : undefined;
                 return (
@@ -2870,8 +2990,10 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
               }
               const minWidthCh = padWordForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
-                <span key={gi} style={{ display: "inline-block", whiteSpace: "nowrap", minWidth: showTags ? `${minWidthCh}ch` : undefined }}>
-                  {g.items.map(renderChar)}
+                <span key={gi} style={{ display: "inline-block", whiteSpace: "normal", minWidth: showTags ? `${minWidthCh}ch` : undefined, maxWidth: "100%", wordBreak: "break-word" }}>
+                  <span style={{ display: "inline-block", whiteSpace: "nowrap" }}>
+                    {g.items.map(renderChar)}
+                  </span>
                 </span>
               );
             })}
@@ -3053,13 +3175,18 @@ function useSetlistSongSwipe(onPrev, onNext) {
   const dxRef = useRef(0);
   const directionRef = useRef(null);
   const mouseActiveRef = useRef(false);
-  const [swipeDragging, setSwipeDragging] = useState(false);
+  const [dragX, setDragX] = useState(0);
+  const [transitioning, setTransitioning] = useState(false);
+
   const start = (x, y) => {
+    if (transitioning) return;
     startRef.current = { x, y };
-    directionRef.current = null; dxRef.current = 0; draggingRef.current = true;
+    directionRef.current = null;
+    dxRef.current = 0;
+    draggingRef.current = true;
   };
   const move = (x, y) => {
-    if (!draggingRef.current) return;
+    if (!draggingRef.current || transitioning) return;
     const dx = x - startRef.current.x;
     const dy = y - startRef.current.y;
     if (directionRef.current === null) {
@@ -3068,17 +3195,45 @@ function useSetlistSongSwipe(onPrev, onNext) {
     }
     if (directionRef.current === "y") return;
     dxRef.current = dx;
-    setSwipeDragging(true);
+    setDragX(dx);
   };
   const end = () => {
+    if (!draggingRef.current) return;
     const wasHorizontal = directionRef.current === "x";
     const dx = dxRef.current;
-    draggingRef.current = false; directionRef.current = null; dxRef.current = 0;
-    setSwipeDragging(false);
+    draggingRef.current = false;
+    directionRef.current = null;
+    dxRef.current = 0;
+
     if (wasHorizontal) {
-      if (dx > 140 && onPrev) onPrev();
-      else if (dx < -140 && onNext) onNext();
+      const threshold = Math.min(130, window.innerWidth * 0.28);
+      if (dx > threshold && onPrev) {
+        setTransitioning(true);
+        setDragX(window.innerWidth);
+        setTimeout(() => {
+          onPrev();
+          setDragX(-window.innerWidth * 0.35);
+          requestAnimationFrame(() => {
+            setDragX(0);
+            setTimeout(() => setTransitioning(false), 200);
+          });
+        }, 180);
+        return;
+      } else if (dx < -threshold && onNext) {
+        setTransitioning(true);
+        setDragX(-window.innerWidth);
+        setTimeout(() => {
+          onNext();
+          setDragX(window.innerWidth * 0.35);
+          requestAnimationFrame(() => {
+            setDragX(0);
+            setTimeout(() => setTransitioning(false), 200);
+          });
+        }, 180);
+        return;
+      }
     }
+    setDragX(0);
   };
   const handleTouchStart = (e) => { if (e.touches.length !== 1) return; start(e.touches[0].clientX, e.touches[0].clientY); };
   const handleTouchMove = (e) => move(e.touches[0].clientX, e.touches[0].clientY);
@@ -3091,7 +3246,12 @@ function useSetlistSongSwipe(onPrev, onNext) {
     window.addEventListener("mouseup", onMouseUp);
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
-  return { dragX: 0, dragging: swipeDragging, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown } };
+  return {
+    dragX,
+    dragging: draggingRef.current && directionRef.current === "x",
+    transitioning,
+    handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown }
+  };
 }
 
 /* =========================================================================
@@ -3428,11 +3588,11 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     if (seed?.timeSignature) return parseTimeSig(seed.timeSignature);
     return { beats: 4, unit: 4 };
   });
-  const initialDecomposed = decomposeKey(initial?.key ?? "C");
+  const initialDecomposed = decomposeKey(initial?.key ?? (seed?.key ?? ""));
   const [keyNatural, setKeyNatural] = useState(initialDecomposed.natural);
   const [keyAccidental, setKeyAccidental] = useState(initialDecomposed.accidental);
   const [keyQuality, setKeyQuality] = useState(initial?.keyQuality ?? "Major");
-  const [language, setLanguage] = useState(initial?.language ?? "English");
+  const [language, setLanguage] = useState(initial?.language ?? (/[\u0B80-\u0BFF]/.test(initial?.title ?? "") ? "Tamil" : "English"));
   const [description, setDescription] = useState(initial?.description ?? "");
   const migratedInitial = initial ? migrateSongShape(initial) : null;
   const [lyricsText, setLyricsText] = useState(migratedInitial?.lyricsText ?? "");
@@ -3447,6 +3607,14 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 
   const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
   const keyboardInset = useKeyboardInset();
+
+  const handleTitleChange = (v) => {
+    setTitle(v);
+    setError("");
+    if (/[\u0B80-\u0BFF]/.test(v)) {
+      setLanguage("Tamil");
+    }
+  };
 
   const handlePasteFromClipboard = async () => {
     try {
@@ -3474,7 +3642,12 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
         if (trimmed.startsWith("#")) parsedLines.push("-" + trimmed.slice(1).trim());
         else if (trimmed) parsedLines.push(trimmed);
       }
-      if (fields.title !== undefined) setTitle(fields.title);
+      if (fields.title !== undefined) {
+        setTitle(fields.title);
+        if (/[\u0B80-\u0BFF]/.test(fields.title)) {
+          setLanguage("Tamil");
+        }
+      }
       if (fields.artist !== undefined) setArtist(fields.artist);
       if (fields.tempo !== undefined) { const digits = fields.tempo.replace(/[^\d]/g, ""); if (digits) setTempo(digits); }
       if (fields.timeSignature !== undefined) { const m = fields.timeSignature.match(/^(\d+)\s*\/\s*(\d+)$/); if (m) setTimeSig({ beats: parseInt(m[1], 10), unit: parseInt(m[2], 10) }); }
@@ -3489,6 +3662,10 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 
   const handleNaturalChange = (n) => {
     setKeyNatural(n);
+    if (!n) {
+      setKeyAccidental("natural");
+      return;
+    }
     if (keyAccidental === "sharp" && (n === "E" || n === "B")) setKeyAccidental("natural");
     if (keyAccidental === "flat" && (n === "C" || n === "F")) setKeyAccidental("natural");
   };
@@ -3538,7 +3715,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             {error}
           </div>
         )}
-        <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={(v) => { setTitle(v); setError(""); }} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
+        <Field label="TITLE"><ClearableInput autoFocus={!initial} value={title} onChangeText={handleTitleChange} placeholder="Song title" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: title ? 36 : 14 }} /></Field>
         <Field label="ARTIST"><ClearableInput value={artist} onChangeText={(v) => { setArtist(toTitleCase(v)); setError(""); }} placeholder="Artist" style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingRight: artist ? 36 : 14 }} /></Field>
 
         <div style={{ display: "flex", gap: 14 }}>
@@ -3610,7 +3787,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 /* =========================================================================
    Songs list
    ========================================================================= */
-function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, isSwipeOpen, C }) {
+function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, isSwipeOpen, lastScrollTimeRef, C }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
   const swipeStartRef = useRef(null);
@@ -3627,6 +3804,8 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const startPress = (e) => {
     firedLongPressRef.current = false;
+    // If the scroll list was scrolling within the last 400ms, don't start long-press.
+    if (lastScrollTimeRef && Date.now() - (lastScrollTimeRef.current || 0) < 400) return;
     // Capture whether the delete panel was already exposed when this touch began.
     wasOpenRef.current = Boolean(isSwipeOpen);
     const point = e.touches ? e.touches[0] : e;
@@ -3643,12 +3822,15 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const movePress = (e) => {
     if (!swipeStartRef.current || firedLongPressRef.current) return;
-    if (!canSwipeRight) return;
     const point = e.touches ? e.touches[0] : e;
     const dx = point.clientX - swipeStartRef.current.x;
     const dy = point.clientY - swipeStartRef.current.y;
-    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+    // Cancel long-press if finger moved more than 8px in any direction.
+    if (Math.hypot(dx, dy) > 8) {
       if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    }
+    if (!canSwipeRight) return;
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
       if (dx > 0) setSwipeDx(Math.min(dx, 120));
     }
   };
@@ -3699,6 +3881,8 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
   const [langFilter, setLangFilter] = useState("All");
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const keyboardInset = useKeyboardInset();
+  // Track last scroll time so SongRow can suppress long-press if user just scrolled
+  const lastScrollTimeRef = useRef(0);
   const filtered = songs
     .filter((s) => songMatchesQuery(s, query))
     .filter((s) => langFilter === "All" || s.language === langFilter)
@@ -3722,12 +3906,12 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
       </div>
-      <div className="scroll-list" style={{ flex: 1, overflowY: "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
+      <div className="scroll-list" onScroll={() => { lastScrollTimeRef.current = Date.now(); }} style={{ flex: 1, overflowY: "auto", padding: `0 20px ${14 + keyboardInset}px`, boxSizing: "border-box" }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", color: C.textFaint, fontSize: 14 }}>{songs.length === 0 ? "No songs yet." : "No matches."}</div>
         ) : filtered.map((s) => (
           <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(s.id)} C={C}>
-            <SongRow song={s} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} onLoadToPiano={onLoadToPiano} mode={mode} tanglishMode={tanglishMode} isSwipeOpen={openSwipeId === s.id} C={C} />
+            <SongRow song={s} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onLoadToMetronome={onLoadToMetronome} onLoadToPiano={onLoadToPiano} mode={mode} tanglishMode={tanglishMode} isSwipeOpen={openSwipeId === s.id} lastScrollTimeRef={lastScrollTimeRef} C={C} />
           </SwipeToDelete>
         ))}
       </div>
@@ -3837,7 +4021,7 @@ function SongDetailScreen({
 
   const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
   const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
-  const { dragX, leaving, dragging, handlers } = isInSetlist ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers } : edgeBack;
+  const { dragX, leaving, dragging, handlers, transitioning } = isInSetlist ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers, transitioning: setlistSwipe.transitioning } : { ...edgeBack, transitioning: false };
 
   const stepKey = (delta) => { const next = transposeKey(viewKey, delta); setViewKey(next); if (onKeyChange) onKeyChange(next); };
 
@@ -3863,7 +4047,7 @@ function SongDetailScreen({
   const hasTempoChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && currentBpm !== Number(baseTempo));
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: (leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
@@ -3984,7 +4168,7 @@ function SongDetailScreen({
               {isVocals ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
               ) : (
-                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={mode !== "drums"} letterSpacing={letterSpacing} />
+                <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={true} letterSpacing={letterSpacing} />
               )}
             </div>
           ));
@@ -5096,6 +5280,9 @@ function AppInner() {
   // A stable ref that always holds the latest performSync so that save functions
   // defined before performSync's useCallback can still trigger an immediate push.
   const performSyncRef = useRef(null);
+  // Set to true when a save is attempted while a sync is already in-flight.
+  // performSync checks this on completion and retries immediately.
+  const pendingSync = useRef(false);
 
   const saveSongs = (next) => {
     // Resolve the next value immediately (handles both plain value and updater fn)
@@ -5126,8 +5313,16 @@ function AppInner() {
     // Keep the ref in sync so save functions can call the latest closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     performSyncRef.current = performSync;
-    if (!navigator.onLine || syncing.current) return;
+    if (!navigator.onLine) return;
+    if (syncing.current) {
+      // Another sync is in-flight. Record that there's a pending request so
+      // we retry immediately when the current sync finishes, preventing data
+      // from being silently dropped when multiple saves fire at once.
+      pendingSync.current = true;
+      return;
+    }
     syncing.current = true;
+    pendingSync.current = false;
     if (bandKey) setSyncStatus("Syncing…");
     try {
       // Always read from stable refs so we never push stale state from a
@@ -5231,6 +5426,11 @@ function AppInner() {
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
     } finally {
       syncing.current = false;
+      // If a save was blocked while we were busy, run one more sync cycle now.
+      if (pendingSync.current) {
+        pendingSync.current = false;
+        setTimeout(() => performSyncRef.current?.(true), 0);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
@@ -5301,7 +5501,9 @@ function AppInner() {
     }
     flash("Connected to Team");
     syncDirty.current = true;
-    performSync(true);
+    // Pull first (force=false) so we merge remote setlists in before pushing,
+    // preventing a new device from overwriting the team's existing setlists.
+    performSync(false);
   };
 
   const handleLeaveTeam = () => {
@@ -5332,6 +5534,17 @@ function AppInner() {
       el.removeEventListener("gesturechange", preventGesture);
       el.removeEventListener("touchmove", preventMultiTouch);
     };
+  }, []);
+
+  // Lock mobile phones to portrait orientation. Tablets and desktops are left
+  // unlocked so landscape layouts continue to work on wider devices.
+  useEffect(() => {
+    const isMobilePhone =
+      /Mobi|Android|iPhone/i.test(navigator.userAgent) &&
+      Math.min(window.screen.width, window.screen.height) < 600;
+    if (isMobilePhone) {
+      window.screen?.orientation?.lock?.("portrait").catch(() => {});
+    }
   }, []);
 
   // iOS Safari quirk: focusing a text input (e.g. the search bar) makes the
