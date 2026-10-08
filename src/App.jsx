@@ -5979,8 +5979,9 @@ function AppInner() {
       height: "100%", width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
+      paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
-      <div style={{ paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
+      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
           All screens stay mounted at all times. Inactive screens are hidden with
           display:none. Active screens use display:block + height:100% with relative
