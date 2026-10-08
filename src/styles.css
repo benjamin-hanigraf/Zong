@@ -10,10 +10,8 @@
 html, body {
   margin: 0;
   padding: 0;
-  /* Do NOT use position:fixed here — the React root div already uses
-     position:fixed; inset:0 to contain the app. Double-fixing html/body
-     causes iOS Safari to miscalculate env(safe-area-inset-bottom),
-     which shifts the BottomNav upward incorrectly. */
+  position: fixed;
+  inset: 0;
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: none;

@@ -5975,7 +5975,8 @@ function AppInner() {
 
   return (
     <div ref={rootRef} style={{
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0, width: "100%", maxWidth: "none",
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      height: "100%", width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "env(safe-area-inset-top, 0px)",
