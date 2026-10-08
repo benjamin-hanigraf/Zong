@@ -5366,6 +5366,46 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
 /* =========================================================================
    Root
    ========================================================================= */
+/* ------------------------------------------------------------------
+   GlobalStyles — writes a single stable <style> tag imperatively so
+   React never replaces the DOM node on re-render (which caused the
+   blank grey flash whenever mode or tab changed).
+   ------------------------------------------------------------------ */
+const _globalStyleEl = (() => {
+  if (typeof document === "undefined") return null;
+  const existing = document.getElementById("zong-global-styles");
+  if (existing) return existing;
+  const el = document.createElement("style");
+  el.id = "zong-global-styles";
+  document.head.appendChild(el);
+  return el;
+})();
+
+function GlobalStyles({ C }) {
+  useEffect(() => {
+    if (!_globalStyleEl) return;
+    _globalStyleEl.textContent = `
+      html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
+      #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
+      .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .bpm-number-input { -moz-appearance: textfield; }
+      input, textarea, select { font-size: 16px; }
+      button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
+      button:active { transform: scale(0.94); opacity: 0.8; }
+      input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
+      input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
+      input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
+      * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
+      textarea { touch-action: pan-y; }
+      .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
+      *::-webkit-scrollbar { display: none; }
+      * { scrollbar-width: none; -ms-overflow-style: none; }
+    `;
+  }); // runs after every render — fast text assignment, no DOM thrash
+  return null;
+}
+
 function AppInner() {
   useEffect(() => {
     let meta = document.querySelector('meta[name="viewport"]');
@@ -5964,31 +6004,23 @@ function AppInner() {
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
-      <style>{`
-        html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
-        #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
-        .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        .bpm-number-input { -moz-appearance: textfield; }
-        input, textarea, select { font-size: 16px; }
-        button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
-        button:active { transform: scale(0.94); opacity: 0.8; }
-        input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
-        input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
-        input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
-        * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-        input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
-        textarea { touch-action: pan-y; }
-        .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
-        *::-webkit-scrollbar { display: none; }
-        * { scrollbar-width: none; -ms-overflow-style: none; }
-      `}</style>
+      <GlobalStyles C={C} />
 
       <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
-        {/* All screens are always mounted and hidden via display:none to prevent blank-grey flash on tab switch */}
+        {/*
+          All screens are always mounted. Visibility is toggled via display:none
+          instead of conditional mounting, preventing blank-grey flashes on both
+          tab switches and mode changes (drums ↔ chords ↔ vocals).
+        */}
         <div style={{ display: tab === "practice" ? "contents" : "none" }}>
-          {mode === "drums"
-            ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
-            : <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />}
+          {/* Both practice screens are always mounted; only the active one is shown.
+              This avoids unmounting/remounting when mode toggles drums ↔ vocals/chords. */}
+          <div style={{ display: mode === "drums" ? "contents" : "none" }}>
+            <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
+          </div>
+          <div style={{ display: mode !== "drums" ? "contents" : "none" }}>
+            <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
+          </div>
         </div>
         <div style={{ display: tab === "songs" ? "contents" : "none" }}>
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
