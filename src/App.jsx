@@ -1472,12 +1472,21 @@ const scrollFieldIntoView = (e) => {
 };
 function LandscapeLock({ children }) {
   const outerRef = useRef(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [size, setSize] = useState(() => ({
+    w: typeof window !== "undefined" ? window.innerWidth : 0,
+    h: typeof window !== "undefined" ? window.innerHeight : 0,
+  }));
   const isLandscapeScreen = useIsLandscapeScreen();
   useEffect(() => {
     const el = outerRef.current;
     if (!el) return;
-    const update = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) {
+        setSize({ w, h });
+      }
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -1490,10 +1499,12 @@ function LandscapeLock({ children }) {
       </div>
     );
   }
+  const w = size.w || (typeof window !== "undefined" ? window.innerWidth : 0);
+  const h = size.h || (typeof window !== "undefined" ? window.innerHeight : 0);
   return (
     <div ref={outerRef} style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: "#000" }}>
-      {size.w > 0 && size.h > 0 && (
-        <div style={{ position: "absolute", top: "50%", left: "50%", width: size.h, height: size.w, transform: "translate(-50%, -50%) rotate(90deg)", transformOrigin: "center center" }}>
+      {w > 0 && h > 0 && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", width: h, height: w, transform: "translate(-50%, -50%) rotate(90deg)", transformOrigin: "center center" }}>
           {children}
         </div>
       )}
@@ -5433,6 +5444,13 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // Keep dynamic theme variables in sync without recreating any stylesheets
+  useEffect(() => {
+    document.documentElement.style.setProperty("--accent", C.accent);
+    document.documentElement.style.setProperty("--accent-dim", C.accentDim);
+    document.documentElement.style.setProperty("--text-faint", C.textFaint);
+  }, [C.accent, C.accentDim, C.textFaint]);
+
   const [tab, setTab] = useState(() => (mode === "vocals" ? "songs" : "practice"));
   const [editingSong, setEditingSong] = useState(undefined);
   const [newSongSeed, setNewSongSeed] = useState(null);
@@ -5961,58 +5979,33 @@ function AppInner() {
   return (
     <div ref={rootRef} style={{
       position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-      /* height: 100dvh is ideal but unsupported on iOS < 15.4.
-         position:fixed + inset:0 already pins all four sides, making the
-         height declaration redundant — but we keep it as a hint for
-         browsers that need it, with a vh fallback first. */
-      height: "100vh", /* fallback for iOS < 15.4 */
-      width: "100%", maxWidth: "none",
+      height: "100%", width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
-      <style>{`
-        html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
-        #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
-        .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        .bpm-number-input { -moz-appearance: textfield; }
-        input, textarea, select { font-size: 16px; }
-        button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
-        button:active { transform: scale(0.94); opacity: 0.8; }
-        input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
-        input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
-        input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
-        * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-        input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
-        textarea { touch-action: pan-y; }
-        .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
-        *::-webkit-scrollbar { display: none; }
-        * { scrollbar-width: none; -ms-overflow-style: none; }
-      `}</style>
-
       <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
           All screens stay mounted at all times. Inactive screens are hidden with
-          display:none. Active screens use display:block + height:100% so that
-          children can resolve percentage heights correctly (display:contents
-          has an iOS Safari bug where height:100% children collapse to 0).
+          display:none. Active screens use display:block + height:100% with relative
+          positioning so that children can resolve percentages and absolute coordinates.
         */}
-        <div style={{ display: tab === "practice" ? "block" : "none", height: "100%" }}>
+        <div style={{ display: tab === "practice" ? "block" : "none", height: "100%", position: "relative" }}>
           {/* Both practice screens always mounted; mode toggles which one is visible */}
-          <div style={{ display: mode === "drums" ? "block" : "none", height: "100%" }}>
+          <div style={{ display: mode === "drums" ? "block" : "none", height: "100%", position: "relative" }}>
             <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
           </div>
-          <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%" }}>
+          <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%", position: "relative" }}>
             <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
           </div>
         </div>
-        <div style={{ display: tab === "songs" ? "block" : "none", height: "100%" }}>
+        <div style={{ display: tab === "songs" ? "block" : "none", height: "100%", position: "relative" }}>
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         </div>
-        <div style={{ display: tab === "setlists" ? "block" : "none", height: "100%" }}>
+        <div style={{ display: tab === "setlists" ? "block" : "none", height: "100%", position: "relative" }}>
           <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
         </div>
-        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%", position: "relative" }}>
           <SettingsScreen
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}

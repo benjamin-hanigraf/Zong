@@ -1,5 +1,96 @@
-/* Minimal reset — all real styles are applied by App.jsx inline. */
-/* Background matches App's C.bg so there is never a colour mismatch during hydration. */
-*, *::before, *::after { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: #000000; }
+/* =============================================================================
+   Zong Global Styles
+   Static, stable stylesheet loaded once by index.html / main.jsx.
+   Eliminates stylesheet thrashing, DOM recreation, and blank flashes on tab/mode switch.
+   ============================================================================= */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 
+html, body {
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  background: #000000;
+  width: 100%;
+  height: 100%;
+}
+
+#root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+}
+
+.bpm-number-input::-webkit-outer-spin-button,
+.bpm-number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bpm-number-input {
+  -moz-appearance: textfield;
+}
+
+input, textarea, select {
+  font-size: 16px;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 90ms ease, opacity 90ms ease;
+  -webkit-touch-callout: none;
+}
+button:active {
+  transform: scale(0.94);
+  opacity: 0.8;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent, #30D158);
+  box-shadow: 0 0 0 2px var(--accent-dim, rgba(48, 209, 88, 0.35));
+}
+input.no-ring:focus, textarea.no-ring:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+input::placeholder, textarea::placeholder {
+  color: var(--text-faint, #4D4D50);
+  opacity: 1;
+}
+
+* {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: auto;
+}
+textarea {
+  touch-action: pan-y;
+}
+
+.scroll-list {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
