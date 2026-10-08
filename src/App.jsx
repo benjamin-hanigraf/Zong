@@ -1663,6 +1663,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const chordQualityRef = useRef(loadedQuality || "Major");
   const [samplesReady, setSamplesReady] = useState(false);
 
+
   useEffect(() => {
     if (loadedQuality && loadedQuality !== chordQuality) {
       setChordQuality(loadedQuality);
@@ -1939,8 +1940,6 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         else if (entry.voice) releaseVoice(entry.voice);
       });
       activeRef.current.clear();
-      sustainedRef.current.forEach((v) => releaseVoice(v));
-      sustainedRef.current.clear();
       const ctx = getSharedAudioContext();
       if (ctx && ctx.state === "running") ctx.suspend().catch(() => {});
     };
@@ -1959,8 +1958,6 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         else if (entry.voice) releaseVoice(entry.voice);
       });
       activeRef.current.clear();
-      sustainedRef.current.forEach((v) => releaseVoice(v));
-      sustainedRef.current.clear();
     };
   }, [isVocals]);
 
