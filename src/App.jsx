@@ -5366,45 +5366,6 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
 /* =========================================================================
    Root
    ========================================================================= */
-/* ------------------------------------------------------------------
-   GlobalStyles — writes a single stable <style> tag imperatively so
-   React never replaces the DOM node on re-render (which caused the
-   blank grey flash whenever mode or tab changed).
-   ------------------------------------------------------------------ */
-const _globalStyleEl = (() => {
-  if (typeof document === "undefined") return null;
-  const existing = document.getElementById("zong-global-styles");
-  if (existing) return existing;
-  const el = document.createElement("style");
-  el.id = "zong-global-styles";
-  document.head.appendChild(el);
-  return el;
-})();
-
-function GlobalStyles({ C }) {
-  useEffect(() => {
-    if (!_globalStyleEl) return;
-    _globalStyleEl.textContent = `
-      html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
-      #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
-      .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-      .bpm-number-input { -moz-appearance: textfield; }
-      input, textarea, select { font-size: 16px; }
-      button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
-      button:active { transform: scale(0.94); opacity: 0.8; }
-      input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
-      input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
-      input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
-      * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-      input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
-      textarea { touch-action: pan-y; }
-      .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
-      *::-webkit-scrollbar { display: none; }
-      * { scrollbar-width: none; -ms-overflow-style: none; }
-    `;
-  }); // runs after every render — fast text assignment, no DOM thrash
-  return null;
-}
 
 function AppInner() {
   useEffect(() => {
@@ -5999,36 +5960,59 @@ function AppInner() {
 
   return (
     <div ref={rootRef} style={{
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0, height: "100dvh", width: "100%", maxWidth: "none",
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      /* height: 100dvh is ideal but unsupported on iOS < 15.4.
+         position:fixed + inset:0 already pins all four sides, making the
+         height declaration redundant — but we keep it as a hint for
+         browsers that need it, with a vh fallback first. */
+      height: "100vh", /* fallback for iOS < 15.4 */
+      width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
-      <GlobalStyles C={C} />
+      <style>{`
+        html, body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background: ${C.bg}; width: 100%; height: 100%; }
+        #root { position: fixed; inset: 0; overflow: hidden; width: 100%; height: 100%; }
+        .bpm-number-input::-webkit-outer-spin-button, .bpm-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .bpm-number-input { -moz-appearance: textfield; }
+        input, textarea, select { font-size: 16px; }
+        button { -webkit-tap-highlight-color: transparent; transition: transform 90ms ease, opacity 90ms ease; -webkit-touch-callout: none; }
+        button:active { transform: scale(0.94); opacity: 0.8; }
+        input:focus, textarea:focus { outline: none; border-color: ${C.accent}; box-shadow: 0 0 0 2px ${C.accentDim}; }
+        input.no-ring:focus, textarea.no-ring:focus { border-color: transparent; box-shadow: none; }
+        input::placeholder, textarea::placeholder { color: ${C.textFaint}; opacity: 1; }
+        * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+        input, textarea { -webkit-user-select: text; user-select: text; touch-action: auto; }
+        textarea { touch-action: pan-y; }
+        .scroll-list { -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
+        *::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; -ms-overflow-style: none; }
+      `}</style>
 
       <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
-          All screens are always mounted. Visibility is toggled via display:none
-          instead of conditional mounting, preventing blank-grey flashes on both
-          tab switches and mode changes (drums ↔ chords ↔ vocals).
+          All screens stay mounted at all times. Inactive screens are hidden with
+          display:none. Active screens use display:block + height:100% so that
+          children can resolve percentage heights correctly (display:contents
+          has an iOS Safari bug where height:100% children collapse to 0).
         */}
-        <div style={{ display: tab === "practice" ? "contents" : "none" }}>
-          {/* Both practice screens are always mounted; only the active one is shown.
-              This avoids unmounting/remounting when mode toggles drums ↔ vocals/chords. */}
-          <div style={{ display: mode === "drums" ? "contents" : "none" }}>
+        <div style={{ display: tab === "practice" ? "block" : "none", height: "100%" }}>
+          {/* Both practice screens always mounted; mode toggles which one is visible */}
+          <div style={{ display: mode === "drums" ? "block" : "none", height: "100%" }}>
             <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
           </div>
-          <div style={{ display: mode !== "drums" ? "contents" : "none" }}>
+          <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%" }}>
             <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
           </div>
         </div>
-        <div style={{ display: tab === "songs" ? "contents" : "none" }}>
+        <div style={{ display: tab === "songs" ? "block" : "none", height: "100%" }}>
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         </div>
-        <div style={{ display: tab === "setlists" ? "contents" : "none" }}>
+        <div style={{ display: tab === "setlists" ? "block" : "none", height: "100%" }}>
           <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
         </div>
-        <div style={{ display: tab === "settings" ? "contents" : "none" }}>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
           <SettingsScreen
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}
