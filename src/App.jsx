@@ -5983,19 +5983,20 @@ function AppInner() {
         * { scrollbar-width: none; -ms-overflow-style: none; }
       `}</style>
 
-      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box" }}>
-        {tab === "practice" && (
-          mode === "drums"
+      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
+        {/* All screens are always mounted and hidden via display:none to prevent blank-grey flash on tab switch */}
+        <div style={{ display: tab === "practice" ? "contents" : "none" }}>
+          {mode === "drums"
             ? <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
-            : <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
-        )}
-        {tab === "songs" && (
+            : <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />}
+        </div>
+        <div style={{ display: tab === "songs" ? "contents" : "none" }}>
           <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
-        )}
-        {tab === "setlists" && (
+        </div>
+        <div style={{ display: tab === "setlists" ? "contents" : "none" }}>
           <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
-        )}
-        {tab === "settings" && (
+        </div>
+        <div style={{ display: tab === "settings" ? "contents" : "none" }}>
           <SettingsScreen
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}
@@ -6017,7 +6018,7 @@ function AppInner() {
             syncStatus={syncStatus}
             C={C}
           />
-        )}
+        </div>
       </div>
 
       <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />
