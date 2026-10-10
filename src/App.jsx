@@ -2624,7 +2624,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
   };
 
   return (
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "20px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "70px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", height: 40, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
