@@ -4909,7 +4909,7 @@ function BottomNav({ active, onChange, mode, C }) {
   const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
-      <div style={{ display: "flex", background: C.bg, paddingTop: 10, paddingBottom: "max(20px, env(safe-area-inset-bottom, 0px))" }}>
+      <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
         {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
           const isPiano = Icon === PianoIcon;
@@ -5975,13 +5975,12 @@ function AppInner() {
 
   return (
     <div ref={rootRef} style={{
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-      height: "100%", width: "100%", maxWidth: "none",
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0, height: "100dvh", width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "env(safe-area-inset-top, 0px)",
     }}>
-      <div style={{ paddingBottom: "calc(51px + max(20px, env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
+      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
           All screens stay mounted at all times. Inactive screens are hidden with
           display:none. Active screens use display:block + height:100% with relative
