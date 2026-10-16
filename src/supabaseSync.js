@@ -632,7 +632,13 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
                             remoteSpellingKeys.length !== localSpellingKeys.length;
 
   const hasGlobalUpdate = hasSongMembershipChange || hasSongContentChange || hasSpellingChange;
-  const hasTeamUpdate   = isTeam && (nextTeam.revision !== rev.team || nextTeam.sharedSetlists.length !== (state.sharedSetlists?.length || 0));
+  // Deep-compare remote vs local shared setlists so that content changes
+  // (renamed setlist, updated entries) are detected even when the count stays the same.
+  const hasTeamUpdate = isTeam && (
+    nextTeam.revision !== rev.team ||
+    nextTeam.sharedSetlists.length !== (state.sharedSetlists?.length || 0) ||
+    JSON.stringify(nextTeam.sharedSetlists) !== JSON.stringify(state.sharedSetlists || [])
+  );
 
   return {
     revision: { global: 1, team: nextTeam.revision },
