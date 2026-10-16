@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import MediaPlayer
 
