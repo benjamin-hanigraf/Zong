@@ -6,6 +6,7 @@ import {
   Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, recordDeletedSongId, recordDeletedSpellingKey } from "./supabaseSync";
+import { initNativeMetronome, isNativePlatform, nativeMetronome } from "./nativeMetronome";
 
 function getDeviceId() {
   if (typeof localStorage === "undefined") return "dev_default";
@@ -171,7 +172,7 @@ function setSongSubdivision(songId, sub) {
     const map = JSON.parse(localStorage.getItem(SONG_SUBDIVISIONS_KEY) || "{}");
     map[songId] = Number(sub) || 1;
     localStorage.setItem(SONG_SUBDIVISIONS_KEY, JSON.stringify(map));
-  } catch {}
+  } catch { }
 }
 const PAN_OPTIONS = [
   { id: "left", label: "Left" },
@@ -665,13 +666,19 @@ function migrateSongShape(song) {
     drumsText: song.drumsText ?? "",
   };
 }
-function parseTextIntoBlocks(text) {
+function parseTextIntoBlocks(text, stripTrailingBlanks = false) {
   const lines = String(text || "").split("\n");
   const blocks = [];
   let current = null;
   lines.forEach((rawLine) => {
     const trimmed = rawLine.trimStart();
     if (trimmed.startsWith("-")) {
+      // Strip trailing empty lines from the previous block before starting a new section.
+      if (stripTrailingBlanks && current) {
+        while (current.lines.length > 0 && current.lines[current.lines.length - 1].trim() === "") {
+          current.lines.pop();
+        }
+      }
       current = { label: trimmed.slice(1).trim(), lines: [] };
       blocks.push(current);
     } else {
@@ -679,6 +686,12 @@ function parseTextIntoBlocks(text) {
       current.lines.push(trimmed);
     }
   });
+  // Strip trailing empty lines from the last block too.
+  if (stripTrailingBlanks && current) {
+    while (current.lines.length > 0 && current.lines[current.lines.length - 1].trim() === "") {
+      current.lines.pop();
+    }
+  }
   return blocks;
 }
 // Chords tab only accepts Nashville-number tokens as chord tags — any
@@ -1582,9 +1595,9 @@ function getSharedAudioContext() {
 }
 
 const PIANO_SAMPLE_DEFS = [
-  { name: "C2",  midi: 36 }, { name: "Ds2", midi: 39 }, { name: "Fs2", midi: 42 }, { name: "A2", midi: 45 },
-  { name: "C3",  midi: 48 }, { name: "Ds3", midi: 51 }, { name: "Fs3", midi: 54 }, { name: "A3", midi: 57 },
-  { name: "C4",  midi: 60 }, { name: "Ds4", midi: 63 }, { name: "Fs4", midi: 66 }, { name: "A4", midi: 69 },
+  { name: "C2", midi: 36 }, { name: "Ds2", midi: 39 }, { name: "Fs2", midi: 42 }, { name: "A2", midi: 45 },
+  { name: "C3", midi: 48 }, { name: "Ds3", midi: 51 }, { name: "Fs3", midi: 54 }, { name: "A3", midi: 57 },
+  { name: "C4", midi: 60 }, { name: "Ds4", midi: 63 }, { name: "Fs4", midi: 66 }, { name: "A4", midi: 69 },
 ];
 
 let _pianoBuffers = null; // { [name]: { buffer: AudioBuffer, midi: number } }
@@ -1693,7 +1706,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
     }
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (ctx.state === "suspended") ctx.resume().catch(() => { });
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
       silentVideoRef.current.play().catch(() => { videoUnlockedRef.current = false; });
@@ -1720,8 +1733,8 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       gainNode.gain.cancelScheduledValues(now);
       gainNode.gain.setValueAtTime(gainNode.gain.value, now);
       gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
-      try { source.stop(now + 0.32); } catch {}
-    } catch {}
+      try { source.stop(now + 0.32); } catch { }
+    } catch { }
   };
 
   const startNote = (semitone) => {
@@ -1745,7 +1758,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       source.connect(gainNode);
       source.start(now);
       source.onended = () => {
-        try { source.disconnect(); gainNode.disconnect(); } catch {}
+        try { source.disconnect(); gainNode.disconnect(); } catch { }
       };
       return { source, gainNode, ctx, semitone, midi };
     } else {
@@ -1755,7 +1768,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       osc.connect(gainNode);
       osc.start(now);
       osc.onended = () => {
-        try { osc.disconnect(); gainNode.disconnect(); } catch {}
+        try { osc.disconnect(); gainNode.disconnect(); } catch { }
       };
       return { source: osc, gainNode, ctx, semitone, midi };
     }
@@ -1772,9 +1785,9 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     const thirdInterval = quality === "Minor" ? 3 : 4;
 
     const notes = [
-      { midi: baseMidi,                      gain: 0.28, cutoff: 800,  detune: 0 },
-      { midi: baseMidi + 7,                  gain: 0.18, cutoff: 1600, detune: 5 },
-      { midi: baseMidi + 12,                 gain: 0.32, cutoff: 1800, detune: 6 },
+      { midi: baseMidi, gain: 0.28, cutoff: 800, detune: 0 },
+      { midi: baseMidi + 7, gain: 0.18, cutoff: 1600, detune: 5 },
+      { midi: baseMidi + 12, gain: 0.32, cutoff: 1800, detune: 6 },
       { midi: baseMidi + 12 + thirdInterval, gain: 0.20, cutoff: 2000, detune: 5 },
     ];
 
@@ -1855,8 +1868,8 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       padVoice.masterGain.gain.cancelScheduledValues(now);
       padVoice.masterGain.gain.setValueAtTime(padVoice.masterGain.gain.value, now);
       padVoice.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-      padVoice.oscillators.forEach((osc) => { try { osc.stop(now + 0.30); } catch {} });
-    } catch {}
+      padVoice.oscillators.forEach((osc) => { try { osc.stop(now + 0.30); } catch { } });
+    } catch { }
   };
 
   const keyAt = (x, y) => {
@@ -1867,11 +1880,16 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     return { semitone: parseInt(keyEl.dataset.semitone, 10), el: keyEl };
   };
 
+  const paintKeyRef = useRef(null);
   const paintKey = (keyEl, pressed) => {
     if (!keyEl) return;
     const isBlack = keyEl.dataset.black === "1";
     keyEl.style.background = pressed ? (isBlack ? BLACK_PRESSED : WHITE_PRESSED) : (isBlack ? BLACK_KEY_BG : WHITE_KEY_BG);
   };
+  // Keep a stable ref to paintKey so that the pointermove useEffect (which
+  // only re-runs when isVocals changes) always calls the latest version and
+  // never applies a stale accent colour from a previous mode render.
+  paintKeyRef.current = paintKey;
 
   const handlePointerDown = (e) => {
     e.preventDefault();
@@ -1910,7 +1928,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       const newSemitone = hit ? hit.semitone : null;
       if (newSemitone === entry.semitone) return;
       stopEntry(entry);
-      paintKey(entry.keyEl, false);
+      paintKeyRef.current(entry.keyEl, false);
       if (hit) {
         if (isVocals) {
           const padVoice = startPadChord(hit.semitone);
@@ -1919,7 +1937,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
           const voice = startNote(hit.semitone);
           activeRef.current.set(e.pointerId, { semitone: hit.semitone, voice, padVoice: null, keyEl: hit.el });
         }
-        paintKey(hit.el, true);
+        paintKeyRef.current(hit.el, true);
       } else {
         activeRef.current.delete(e.pointerId);
       }
@@ -1928,7 +1946,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     const handleUp = (e) => {
       const entry = activeRef.current.get(e.pointerId);
       if (!entry) return;
-      paintKey(entry.keyEl, false);
+      paintKeyRef.current(entry.keyEl, false);
       stopEntry(entry);
       activeRef.current.delete(e.pointerId);
     };
@@ -1941,7 +1959,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       });
       activeRef.current.clear();
       const ctx = getSharedAudioContext();
-      if (ctx && ctx.state === "running") ctx.suspend().catch(() => {});
+      if (ctx && ctx.state === "running") ctx.suspend().catch(() => { });
     };
 
     window.addEventListener("pointermove", handleMove, { passive: false });
@@ -2074,7 +2092,17 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
    ========================================================================= */
 function defaultAccents(beats) { return Array.from({ length: beats }, () => "normal"); }
 
+// ---------------------------------------------------------------------------
+// useMetronomeEngine — unified metronome hook.
+// On native iOS (Capacitor) it delegates audio scheduling to the Swift
+// NativeMetronomePlugin; on web it uses the existing Web Audio scheduler.
+// The returned object is identical in both cases so all callers are unchanged.
+// ---------------------------------------------------------------------------
 function useMetronomeEngine(settings) {
+  // Track native availability (resolved async on mount).
+  const [_isNative, _setIsNative] = useState(false);
+  useEffect(() => { initNativeMetronome().then(ok => _setIsNative(ok)); }, []);
+  const isNative = _isNative;
   const [bpm, setBpmState] = useState(() => {
     try { const s = localStorage.getItem("altar_metronome_bpm"); return s ? Number(s) : 120; } catch { return 120; }
   });
@@ -2141,6 +2169,9 @@ function useMetronomeEngine(settings) {
   useEffect(() => () => clearInterval(schedulerRef.current), []);
   const wasPlayingBeforeHideRef = useRef(false);
   useEffect(() => {
+    // On native, AVAudioSession + UIBackgroundModes:audio handle background
+    // playback; the web visibility-change stop/resume would fight it.
+    if (isNative) return;
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
         // Screen locked / app backgrounded: cleanly pause the metronome
@@ -2160,30 +2191,40 @@ function useMetronomeEngine(settings) {
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+  }, [isNative]);
 
   const setBpm = (v, keepSong = false) => {
     const clamped = Math.min(300, Math.max(30, Math.round(v)));
     setBpmState(clamped);
     if (!keepSong) setLoadedSong(null);
-    // Update the ref directly — the scheduler reads it on every 25ms tick so
-    // it picks up the new tempo immediately without stopping/restarting (which
-    // would cause the accented first-beat "crank" sound on each change).
     bpmRef.current = clamped;
+    // On native, propagate tempo to the Swift engine in real-time.
+    if (isNative && playing) {
+      nativeMetronome.setTempo({ bpm: clamped }).catch(() => {});
+    }
   };
   const setTimeSig = (ts) => {
     setTimeSigState(ts);
     const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats;
-    setAccentsState(defaultAccents(effBeats));
+    const newAccents = defaultAccents(effBeats);
+    setAccentsState(newAccents);
+    if (isNative && playing) {
+      nativeMetronome.setBeatsPerBar({ beatsPerBar: effBeats, accents: newAccents }).catch(() => {});
+    }
   };
-  const setAccents = (arr) => setAccentsState(arr);
+  const setAccents = (arr) => {
+    setAccentsState(arr);
+    if (isNative && playing) {
+      nativeMetronome.setAccents({ accents: arr }).catch(() => {});
+    }
+  };
   const setSubdivision = (n) => {
     setSubdivisionState(n);
     subdivisionRef.current = n;
     if (loadedSongRef.current?.id) {
       setSongSubdivision(loadedSongRef.current.id, n);
     } else {
-      try { localStorage.setItem("altar_metronome_subdivision", n); } catch {}
+      try { localStorage.setItem("altar_metronome_subdivision", n); } catch { }
     }
   };
   const panValue = () => (panRef.current === "left" ? -1 : panRef.current === "right" ? 1 : 0);
@@ -2262,7 +2303,7 @@ function useMetronomeEngine(settings) {
         gain.connect(dest);
         source.start(scheduledTime);
         source.onended = () => {
-          try { source.disconnect(); gain.disconnect(); } catch {}
+          try { source.disconnect(); gain.disconnect(); } catch { }
         };
         return;
       }
@@ -2303,7 +2344,38 @@ function useMetronomeEngine(settings) {
     }
   };
 
+  // ── Native-plugin beat subscription ─────────────────────────────────────
+  // When running on native iOS the Swift engine fires "beat" events on the
+  // audio clock; we listen and mirror them into the React flashBeat state.
+  useEffect(() => {
+    if (!isNative) return;
+    const remove = nativeMetronome.addBeatListener(({ beatIndex }) => {
+      setFlashBeat(beatIndex);
+    });
+    return remove;
+  }, [isNative]);
+
+  // Remote-command events from the lock screen (play/pause hardware button).
+  useEffect(() => {
+    if (!isNative) return;
+    const remove = nativeMetronome.addRemoteCommandListener(({ command }) => {
+      if (command === "play" && !playing) setPlaying(true);
+      if (command === "pause" && playing) { setPlaying(false); setFlashBeat(-1); }
+    });
+    return remove;
+  }, [isNative, playing]);
+
   const start = async () => {
+    if (isNative) {
+      const effBeats = timeSigRef.current.beats;
+      await nativeMetronome.start({
+        bpm:         bpmRef.current,
+        beatsPerBar: effBeats,
+        accents:     accentsRef.current,
+      }).catch(() => {});
+      setPlaying(true);
+      return;
+    }
     unlockAudioPlayback();
     clearInterval(schedulerRef.current);
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
@@ -2313,7 +2385,7 @@ function useMetronomeEngine(settings) {
       await audioCtxRef.current.resume();
     }
     if (!_metronomeBuffers) {
-      await loadAudioSamples(audioCtxRef.current).catch(() => {});
+      await loadAudioSamples(audioCtxRef.current).catch(() => { });
     }
     audioCtxRef.current.onstatechange = () => {
       const ctx = audioCtxRef.current;
@@ -2331,6 +2403,12 @@ function useMetronomeEngine(settings) {
     setPlaying(true);
   };
   const stop = () => {
+    if (isNative) {
+      nativeMetronome.stop().catch(() => {});
+      setPlaying(false);
+      setFlashBeat(-1);
+      return;
+    }
     clearInterval(schedulerRef.current);
     schedulerRef.current = null;
     setPlaying(false);
@@ -2624,19 +2702,19 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
   };
 
   return (
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "70px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "60px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
-        style={{ textAlign: "center", height: 40, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer" }}>
+        style={{ textAlign: "center", minHeight: 44, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer", maxWidth: 260 }}>
         {loadedSong ? (
           <>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{loadedSong.title}</div>
-            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>{loadedSong.artist}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.25, whiteSpace: "normal", wordBreak: "break-word" }}>{loadedSong.title}</div>
+            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>{loadedSong.artist}</div>
           </>
         ) : (
           <>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>Metronome</div>
-            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>BH</div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>Metronome</div>
+            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>BH</div>
           </>
         )}
       </div>
@@ -2727,7 +2805,7 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
   return out;
 }
 
-function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
+function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
   const lines = String(text || "").split("\n").map((l) => l.replace(/^\s+/, ""));
@@ -2765,7 +2843,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: dimTags ? "break-word" : "keep-all", overflowWrap: dimTags ? "break-word" : "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -2866,7 +2944,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
                   fontSize: tagSize, fontWeight: noteWeightBold ? 800 : 600,
                   lineHeight: 1,
-                  color: brightTags ? C.text : accent,
+                  color: dimTags ? C.textFaint : brightTags ? C.text : accent,
                   opacity: 1,
                 }}>
                   {flatify(tok.tag)}
@@ -2881,7 +2959,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                   userSelect: "none",
                 }}>+</span>
               ) : null}
-              <span style={{ color: showLyrics ? (dim ? "#4D4D50" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
+              <span style={{ color: showLyrics ? (dimTags ? C.text : dim ? "#4D4D50" : C.text) : "transparent", visibility: showLyrics ? "visible" : (tok.ch ? "hidden" : "visible"), fontWeight: lyricWeightBold ? 700 : 400 }}>
                 {tok.ch === null ? "\u00A0" : tok.ch === " " ? "\u00A0" : tok.ch}
               </span>
             </span>
@@ -2931,7 +3009,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, showLyrics = tru
                           textAlign: "center",
                           fontSize: tagSize,
                           fontWeight: noteWeightBold ? 800 : 600,
-                          color: brightTags ? C.text : accent,
+                          color: dimTags ? C.textFaint : brightTags ? C.text : accent,
                           whiteSpace: "nowrap"
                         }}
                       >
@@ -3518,8 +3596,16 @@ function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeho
   useEffect(() => {
     const el = taRef.current;
     if (!el) return;
+    // Preserve the scroll position of the *parent* scroll container so that
+    // resetting height to "auto" (which temporarily collapses the element)
+    // does not cause the page to jump.
+    const scroller = el.closest(".scroll-list") || el.parentElement;
+    const savedScrollTop = scroller ? scroller.scrollTop : 0;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
+    if (scroller && scroller.scrollTop !== savedScrollTop) {
+      scroller.scrollTop = savedScrollTop;
+    }
   }, [value]);
   const handleScroll = () => {
     if (backdropRef.current && taRef.current) {
@@ -3848,7 +3934,7 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
-        <div style={{ fontSize: 12.5, color: "#7E7E82", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
+        <div style={{ fontSize: 12.5, color: "#6A6A6E", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -4116,9 +4202,9 @@ function SongDetailScreen({
         {(() => {
           if (mode === "chords" && chordsView === "chords") {
             const rawText = ms.chordsText;
-            return parseTextIntoBlocks(rawText).map((block, idx) => (
+            return parseTextIntoBlocks(rawText, true).map((block, idx) => (
               <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
-                {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
+                {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
                 <ChordsOnlyBlock
                   lines={block.lines}
                   viewKey={viewKey}
@@ -4141,11 +4227,14 @@ function SongDetailScreen({
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
-          return parseTextIntoBlocks(displayText).map((block, idx) => (
+          const isDrums = mode === "drums";
+          return parseTextIntoBlocks(displayText, true).map((block, idx) => (
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
-              {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>{block.label}</div>}
+              {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
               {isVocals ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
+              ) : isDrums ? (
+                <ChordText text={block.lines.join("\n")} editable={false} showLyrics dimTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing} padWordForTag={true} letterSpacing={letterSpacing} />
               ) : (
                 <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={true} letterSpacing={letterSpacing} />
               )}
@@ -5629,7 +5718,7 @@ function AppInner() {
         setTimeout(() => performSyncRef.current?.(true), 0);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
 
   useEffect(() => {
@@ -5739,7 +5828,7 @@ function AppInner() {
       /Mobi|Android|iPhone/i.test(navigator.userAgent) &&
       Math.min(window.screen.width, window.screen.height) < 600;
     if (isMobilePhone) {
-      window.screen?.orientation?.lock?.("portrait").catch(() => {});
+      window.screen?.orientation?.lock?.("portrait").catch(() => { });
     }
   }, []);
 
@@ -5753,7 +5842,14 @@ function AppInner() {
   // scroll straight back to the top neutralises this without touching any
   // legitimate scrolling in the app.
   useEffect(() => {
-    const pinScroll = () => { if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0); };
+    const pinScroll = () => {
+      // Don't fight the browser when a textarea/input is focused — iOS needs
+      // to scroll the viewport to keep the keyboard-obscured field visible.
+      const active = document.activeElement;
+      const isFormField = active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable);
+      if (isFormField) return;
+      if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+    };
     window.addEventListener("scroll", pinScroll, { passive: true });
     window.visualViewport?.addEventListener("scroll", pinScroll);
     window.visualViewport?.addEventListener("resize", pinScroll);
@@ -5777,7 +5873,10 @@ function AppInner() {
 
   // Keep iOS routing audio through the "media" session so the hardware
   // silent switch doesn't mute the metronome/piano.
+  // On native Capacitor, AVAudioSession.category = .playback already handles
+  // this — creating a competing audio element would fight the native session.
   useEffect(() => {
+    if (isNativePlatform()) return;
     const audio = document.createElement("audio");
     audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
     audio.loop = true; audio.setAttribute("playsinline", "true"); audio.volume = 1; audio.style.display = "none";
@@ -5797,10 +5896,10 @@ function AppInner() {
 
   // Preload audio samples (piano + metronome WAVs) on first mount so they are
   // decoded and ready before the user opens the piano or starts the metronome.
-  // This eliminates any "Loading piano…" overlay and ensures the first metronome
-  // click is identical to subsequent ones.
+  // Not needed on native — the Swift engine loads its own WAVs from the bundle.
   useEffect(() => {
-    loadAudioSamples(getSharedAudioContext()).catch(() => {});
+    if (isNativePlatform()) return;
+    loadAudioSamples(getSharedAudioContext()).catch(() => { });
   }, []);
 
   const flash = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 2000); };
