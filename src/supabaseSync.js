@@ -183,26 +183,20 @@ function songToRow(song) {
 async function readSpellingChart() {
   const sb = client();
   const hasTable = await checkHasZongSpellingTable();
-
-  let chart = {};
+  const chart = {};
   const deletedKeys = [];
-  let readFromTable = false;
 
   if (hasTable) {
     try {
+      // Fix #3: explicit column list (no '*')
       const { data: rows, error } = await sb
         .from("zong_spelling_chart")
-        .select("tamil, latin, is_deleted, updated_at")
-        .order("tamil", { ascending: true });
+        .select("tamil, latin, is_deleted");
 
       if (!error && rows) {
-        readFromTable = true;
         rows.forEach((r) => {
-          if (r.is_deleted) {
-            deletedKeys.push(r.tamil);
-          } else {
-            chart[r.tamil] = r.latin;
-          }
+          if (r.is_deleted) deletedKeys.push(r.tamil);
+          else chart[r.tamil] = r.latin;
         });
       }
     } catch (e) {
@@ -210,82 +204,51 @@ async function readSpellingChart() {
     }
   }
 
-  // Graceful fallback: If zong_global still exists before being dropped, migrate its spelling_chart
-  if (!readFromTable || Object.keys(chart).length === 0) {
-    try {
-      const { data: globalData, error } = await sb
-        .from("zong_global")
-        .select("spelling_chart")
-        .eq("id", "main")
-        .maybeSingle();
-
-      if (!error && globalData?.spelling_chart && typeof globalData.spelling_chart === "object") {
-        if (hasTable && readFromTable && Object.keys(chart).length === 0) {
-          const rows = Object.entries(globalData.spelling_chart).map(([tamil, latin]) => ({
-            tamil,
-            latin,
-            is_deleted: false,
-            updated_at: new Date().toISOString()
-          }));
-          if (rows.length > 0) {
-            await sb.from("zong_spelling_chart").upsert(rows, { onConflict: "tamil" });
-          }
-        }
-        chart = { ...globalData.spelling_chart, ...chart };
-      }
-    } catch {}
-  }
-
+  // Fix #8: removed zong_global fallback — table was dropped by the schema migration.
   return { chart, deletedKeys };
 }
 
 /**
  * Writes spelling chart entries to zong_spelling_chart.
  */
-async function writeSpellingChart(spellingChart) {
+/**
+ * Writes spelling chart entries to zong_spelling_chart.
+ * @param {object} spellingChart  - full chart (tamil → latin)
+ * @param {Set<string>} [changedKeys] - if provided, only these keys are upserted (Fix #7)
+ */
+async function writeSpellingChart(spellingChart, changedKeys) {
   const sb = client();
   const hasTable = await checkHasZongSpellingTable();
+  if (!hasTable) return;
 
-  if (hasTable) {
-    try {
-      // 1. Process explicit deletions
-      const deletedKeys = getDeletedSpellingKeys();
-      if (deletedKeys.length > 0) {
-        const { error: softErr } = await sb
-          .from("zong_spelling_chart")
-          .update({ is_deleted: true, updated_at: new Date().toISOString() })
-          .in("tamil", deletedKeys);
-
-        if (softErr) {
-          await sb.from("zong_spelling_chart").delete().in("tamil", deletedKeys);
-        }
-        clearDeletedSpellingKeys(deletedKeys);
-      }
-
-      // 2. Upsert active spelling entries
-      const entries = Object.entries(spellingChart || {});
-      const rows = entries.map(([tamil, latin]) => ({
-        tamil,
-        latin,
-        is_deleted: false,
-        updated_at: new Date().toISOString()
-      }));
-
-      if (rows.length > 0) {
-        await sb.from("zong_spelling_chart").upsert(rows, { onConflict: "tamil" });
-      }
-    } catch (e) {
-      console.warn("[Zong Sync] Failed writing zong_spelling_chart:", e);
-    }
-  }
-
-  // Optional legacy backup to zong_global if it still exists (ignored if dropped)
   try {
-    await sb
-      .from("zong_global")
-      .update({ spelling_chart: spellingChart, updated_at: new Date().toISOString() })
-      .eq("id", "main");
-  } catch {}
+    // 1. Process explicit deletions
+    const deletedKeys = getDeletedSpellingKeys();
+    if (deletedKeys.length > 0) {
+      const { error: softErr } = await sb
+        .from("zong_spelling_chart")
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
+        .in("tamil", deletedKeys);
+      if (softErr) {
+        await sb.from("zong_spelling_chart").delete().in("tamil", deletedKeys);
+      }
+      clearDeletedSpellingKeys(deletedKeys);
+    }
+
+    // 2. Upsert only changed entries (Fix #7: skip unchanged rows)
+    const entries = Object.entries(spellingChart || {}).filter(
+      ([k]) => !changedKeys || changedKeys.has(k)
+    );
+    if (entries.length > 0) {
+      const rows = entries.map(([tamil, latin]) => ({
+        tamil, latin, is_deleted: false, updated_at: new Date().toISOString()
+      }));
+      await sb.from("zong_spelling_chart").upsert(rows, { onConflict: "tamil" });
+    }
+  } catch (e) {
+    console.warn("[Zong Sync] Failed writing zong_spelling_chart:", e);
+  }
+  // Fix #8: removed zong_global legacy write — table was dropped by schema migration.
 }
 
 /**
@@ -297,25 +260,21 @@ async function readGlobal() {
   const sb = client();
   const hasSongsTable = await checkHasZongSongsTable();
 
-  let songs = [];
+  const songs = [];
   const deletedSongIds = [];
-  let songsFromTable = false;
 
   if (hasSongsTable) {
     try {
+      // Fix #3: explicit column list instead of select('*')
       const { data: songRows, error: sErr } = await sb
         .from("zong_songs")
-        .select("*")
+        .select("id, title, artist, key, tempo, time_signature, language, lyrics_text, chords_text, chart_text, drums_text, accents, key_quality, description, is_deleted, updated_at")
         .order("title", { ascending: true });
 
       if (!sErr && songRows) {
-        songsFromTable = true;
         songRows.forEach((r) => {
-          if (r.is_deleted) {
-            deletedSongIds.push(r.id);
-          } else {
-            songs.push(rowToSong(r));
-          }
+          if (r.is_deleted) deletedSongIds.push(r.id);
+          else songs.push(rowToSong(r));
         });
       }
     } catch (e) {
@@ -323,29 +282,8 @@ async function readGlobal() {
     }
   }
 
-  // Read spelling chart from zong_spelling_chart
+  // Fix #8: removed zong_global legacy migration fallback — dropped by schema.sql.
   const { chart: spellingChart, deletedKeys: deletedSpellingKeys } = await readSpellingChart();
-
-  // If songs table has 0 rows and zong_global still exists, migrate legacy songs
-  if (!hasSongsTable || (songsFromTable && songs.length === 0)) {
-    try {
-      const { data: globalData, error } = await sb
-        .from("zong_global")
-        .select("songs")
-        .eq("id", "main")
-        .maybeSingle();
-
-      if (!error && Array.isArray(globalData?.songs) && globalData.songs.length > 0) {
-        if (hasSongsTable && songsFromTable && songs.length === 0) {
-          const rows = globalData.songs.map(songToRow);
-          if (rows.length > 0) {
-            await sb.from("zong_songs").upsert(rows, { onConflict: "id" });
-          }
-        }
-        songs = globalData.songs.map((s) => ({ ...s, subdivision: 1 }));
-      }
-    } catch {}
-  }
 
   return {
     revision: 1,
@@ -361,32 +299,37 @@ async function readGlobal() {
  * - songs to zong_songs
  * - spelling chart to zong_spelling_chart
  */
-async function writeGlobal({ songs, spellingChart }) {
-  const onlineSongs = (songs || []).map((s) => ({
-    ...s,
-    subdivision: 1
-  }));
-
+/**
+ * Writes global state to Supabase.
+ * @param {object} params
+ * @param {Array}  params.songs          - full local songs array
+ * @param {object} params.spellingChart  - full local spelling chart
+ * @param {Set<string>} [params.dirtySongIds]    - only upsert these songs (Fix #6)
+ * @param {Set<string>} [params.dirtySpellingKeys] - only upsert these spelling keys (Fix #7)
+ */
+async function writeGlobal({ songs, spellingChart, dirtySongIds, dirtySpellingKeys }) {
   const hasSongsTable = await checkHasZongSongsTable();
   if (hasSongsTable) {
     try {
-      // 1. Process explicit song deletions
+      // 1. Soft-delete songs that were explicitly removed
       const deletedIds = getDeletedSongIds();
       if (deletedIds.length > 0) {
         const { error: softErr } = await client()
           .from("zong_songs")
           .update({ is_deleted: true, updated_at: new Date().toISOString() })
           .in("id", deletedIds);
-
         if (softErr) {
           await client().from("zong_songs").delete().in("id", deletedIds);
         }
         clearDeletedSongIds(deletedIds);
       }
 
-      // 2. Upsert active songs
-      const rows = onlineSongs.map(songToRow);
-      if (rows.length > 0) {
+      // 2. Fix #6: only upsert songs that actually changed
+      const songsToWrite = dirtySongIds
+        ? (songs || []).filter((s) => dirtySongIds.has(s.id))
+        : (songs || []);
+      if (songsToWrite.length > 0) {
+        const rows = songsToWrite.map(songToRow);
         await client().from("zong_songs").upsert(rows, { onConflict: "id" });
       }
     } catch (e) {
@@ -394,26 +337,11 @@ async function writeGlobal({ songs, spellingChart }) {
     }
   }
 
-  // 3. Write spelling chart to zong_spelling_chart
-  await writeSpellingChart(spellingChart);
+  // 3. Fix #7: only write changed spelling entries
+  await writeSpellingChart(spellingChart, dirtySpellingKeys);
 
-  // Optional legacy backup to zong_global if it still exists (ignored if dropped)
-  try {
-    await client()
-      .from("zong_global")
-      .update({
-        songs: onlineSongs,
-        spelling_chart: spellingChart,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", "main");
-  } catch {}
-
-  return {
-    revision: 1,
-    songs: onlineSongs,
-    spellingChart
-  };
+  // Fix #8: removed zong_global legacy write.
+  return { revision: 1, songs: songs || [], spellingChart };
 }
 
 // ---------------------------------------------------------------------------
@@ -555,9 +483,11 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
 
   if (changed || (isFreshRemote && hasLocalData)) {
     const pushed = await writeGlobal({
-      songs:         state.songs || [],
-      spellingChart: state.spellingChart || {},
-      baseRevision:  rev.global
+      songs:             state.songs || [],
+      spellingChart:     state.spellingChart || {},
+      // Fix #6/#7: only write songs/spelling that actually changed
+      dirtySongIds:      state.dirtySongIds,
+      dirtySpellingKeys: state.dirtySpellingKeys,
     });
 
     nextGlobal = {
@@ -688,46 +618,56 @@ let _songsChannel    = null;
 let _spellingChannel = null;
 let _teamChannel     = null;
 
-export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
+/**
+ * Subscribe to Realtime changes.
+ * Fix #2: payloads are applied directly to local state — no full table refetch.
+ * Fix #4: removed console.log from hot paths.
+ *
+ * Callbacks:
+ *   onSongChange(eventType, song|null, songId)  — called per-song row change
+ *   onSpellingChange(eventType, tamil, latin)    — called per-spelling row change
+ *   onTeamChange({ revision, sharedSetlists })   — called on team row change
+ */
+export function subscribeToChanges({ onSongChange, onSpellingChange, onTeam, teamKey }) {
   const sb = client();
 
-  // 1. Songs channel — listen to ALL events on zong_songs
+  // 1. Songs channel — apply row payload directly, never re-read the whole table
   _songsChannel = sb
     .channel("zong_songs_changes")
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "zong_songs" },
-      async (payload) => {
-        console.log("[Zong Realtime] Received song change from Supabase:", payload);
-        if (onGlobal) {
-          const fresh = await readGlobal();
-          onGlobal(fresh);
-        }
+      (payload) => {
+        if (!onSongChange) return;
+        const row = payload.new ?? payload.old;
+        const eventType = payload.eventType; // INSERT | UPDATE | DELETE
+        if (!row?.id) return;
+        // For DELETE or soft-delete (is_deleted=true), pass null as song
+        const song = (eventType === "DELETE" || row.is_deleted) ? null : rowToSong(row);
+        onSongChange(eventType, song, row.id);
       }
     )
-    .subscribe((status) => {
-      console.log("[Zong Realtime] Songs channel status:", status);
-    });
+    .subscribe();
 
-  // 2. Spelling channel — listen to ALL events on zong_spelling_chart
+  // 2. Spelling channel — apply row payload directly
   _spellingChannel = sb
     .channel("zong_spelling_changes")
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "zong_spelling_chart" },
-      async (payload) => {
-        console.log("[Zong Realtime] Received spelling change from Supabase:", payload);
-        if (onGlobal) {
-          const fresh = await readGlobal();
-          onGlobal(fresh);
-        }
+      (payload) => {
+        if (!onSpellingChange) return;
+        const row = payload.new ?? payload.old;
+        if (!row?.tamil) return;
+        const eventType = payload.eventType;
+        // Pass null for latin when the row is deleted or soft-deleted
+        const latin = (eventType === "DELETE" || row.is_deleted) ? null : row.latin;
+        onSpellingChange(eventType, row.tamil, latin);
       }
     )
-    .subscribe((status) => {
-      console.log("[Zong Realtime] Spelling channel status:", status);
-    });
+    .subscribe();
 
-  // 3. Team channel (only if a team key is set)
+  // 3. Team channel — payload already has the full shared_setlists JSON column
   if (teamKey && onTeam) {
     _teamChannel = sb
       .channel(`zong_team_${teamKey}`)
@@ -735,7 +675,6 @@ export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
         "postgres_changes",
         { event: "*", schema: "public", table: "zong_teams", filter: `team_key=eq.${teamKey}` },
         (payload) => {
-          console.log("[Zong Realtime] Received team change from Supabase:", payload);
           const row = payload.new;
           if (row && onTeam) {
             onTeam({
@@ -745,9 +684,7 @@ export function subscribeToChanges({ onGlobal, onTeam, teamKey }) {
           }
         }
       )
-      .subscribe((status) => {
-        console.log(`[Zong Realtime] Team (${teamKey}) channel status:`, status);
-      });
+      .subscribe();
   }
 
   return function unsubscribe() {

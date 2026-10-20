@@ -5567,6 +5567,10 @@ function AppInner() {
   useEffect(() => { songsRef.current = songs; }, [songs]);
   useEffect(() => { spellingChartRef.current = spellingChart; }, [spellingChart]);
   useEffect(() => { setlistsRef.current = setlists; }, [setlists]);
+  // Fix #6/#7: track which songs/spelling keys changed since the last push
+  // so writeGlobal only upserts the modified rows, not the entire library.
+  const dirtySongIds = useRef(new Set());
+  const dirtySpellingKeys = useRef(new Set());
 
   const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
@@ -5606,10 +5610,14 @@ function AppInner() {
   const pendingSync = useRef(false);
 
   const saveSongs = (next) => {
-    // Resolve the next value immediately (handles both plain value and updater fn)
-    // and eagerly push it into the ref so performSync (which fires on the very
-    // next microtask, before React re-renders) always sees the brand-new songs.
     const resolved = typeof next === "function" ? next(songsRef.current) : next;
+    // Record which songs changed so we only upsert them (Fix #6)
+    const prevIds = new Set((songsRef.current || []).map((s) => s.id));
+    (resolved || []).forEach((s) => {
+      if (!prevIds.has(s.id) || s.updatedAt > (songsRef.current.find((p) => p.id === s.id)?.updatedAt ?? 0)) {
+        dirtySongIds.current.add(s.id);
+      }
+    });
     songsRef.current = resolved;
     syncDirty.current = true;
     setSongs(resolved);
@@ -5624,6 +5632,11 @@ function AppInner() {
   };
   const saveSpellingChart = (next) => {
     const resolved = typeof next === "function" ? next(spellingChartRef.current) : next;
+    // Record which keys changed so we only upsert them (Fix #7)
+    const prev = spellingChartRef.current || {};
+    Object.keys(resolved || {}).forEach((k) => {
+      if (prev[k] !== resolved[k]) dirtySpellingKeys.current.add(k);
+    });
     spellingChartRef.current = resolved;
     syncDirty.current = true;
     setSpellingChart(resolved);
@@ -5669,21 +5682,20 @@ function AppInner() {
       const latestSetlists = setlistsRef.current;
       const sharedSetlists = latestSetlists.filter((sl) => sl.shared);
       const isChanged = force || syncDirty.current;
-      if (isChanged) {
-        console.log("[Zong Sync] Pushing updates to Supabase...", { songsCount: latestSongs.length, sharedSetlistsCount: sharedSetlists.length });
-      }
+      // Snapshot and clear dirty sets BEFORE the async write so any saves
+      // that happen mid-flight are captured in the next sync, not lost.
+      const snapshotDirtySongs = isChanged ? new Set(dirtySongIds.current) : undefined;
+      const snapshotDirtySpelling = isChanged ? new Set(dirtySpellingKeys.current) : undefined;
+      if (isChanged) { dirtySongIds.current.clear(); dirtySpellingKeys.current.clear(); }
       const result = await syncLibrary({
         key: bandKey,
-        state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists },
+        state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists, dirtySongIds: snapshotDirtySongs, dirtySpellingKeys: snapshotDirtySpelling },
         revision: syncRevision.current,
-        // Issue 6: always push on the very first sync from this device (revision=0)
-        // so songs entered on the PWA immediately appear in the native app and vice-versa.
         changed: isChanged || syncRevision.current.global === 0,
         deviceId: getDeviceId()
       });
-      syncRevision.current = result.revision;  // { global: N, team: M }
+      syncRevision.current = result.revision;
       localStorage.setItem("zong:revision", JSON.stringify(result.revision));
-      console.log("[Zong Sync] Sync successful. Current revision:", result.revision);
 
       if (result.conflict || result.pulled) {
         const remoteSongs = result.state?.songs || [];
@@ -5794,53 +5806,62 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
 
+  // Fix #5: single sync on mount — merged the two effects that both called
+  // performSync into one, guarded by hasMounted so React StrictMode double-
+  // invocation doesn't cause duplicate fetches.
+  const hasMounted = useRef(false);
   useEffect(() => {
-    // Sync immediately on mount (and whenever bandKey changes) so that:
-    // (a) performSyncRef.current is set before the user can save their first song, and
-    // (b) any data the remote gained while this device was offline is pulled in.
+    if (hasMounted.current) return;
+    hasMounted.current = true;
+
+    // Sync once on mount (after any IndexedDB load) and on bandKey change
     performSync();
 
     const online = () => performSync();
     window.addEventListener("online", online);
 
-    // Prefer Realtime push (Supabase) over polling — falls back to 30s poll if
-    // Supabase is not configured (e.g. still using the Apps Script endpoint).
+    // Fix #1: removed 5-second polling. Realtime subscriptions handle push.
+    // Syncs still happen on: mount, save, online event, and Realtime push.
     let unsubscribeRealtime = null;
-    let timer = null;
-
     if (isSupabaseConfigured()) {
       unsubscribeRealtime = subscribeToChanges({
         teamKey: bandKey || null,
-        onGlobal: () => {
-          console.log("[Zong App] Realtime global update event received -> pulling updates");
-          performSync(false);
+        // Fix #2: apply payloads directly — no full table refetch
+        onSongChange: (_eventType, song, songId) => {
+          setSongs((prev) => {
+            if (!song) return prev.filter((s) => s.id !== songId); // deleted
+            const idx = prev.findIndex((s) => s.id === songId);
+            if (idx === -1) return [...prev, song];               // new song
+            const existing = prev[idx];
+            // Only replace if remote is newer
+            if (song.updatedAt >= (existing.updatedAt ?? 0)) {
+              const next = [...prev]; next[idx] = song; return next;
+            }
+            return prev;
+          });
         },
-        onTeam: () => {
-          console.log("[Zong App] Realtime team update event received -> pulling updates");
-          performSync(false);
+        onSpellingChange: (_eventType, tamil, latin) => {
+          setSpellingChart((prev) => {
+            if (latin === null) { const n = { ...prev }; delete n[tamil]; return n; }
+            return { ...prev, [tamil]: latin };
+          });
+        },
+        onTeam: (teamData) => {
+          setSetlists((prev) => {
+            const personal = prev.filter((sl) => !sl.shared);
+            const sharedMap = new Map((teamData.sharedSetlists || []).map((sl) => [sl.id, { ...sl, shared: true }]));
+            return [...personal, ...Array.from(sharedMap.values())];
+          });
         }
       });
-      // Guaranteed background polling every 5 seconds
-      timer = window.setInterval(() => performSync(false), 5000);
-    } else {
-      timer = window.setInterval(() => performSync(false), 5000);
     }
 
     return () => {
       window.removeEventListener("online", online);
-      if (timer) window.clearInterval(timer);
       if (unsubscribeRealtime) unsubscribeRealtime();
     };
-  }, [performSync, bandKey]);
-
-  // When IndexedDB finishes loading local songs/spelling on boot, ensure initial sync runs
-  const initialSyncTriggered = useRef(false);
-  useEffect(() => {
-    if (!initialSyncTriggered.current && (songs.length > 0 || (spellingChart && Object.keys(spellingChart).length > 0))) {
-      initialSyncTriggered.current = true;
-      performSync(false);
-    }
-  }, [songs, spellingChart, performSync]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bandKey]);
 
   const handleSaveTeamKey = (newKey) => {
     const clean = newKey.trim().toUpperCase();
