@@ -482,19 +482,17 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
   const hasLocalData  = (state.songs && state.songs.length > 0) || (state.spellingChart && Object.keys(state.spellingChart).length > 0);
 
   if (changed || (isFreshRemote && hasLocalData)) {
-    const pushed = await writeGlobal({
+    await writeGlobal({
       songs:             state.songs || [],
       spellingChart:     state.spellingChart || {},
-      // Fix #6/#7: only write songs/spelling that actually changed
+      // Only write songs/spelling that actually changed
       dirtySongIds:      state.dirtySongIds,
       dirtySpellingKeys: state.dirtySpellingKeys,
     });
-
-    nextGlobal = {
-      ...pushed,
-      deletedIds:          remote.deletedIds || [],
-      deletedSpellingKeys: remote.deletedSpellingKeys || []
-    };
+    // After pushing, remote is the authoritative state (our upsert merged into it).
+    // Keep nextGlobal pointing at remote.songs so the full song list is always
+    // returned — critical on first install where local is empty but remote has songs.
+    // (no change to nextGlobal needed — it already points at remote above)
   }
 
   // ── 2. Team sync (shared setlists only) ─────────────────────────────────────
@@ -606,7 +604,11 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       sharedSetlists:      nextTeam.sharedSetlists
     },
     conflict: teamConflict,
-    pulled:   !changed && (hasGlobalUpdate || hasTeamUpdate || (remote.songs || []).length !== (state.songs || []).length || (isTeam && (nextTeam.sharedSetlists?.length || 0) > 0))
+    // Remove the !changed guard: remote data must always be applied to state
+    // when it differs from local, regardless of whether we just pushed a write.
+    // Without this, a fresh PWA install (changed=true, local empty) never receives
+    // the songs already in Supabase.
+    pulled: hasGlobalUpdate || hasTeamUpdate || (remote.songs || []).length !== (state.songs || []).length || (isTeam && (nextTeam.sharedSetlists?.length || 0) > 0)
   };
 }
 
