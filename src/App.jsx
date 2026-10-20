@@ -2377,7 +2377,10 @@ function useMetronomeEngine(settings) {
       return;
     }
     unlockAudioPlayback();
+    // Clear any in-flight scheduler FIRST to prevent a double-click from a
+    // scheduler tick that fires between stop() and this new start() call.
     clearInterval(schedulerRef.current);
+    schedulerRef.current = null;
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       audioCtxRef.current = getSharedAudioContext();
     }
@@ -2396,9 +2399,9 @@ function useMetronomeEngine(settings) {
     };
     ensureMasterChain(audioCtxRef.current);
     beatRef.current = 0;
+    // A 50ms lead-in ensures any audio still draining from the previous stop
+    // has completely flushed before the first click fires.
     nextNoteTimeRef.current = audioCtxRef.current.currentTime + 0.05;
-    scheduler();
-    clearInterval(schedulerRef.current);
     schedulerRef.current = setInterval(scheduler, 25);
     setPlaying(true);
   };
@@ -2415,6 +2418,16 @@ function useMetronomeEngine(settings) {
     setFlashBeat(-1);
     const ctx = audioCtxRef.current;
     if (ctx && ctx.state !== "closed") {
+      // Disconnect the master output node so any already-scheduled (but not yet
+      // played) buffer sources have no destination. This is the key guard against
+      // the double-click: suspended contexts replay queued sources on resume,
+      // but if the master node is disconnected they produce no audible output.
+      try {
+        if (masterCompRef.current) {
+          masterCompRef.current.disconnect();
+          masterCompRef.current = null;
+        }
+      } catch { }
       try { ctx.suspend().catch(() => { }); } catch { }
     }
   };
@@ -3233,7 +3246,9 @@ function useSetlistSongSwipe(onPrev, onNext) {
   const directionRef = useRef(null);
   const mouseActiveRef = useRef(false);
   const [dragX, setDragX] = useState(0);
-  const [transitioning, setTransitioning] = useState(false);
+  // 'idle' | 'exiting-left' | 'exiting-right' | 'entering-left' | 'entering-right'
+  const [swipePhase, setSwipePhase] = useState("idle");
+  const transitioning = swipePhase !== "idle";
 
   const start = (x, y) => {
     if (transitioning) return;
@@ -3264,32 +3279,47 @@ function useSetlistSongSwipe(onPrev, onNext) {
 
     if (wasHorizontal) {
       const threshold = Math.min(130, window.innerWidth * 0.28);
+      const W = window.innerWidth;
+
       if (dx > threshold && onPrev) {
-        setTransitioning(true);
-        setDragX(window.innerWidth);
+        // Swiped right → go to previous song.
+        // Phase 1: slide current card fully off to the right (180ms).
+        setSwipePhase("exiting-right");
+        setDragX(W);
         setTimeout(() => {
+          // Switch song content, immediately position card off-screen to the left.
           onPrev();
-          setDragX(-window.innerWidth * 0.35);
+          setDragX(-W);
+          setSwipePhase("entering-right");
+          // Phase 2: one rAF ensures the -W position is painted before we
+          // apply the transition back to 0, giving a true slide-in effect.
           requestAnimationFrame(() => {
-            setDragX(0);
-            setTimeout(() => setTransitioning(false), 200);
+            requestAnimationFrame(() => {
+              setDragX(0);
+              setTimeout(() => setSwipePhase("idle"), 270);
+            });
           });
-        }, 180);
+        }, 200);
         return;
       } else if (dx < -threshold && onNext) {
-        setTransitioning(true);
-        setDragX(-window.innerWidth);
+        // Swiped left → go to next song.
+        setSwipePhase("exiting-left");
+        setDragX(-W);
         setTimeout(() => {
           onNext();
-          setDragX(window.innerWidth * 0.35);
+          setDragX(W);
+          setSwipePhase("entering-left");
           requestAnimationFrame(() => {
-            setDragX(0);
-            setTimeout(() => setTransitioning(false), 200);
+            requestAnimationFrame(() => {
+              setDragX(0);
+              setTimeout(() => setSwipePhase("idle"), 270);
+            });
           });
-        }, 180);
+        }, 200);
         return;
       }
     }
+    // Snap back.
     setDragX(0);
   };
   const handleTouchStart = (e) => { if (e.touches.length !== 1) return; start(e.touches[0].clientX, e.touches[0].clientY); };
@@ -3303,10 +3333,28 @@ function useSetlistSongSwipe(onPrev, onNext) {
     window.addEventListener("mouseup", onMouseUp);
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
+
+  // Compute the CSS transition for each swipe phase.
+  // During dragging: no transition (follow finger).
+  // During exit (phase 1): fast ease-in to feel snappy.
+  // During enter (phase 2): smooth ease-out so new content glides in.
+  // When snapping back to 0 after a partial drag: spring-like ease.
+  let dragTransition = "none";
+  if (!draggingRef.current) {
+    if (swipePhase === "exiting-left" || swipePhase === "exiting-right") {
+      dragTransition = "transform 200ms cubic-bezier(0.4,0,1,1)";
+    } else if (swipePhase === "entering-left" || swipePhase === "entering-right") {
+      dragTransition = "transform 260ms cubic-bezier(0,0,0.2,1)";
+    } else if (dragX !== 0) {
+      dragTransition = "transform 220ms cubic-bezier(0.34,1.56,0.64,1)";
+    }
+  }
+
   return {
     dragX,
     dragging: draggingRef.current && directionRef.current === "x",
     transitioning,
+    dragTransition,
     handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown }
   };
 }
@@ -4086,7 +4134,9 @@ function SongDetailScreen({
 
   const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
   const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
-  const { dragX, leaving, dragging, handlers, transitioning } = isInSetlist ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers, transitioning: setlistSwipe.transitioning } : { ...edgeBack, transitioning: false };
+  const { dragX, leaving, dragging, handlers, transitioning, dragTransition } = isInSetlist
+    ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers, transitioning: setlistSwipe.transitioning, dragTransition: setlistSwipe.dragTransition }
+    : { ...edgeBack, transitioning: false, dragTransition: undefined };
 
   const stepKey = (delta) => { const next = transposeKey(viewKey, delta); setViewKey(next); if (onKeyChange) onKeyChange(next); };
 
@@ -4112,7 +4162,7 @@ function SongDetailScreen({
   const hasTempoChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && currentBpm !== Number(baseTempo));
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: (leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none", touchAction: "pan-y" }} {...handlers}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: isInSetlist ? (dragging ? "none" : dragTransition || "none") : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
@@ -5580,16 +5630,22 @@ function AppInner() {
     setTimeout(() => performSyncRef.current?.(true), 0);
   };
 
-  const performSync = useCallback(async (force = false) => {
+  const performSync = useCallback(async (force = false, { silent = false } = {}) => {
     // Keep the ref in sync so save functions can call the latest closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     performSyncRef.current = performSync;
-    if (!navigator.onLine) return;
+    if (!navigator.onLine) {
+      // Issue 7: if called from the manual sync button (silent=false, force=true),
+      // let the caller surface the offline error.
+      if (force && !silent) throw new Error("offline");
+      return;
+    }
     if (syncing.current) {
       // Another sync is in-flight. Record that there's a pending request so
       // we retry immediately when the current sync finishes, preventing data
       // from being silently dropped when multiple saves fire at once.
       pendingSync.current = true;
+      if (force && !silent) throw new Error("busy");
       return;
     }
     syncing.current = true;
@@ -5611,7 +5667,9 @@ function AppInner() {
         key: bandKey,
         state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists },
         revision: syncRevision.current,
-        changed: isChanged,
+        // Issue 6: always push on the very first sync from this device (revision=0)
+        // so songs entered on the PWA immediately appear in the native app and vice-versa.
+        changed: isChanged || syncRevision.current.global === 0,
         deviceId: getDeviceId()
       });
       syncRevision.current = result.revision;  // { global: N, team: M }
@@ -5686,8 +5744,11 @@ function AppInner() {
                 return re;
               });
               sharedMap.set(lsl.id, { ...remoteSl, entries: mergedEntries });
-            } else if (result.conflict) {
+            } else {
+              // Local shared setlist not yet on remote — always keep it locally
+              // and mark dirty so it gets pushed on the next sync cycle.
               sharedMap.set(lsl.id, lsl);
+              syncDirty.current = true;
             }
           });
           mergedSetlists = [...personalSetlists, ...Array.from(sharedMap.values())];
@@ -5710,6 +5771,9 @@ function AppInner() {
       }
     } catch (error) {
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
+      // Re-throw when force=true so the calling UI (sync button) can show
+      // a specific error toast (Issue 7).
+      if (force) throw error;
     } finally {
       syncing.current = false;
       // If a save was blocked while we were busy, run one more sync cycle now.
@@ -5821,15 +5885,37 @@ function AppInner() {
     };
   }, []);
 
-  // Lock mobile phones to portrait orientation. Tablets and desktops are left
-  // unlocked so landscape layouts continue to work on wider devices.
+  // Screen rotation rules (applied once on mount):
+  //   Phone  → always portrait, ignore device rotation setting
+  //   iPad   → free rotation per device setting (no JS lock; Info.plist & OS handle native)
+  //   Mac/PC → attempt landscape lock so the app stays landscape-oriented
+  //
+  // The piano uses <LandscapeLock> which independently rotates it to always face
+  // the wider edge, regardless of what the OS orientation is.
   useEffect(() => {
-    const isMobilePhone =
-      /Mobi|Android|iPhone/i.test(navigator.userAgent) &&
-      Math.min(window.screen.width, window.screen.height) < 600;
-    if (isMobilePhone) {
+    const ua = navigator.userAgent;
+    const smallestDim = Math.min(window.screen.width, window.screen.height);
+
+    // iPhone or small Android phone (narrowest dimension < 600px and mobile UA)
+    const isPhone =
+      /iPhone/i.test(ua) ||
+      (/Mobi|Android/i.test(ua) && smallestDim < 600);
+
+    // iPad (includes iPadOS 13+ which reports as Macintosh in Safari)
+    const isIPad =
+      /iPad/i.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ||
+      (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+
+    if (isPhone) {
+      // Hard portrait lock — ignore hardware rotation switch entirely.
       window.screen?.orientation?.lock?.("portrait").catch(() => { });
+    } else if (!isIPad) {
+      // Desktop / Mac — attempt landscape lock. Rejected silently on most browsers
+      // (orientation lock is a mobile-only API), but works on some PWA installs.
+      window.screen?.orientation?.lock?.("landscape").catch(() => { });
     }
+    // iPad: no lock — free rotation controlled by the device's rotation settings.
   }, []);
 
   // iOS Safari quirk: focusing a text input (e.g. the search bar) makes the
@@ -6114,8 +6200,15 @@ function AppInner() {
             onOpenSpellingChart={() => setSpellingChartOpen(true)}
             onConfigureSync={() => setTeamKeyModalOpen(true)}
             onForceSync={async () => {
-              await performSync(true);
-              flash("Songs synced");
+              if (!navigator.onLine) { flash("No internet access"); return; }
+              try {
+                await performSync(true);
+                flash("Songs synced");
+              } catch (err) {
+                const msg = err?.message;
+                if (msg === "offline") flash("No internet access");
+                else flash("Syncing error");
+              }
             }}
             bandKey={bandKey}
             syncStatus={syncStatus}

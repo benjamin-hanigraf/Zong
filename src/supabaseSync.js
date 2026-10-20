@@ -574,6 +574,8 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
   };
   let teamConflict = false;
 
+  const localSharedSetlists = state.sharedSetlists ?? [];
+
   if (isTeam) {
     const remoteTeam = await readTeam(key);
     nextTeam.revision = remoteTeam.revision;
@@ -592,10 +594,14 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       }
     }
 
-    if (changed) {
+    // Always push shared setlists when this device has any, or when changed.
+    // This ensures toggling a setlist to 'shared' propagates on the very next sync.
+    const shouldPushTeam = changed || localSharedSetlists.length > 0;
+
+    if (shouldPushTeam) {
       const pushedTeam = await writeTeam({
         teamKey:            key,
-        sharedSetlists:     state.sharedSetlists ?? [],
+        sharedSetlists:     localSharedSetlists,
         baseRevision:       rev.team,
         deviceId,
         currentSubscribers: remoteTeam.subscribers
@@ -606,9 +612,12 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
         nextTeam = pushedTeam;
       }
     } else {
+      // Pull-only: merge remote setlists, with remote winning for shared content.
       const mergedMap = new Map();
+      // Remote is source of truth for shared setlists.
       (remoteTeam.sharedSetlists || []).forEach((rsl) => mergedMap.set(rsl.id, rsl));
-      (state.sharedSetlists || []).forEach((lsl) => {
+      // Add any local shared setlists that don't exist remotely yet.
+      (localSharedSetlists).forEach((lsl) => {
         if (!mergedMap.has(lsl.id)) mergedMap.set(lsl.id, lsl);
       });
       nextTeam.sharedSetlists = Array.from(mergedMap.values());

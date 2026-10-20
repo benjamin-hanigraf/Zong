@@ -211,16 +211,27 @@ final class NativeMetronomeEngine {
 
     // MARK: - Playback control
     func start(bpm: Double, beatsPerBar: Int, accents: [String]?) {
-        self.bpm         = max(30, min(300, bpm))
-        self.beatsPerBar = max(1, beatsPerBar)
-        self.accents     = normalizedAccents(accents, beats: self.beatsPerBar)
+        // Guard: if already playing with same params, don't restart (prevents double-click
+        // when the remote command fires while JS also calls start).
+        let newBpm     = max(30, min(300, bpm))
+        let newBeats   = max(1, beatsPerBar)
+        let newAccents = normalizedAccents(accents, beats: newBeats)
+        if isPlaying && newBpm == self.bpm && newBeats == self.beatsPerBar {
+            return
+        }
+        self.bpm         = newBpm
+        self.beatsPerBar = newBeats
+        self.accents     = newAccents
         startPlayback()
     }
 
     func stop() {
+        guard isPlaying else { return }
         isPlaying = false
         cancelBeatTimers()
+        // Reset the player node fully so no buffered audio leaks into the next start.
         clkNode.stop()
+        clkNode.reset()
         updateNowPlaying(playing: false)
     }
 
@@ -255,8 +266,15 @@ final class NativeMetronomeEngine {
 
     // MARK: - Internal playback
     private func startPlayback() {
-        guard !engine.isRunning else { scheduleBar(); isPlaying = true; updateNowPlaying(playing: true); return }
-        do { try engine.start() } catch { print("[NativeMetronome] engine.start error: \(error)"); return }
+        // Stop and reset the node first to drain any previously-buffered audio.
+        // This is the primary guard against the double-click on resume.
+        clkNode.stop()
+        clkNode.reset()
+        cancelBeatTimers()
+
+        if !engine.isRunning {
+            do { try engine.start() } catch { print("[NativeMetronome] engine.start error: \(error)"); return }
+        }
         scheduleBar()
         isPlaying = true
         updateNowPlaying(playing: true)
@@ -264,23 +282,17 @@ final class NativeMetronomeEngine {
 
     /// Schedule one looping bar, fire beat events via the audio clock.
     private func scheduleBar() {
-        clkNode.stop()
-        cancelBeatTimers()
-
         guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else { return }
         barBuffer = buf
 
         clkNode.play()
 
-        // Schedule the bar to start immediately; the completion fires when the
-        // *next* loop iteration would begin, so we can reschedule beat timers.
-        barStartSampleTime = clkNode.playerTime(forNodeTime: engine.outputNode.lastRenderTime ?? AVAudioTime(hostTime: mach_absolute_time()))?.sampleTime ?? 0
+        barStartSampleTime = clkNode.playerTime(
+            forNodeTime: engine.outputNode.lastRenderTime ?? AVAudioTime(hostTime: mach_absolute_time())
+        )?.sampleTime ?? 0
 
-        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionCallbackType: .dataConsumed) { [weak self] _ in
-            // No-op: we use our own beat timer for UI events.
-        }
+        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionCallbackType: .dataConsumed) { _ in }
 
-        // Capture when the node started playing so beat events are relative.
         scheduleBeatTimers()
     }
 
@@ -336,6 +348,7 @@ final class NativeMetronomeEngine {
         guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else { return }
         barBuffer = buf
         clkNode.stop()
+        clkNode.reset()
         cancelBeatTimers()
         clkNode.play()
         clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionCallbackType: .dataConsumed) { _ in }
