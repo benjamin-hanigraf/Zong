@@ -577,6 +577,7 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
   const localSharedSetlists = state.sharedSetlists ?? [];
 
   if (isTeam) {
+    try {
     const remoteTeam = await readTeam(key);
     nextTeam.revision = remoteTeam.revision;
     nextTeam.sharedSetlists = remoteTeam.sharedSetlists;
@@ -594,22 +595,33 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       }
     }
 
-    // Always push shared setlists when this device has any, or when changed.
-    // This ensures toggling a setlist to 'shared' propagates on the very next sync.
-    const shouldPushTeam = changed || localSharedSetlists.length > 0;
+    // Only push team data if explicitly changed, OR if local has setlists
+    // the remote doesn't know about yet. This prevents an unnecessary write
+    // on every background sync, which was causing "Syncing error" on Mac PWA.
+    const remoteSetlistIds = new Set((remoteTeam.sharedSetlists || []).map((sl) => sl.id));
+    const hasUnpushedSetlists = localSharedSetlists.some((sl) => !remoteSetlistIds.has(sl.id));
+    const shouldPushTeam = changed || hasUnpushedSetlists;
 
     if (shouldPushTeam) {
-      const pushedTeam = await writeTeam({
-        teamKey:            key,
-        sharedSetlists:     localSharedSetlists,
-        baseRevision:       rev.team,
-        deviceId,
-        currentSubscribers: remoteTeam.subscribers
-      });
-      if (!pushedTeam) {
+      try {
+        const pushedTeam = await writeTeam({
+          teamKey:            key,
+          sharedSetlists:     localSharedSetlists,
+          baseRevision:       rev.team,
+          deviceId,
+          currentSubscribers: remoteTeam.subscribers
+        });
+        if (!pushedTeam) {
+          teamConflict = true;
+        } else {
+          nextTeam = pushedTeam;
+        }
+      } catch (teamErr) {
+        // Team write errors are non-fatal — log and fall back to the remote state
+        // so the rest of the sync (songs, spelling chart) still succeeds.
+        // This prevents "Syncing error" on Mac PWA from a transient team table issue.
+        console.warn("[Zong Sync] Team push failed (non-fatal):", teamErr?.message);
         teamConflict = true;
-      } else {
-        nextTeam = pushedTeam;
       }
     } else {
       // Pull-only: merge remote setlists, with remote winning for shared content.
@@ -617,10 +629,15 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       // Remote is source of truth for shared setlists.
       (remoteTeam.sharedSetlists || []).forEach((rsl) => mergedMap.set(rsl.id, rsl));
       // Add any local shared setlists that don't exist remotely yet.
-      (localSharedSetlists).forEach((lsl) => {
+      localSharedSetlists.forEach((lsl) => {
         if (!mergedMap.has(lsl.id)) mergedMap.set(lsl.id, lsl);
       });
       nextTeam.sharedSetlists = Array.from(mergedMap.values());
+    }
+    } catch (teamReadErr) {
+      // If we can't reach the team table at all (network error, RLS, etc.),
+      // skip team sync entirely — songs and spelling chart still sync normally.
+      console.warn("[Zong Sync] Team read failed (non-fatal), skipping team sync:", teamReadErr?.message);
     }
   }
 

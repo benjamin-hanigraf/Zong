@@ -5630,22 +5630,31 @@ function AppInner() {
     setTimeout(() => performSyncRef.current?.(true), 0);
   };
 
-  const performSync = useCallback(async (force = false, { silent = false } = {}) => {
+  const performSync = useCallback(async (force = false) => {
     // Keep the ref in sync so save functions can call the latest closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     performSyncRef.current = performSync;
     if (!navigator.onLine) {
-      // Issue 7: if called from the manual sync button (silent=false, force=true),
-      // let the caller surface the offline error.
-      if (force && !silent) throw new Error("offline");
+      // Surface offline state to the manual sync button so it can show the
+      // right toast message.
+      if (force) throw new Error("offline");
       return;
     }
     if (syncing.current) {
-      // Another sync is in-flight. Record that there's a pending request so
-      // we retry immediately when the current sync finishes, preventing data
-      // from being silently dropped when multiple saves fire at once.
+      // Another sync is in-flight. Mark pending so we retry when it finishes.
+      // If force=true (manual button), wait up to 3 s for the current sync
+      // to complete, then run immediately — never show a spurious error.
       pendingSync.current = true;
-      if (force && !silent) throw new Error("busy");
+      if (force) {
+        await new Promise((resolve) => {
+          const interval = setInterval(() => {
+            if (!syncing.current) { clearInterval(interval); resolve(); }
+          }, 100);
+          setTimeout(() => { clearInterval(interval); resolve(); }, 3000);
+        });
+        // After the in-flight sync finished, run the forced sync ourselves.
+        if (!syncing.current) return performSync(true);
+      }
       return;
     }
     syncing.current = true;
