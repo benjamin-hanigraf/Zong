@@ -528,22 +528,29 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
     if (deviceId && Array.isArray(remoteTeam.subscribers) && !remoteTeam.subscribers.includes(deviceId)) {
       const updatedSubs = [...remoteTeam.subscribers, deviceId];
       try {
+        // Use UPSERT (not UPDATE) so the team row is created if it doesn't exist yet.
+        // UPDATE is a no-op when the row is absent; a fresh team join would silently fail.
         await client()
           .from("zong_teams")
-          .update({ subscribers: updatedSubs, updated_at: new Date().toISOString() })
-          .eq("team_key", key);
+          .upsert({
+            team_key:        key,
+            subscribers:     updatedSubs,
+            shared_setlists: remoteTeam.sharedSetlists || [],
+            revision:        remoteTeam.revision || 0,
+            updated_at:      new Date().toISOString()
+          }, { onConflict: "team_key" });
         remoteTeam.subscribers = updatedSubs;
       } catch (e) {
         console.warn("[Zong Sync] Failed to register subscriber:", e);
       }
     }
 
-    // Only push team data if explicitly changed, OR if local has setlists
-    // the remote doesn't know about yet. This prevents an unnecessary write
-    // on every background sync, which was causing "Syncing error" on Mac PWA.
+    // Push team data when: explicitly changed, local has setlists remote doesn't know about,
+    // OR this is the first team sync (rev.team===0) — ensures the row is always created on
+    // initial join, mirroring how global sync forces a push on syncRevision.global===0.
     const remoteSetlistIds = new Set((remoteTeam.sharedSetlists || []).map((sl) => sl.id));
     const hasUnpushedSetlists = localSharedSetlists.some((sl) => !remoteSetlistIds.has(sl.id));
-    const shouldPushTeam = changed || hasUnpushedSetlists;
+    const shouldPushTeam = changed || hasUnpushedSetlists || rev.team === 0;
 
     if (shouldPushTeam) {
       try {

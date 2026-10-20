@@ -5880,9 +5880,10 @@ function AppInner() {
     }
     flash("Connected to Team");
     syncDirty.current = true;
-    // Pull first (force=false) so we merge remote setlists in before pushing,
-    // preventing a new device from overwriting the team's existing setlists.
-    performSync(false);
+    // Do NOT call performSync here — performSync is a useCallback that captures
+    // bandKey from the render closure, so it still holds the OLD key at this point.
+    // The useEffect([bandKey]) below fires after React processes setBandKey(clean)
+    // and calls performSync with the correct new key + syncDirty.current=true.
   };
 
   const handleLeaveTeam = () => {
