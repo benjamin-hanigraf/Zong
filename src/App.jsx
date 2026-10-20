@@ -5525,7 +5525,7 @@ function AppInner() {
   }, []);
 
   const [songs, setSongs] = useIndexedDbState("songs", []);
-  const [setlists, setSetlists] = useIndexedDbState("setlists", []);
+  const [setlists, persistSetlists] = useIndexedDbState("setlists", []);
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 16);
   const [chordFontSize, setChordFontSize] = useLocalStorageState("altar:chord-font-size", 16);
   const [sectionFontSize, setSectionFontSize] = useLocalStorageState("altar:section-font-size", 12);
@@ -5627,7 +5627,7 @@ function AppInner() {
     const resolved = typeof next === "function" ? next(setlistsRef.current) : next;
     setlistsRef.current = resolved;
     syncDirty.current = true;
-    setSetlists(resolved);
+    persistSetlists(resolved);
     setTimeout(() => performSyncRef.current?.(true), 0);
   };
   const saveSpellingChart = (next) => {
@@ -5777,7 +5777,7 @@ function AppInner() {
 
         setSongs(mergedSongs);
         setSpellingChart(mergedSpelling);
-        setSetlists(mergedSetlists);
+        persistSetlists(mergedSetlists);
         if (result.conflict) {
           // The merge produced a superset of both sides — push it back so the
           // server is up to date and other devices can receive it.
@@ -5847,7 +5847,7 @@ function AppInner() {
           });
         },
         onTeam: (teamData) => {
-          setSetlists((prev) => {
+          persistSetlists((prev) => {
             const personal = prev.filter((sl) => !sl.shared);
             const sharedMap = new Map((teamData.sharedSetlists || []).map((sl) => [sl.id, { ...sl, shared: true }]));
             return [...personal, ...Array.from(sharedMap.values())];
