@@ -5806,34 +5806,34 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
 
-  // Fix #5: single sync on mount — merged the two effects that both called
-  // performSync into one, guarded by hasMounted so React StrictMode double-
-  // invocation doesn't cause duplicate fetches.
-  const hasMounted = useRef(false);
+  // Subscription + sync setup. Re-runs whenever bandKey changes so the team
+  // channel subscription is always for the current key. A prevBandKey ref
+  // prevents StrictMode double-invocation from creating duplicate subscriptions.
+  const prevBandKeyRef = useRef(undefined);
   useEffect(() => {
-    if (hasMounted.current) return;
-    hasMounted.current = true;
+    // Skip the StrictMode double-run (same key, already set up)
+    if (prevBandKeyRef.current === bandKey) return;
+    prevBandKeyRef.current = bandKey;
 
-    // Sync once on mount (after any IndexedDB load) and on bandKey change
+    // Sync on mount and whenever team key changes
     performSync();
 
     const online = () => performSync();
     window.addEventListener("online", online);
 
-    // Fix #1: removed 5-second polling. Realtime subscriptions handle push.
-    // Syncs still happen on: mount, save, online event, and Realtime push.
+    // No polling — Realtime subscriptions handle push from other devices.
+    // Syncs happen on: app open, save, online event, and Realtime push.
     let unsubscribeRealtime = null;
     if (isSupabaseConfigured()) {
       unsubscribeRealtime = subscribeToChanges({
         teamKey: bandKey || null,
-        // Fix #2: apply payloads directly — no full table refetch
+        // Apply Realtime payloads directly — no full table refetch
         onSongChange: (_eventType, song, songId) => {
           setSongs((prev) => {
-            if (!song) return prev.filter((s) => s.id !== songId); // deleted
+            if (!song) return prev.filter((s) => s.id !== songId);
             const idx = prev.findIndex((s) => s.id === songId);
-            if (idx === -1) return [...prev, song];               // new song
+            if (idx === -1) return [...prev, song];
             const existing = prev[idx];
-            // Only replace if remote is newer
             if (song.updatedAt >= (existing.updatedAt ?? 0)) {
               const next = [...prev]; next[idx] = song; return next;
             }

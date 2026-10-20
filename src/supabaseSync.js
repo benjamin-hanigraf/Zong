@@ -482,17 +482,32 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
   const hasLocalData  = (state.songs && state.songs.length > 0) || (state.spellingChart && Object.keys(state.spellingChart).length > 0);
 
   if (changed || (isFreshRemote && hasLocalData)) {
+    // Snapshot deleted IDs BEFORE writeGlobal clears them so we can exclude
+    // them when merging remote back — prevents deleted songs re-appearing.
+    const preDeletedIds = new Set(getDeletedSongIds());
+
     await writeGlobal({
       songs:             state.songs || [],
       spellingChart:     state.spellingChart || {},
-      // Only write songs/spelling that actually changed
       dirtySongIds:      state.dirtySongIds,
       dirtySpellingKeys: state.dirtySpellingKeys,
     });
-    // After pushing, remote is the authoritative state (our upsert merged into it).
-    // Keep nextGlobal pointing at remote.songs so the full song list is always
-    // returned — critical on first install where local is empty but remote has songs.
-    // (no change to nextGlobal needed — it already points at remote above)
+
+    // Build post-push nextGlobal: local state wins (we just pushed it), but pull
+    // in any songs/spelling from remote that we don't have locally — this is how
+    // fresh-install devices (local=empty) receive the full remote library.
+    const localSongIds = new Set((state.songs || []).map((s) => s.id));
+    const extraFromRemote = (remote.songs || []).filter(
+      (rs) => !localSongIds.has(rs.id) && !preDeletedIds.has(rs.id)
+    );
+    nextGlobal = {
+      revision:            1,
+      songs:               [...(state.songs || []), ...extraFromRemote],
+      deletedIds:          remote.deletedIds || [],
+      // Remote wins for keys only it knows; local wins for recently changed keys
+      spellingChart:       { ...(remote.spellingChart || {}), ...(state.spellingChart || {}) },
+      deletedSpellingKeys: remote.deletedSpellingKeys || []
+    };
   }
 
   // ── 2. Team sync (shared setlists only) ─────────────────────────────────────
