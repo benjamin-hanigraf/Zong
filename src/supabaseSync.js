@@ -401,6 +401,34 @@ async function writeTeam({ teamKey, sharedSetlists, baseRevision, deviceId, curr
   };
 }
 
+/**
+ * Immediately creates or touches the team row for `teamKey`.
+ * Called directly from handleSaveTeamKey with the new key (before any sync),
+ * bypassing all closure/timing complexity.
+ * Returns null on success, or an error message string on failure.
+ */
+export async function ensureTeamRow({ teamKey, deviceId }) {
+  if (!teamKey || !isSupabaseConfigured()) return null;
+  try {
+    const existing = await readTeam(teamKey);
+    const subs = Array.isArray(existing.subscribers) ? [...existing.subscribers] : [];
+    if (deviceId && !subs.includes(deviceId)) subs.push(deviceId);
+    const { error } = await client()
+      .from("zong_teams")
+      .upsert({
+        team_key:        teamKey,
+        shared_setlists: existing.sharedSetlists || [],
+        revision:        existing.revision || 0,
+        subscribers:     subs,
+        updated_at:      new Date().toISOString()
+      }, { onConflict: "team_key" });
+    if (error) return error.message;
+    return null; // success
+  } catch (err) {
+    return err?.message || "Unknown error";
+  }
+}
+
 export async function leaveTeam({ teamKey, deviceId }) {
   if (!teamKey || !isSupabaseConfigured()) return;
   try {
@@ -516,6 +544,7 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
     sharedSetlists: state.sharedSetlists ?? []
   };
   let teamConflict = false;
+  let teamErrorMessage = null;
 
   const localSharedSetlists = state.sharedSetlists ?? [];
 
@@ -567,11 +596,10 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
           nextTeam = pushedTeam;
         }
       } catch (teamErr) {
-        // Team write errors are non-fatal — log and fall back to the remote state
-        // so the rest of the sync (songs, spelling chart) still succeeds.
-        // This prevents "Syncing error" on Mac PWA from a transient team table issue.
-        console.warn("[Zong Sync] Team push failed (non-fatal):", teamErr?.message);
+        // Team write errors are non-fatal for songs/spelling, but we surface
+        // the message so the UI can show it in the sync status bar.
         teamConflict = true;
+        teamErrorMessage = teamErr?.message || "Team push failed";
       }
     } else {
       // Pull-only: merge remote setlists, with remote winning for shared content.
@@ -585,9 +613,8 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       nextTeam.sharedSetlists = Array.from(mergedMap.values());
     }
     } catch (teamReadErr) {
-      // If we can't reach the team table at all (network error, RLS, etc.),
-      // skip team sync entirely — songs and spelling chart still sync normally.
-      console.warn("[Zong Sync] Team read failed (non-fatal), skipping team sync:", teamReadErr?.message);
+      // If we can't reach the team table at all, skip team sync but surface the error.
+      teamErrorMessage = teamReadErr?.message || "Team read failed";
     }
   }
 
@@ -625,11 +652,8 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
       deletedSpellingKeys: nextGlobal.deletedSpellingKeys || [],
       sharedSetlists:      nextTeam.sharedSetlists
     },
-    conflict: teamConflict,
-    // Remove the !changed guard: remote data must always be applied to state
-    // when it differs from local, regardless of whether we just pushed a write.
-    // Without this, a fresh PWA install (changed=true, local empty) never receives
-    // the songs already in Supabase.
+    conflict:        teamConflict,
+    teamError:       teamErrorMessage,
     pulled: hasGlobalUpdate || hasTeamUpdate || (remote.songs || []).length !== (state.songs || []).length || (isTeam && (nextTeam.sharedSetlists?.length || 0) > 0)
   };
 }

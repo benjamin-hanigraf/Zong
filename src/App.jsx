@@ -5,7 +5,7 @@ import {
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
-import { syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, recordDeletedSongId, recordDeletedSpellingKey } from "./supabaseSync";
+import { syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow, recordDeletedSongId, recordDeletedSpellingKey } from "./supabaseSync";
 import { initNativeMetronome, isNativePlatform, nativeMetronome } from "./nativeMetronome";
 
 function getDeviceId() {
@@ -5785,10 +5785,10 @@ function AppInner() {
         } else {
           syncDirty.current = false;
         }
-        if (bandKey) setSyncStatus("Up to date");
+        if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
       } else {
         syncDirty.current = false;
-        if (bandKey) setSyncStatus("Up to date");
+        if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
       }
     } catch (error) {
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
@@ -5880,10 +5880,15 @@ function AppInner() {
     }
     flash("Connected to Team");
     syncDirty.current = true;
-    // Do NOT call performSync here — performSync is a useCallback that captures
-    // bandKey from the render closure, so it still holds the OLD key at this point.
-    // The useEffect([bandKey]) below fires after React processes setBandKey(clean)
-    // and calls performSync with the correct new key + syncDirty.current=true.
+    // Immediately create/touch the team row using the new clean key directly —
+    // we know the correct key here, so we don't need to go through the sync pipeline.
+    // This also surfaces any Supabase permission errors right away in the status bar.
+    ensureTeamRow({ teamKey: clean, deviceId: getDeviceId() })
+      .then((err) => { if (err) setSyncStatus(`Team DB error: ${err}`); })
+      .catch(() => {});
+    // Do NOT call performSync here — performSync captures bandKey from its render
+    // closure, so it still holds the OLD key here. The useEffect([bandKey]) below
+    // fires after React processes setBandKey(clean) and runs with the correct key.
   };
 
   const handleLeaveTeam = () => {
