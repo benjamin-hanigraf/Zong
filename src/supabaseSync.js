@@ -364,66 +364,39 @@ async function readTeam(teamKey) {
   };
 }
 
-async function writeTeam({ teamKey, sharedSetlists, baseRevision, deviceId, currentSubscribers = [] }) {
-  const targetRevision = (baseRevision || 0) + 1;
-  const nextSubs = Array.isArray(currentSubscribers) ? [...currentSubscribers] : [];
-  if (deviceId && !nextSubs.includes(deviceId)) {
-    nextSubs.push(deviceId);
-  }
-
-  const remote = await readTeam(teamKey);
-  const mergedMap = new Map();
-  (remote.sharedSetlists || []).forEach((rsl) => mergedMap.set(rsl.id, rsl));
-  (sharedSetlists || []).forEach((lsl) => mergedMap.set(lsl.id, lsl));
-  const merged = Array.from(mergedMap.values());
-
-  const { data, error } = await client()
+// Simple upsert — exactly like writeGlobal for songs.
+// Caller does all merging before calling this; no internal read.
+async function writeTeam({ teamKey, sharedSetlists, revision, subscribers }) {
+  const { error } = await client()
     .from("zong_teams")
     .upsert({
       team_key:        teamKey,
-      shared_setlists: merged,
-      revision:        targetRevision,
-      subscribers:     nextSubs,
+      shared_setlists: sharedSetlists || [],
+      revision:        revision || 1,
+      subscribers:     subscribers  || [],
       updated_at:      new Date().toISOString()
-    }, {
-      onConflict:       "team_key",
-      ignoreDuplicates: false
-    })
-    .select("revision, shared_setlists, subscribers");
-
+    }, { onConflict: "team_key" });
   if (error) throw new Error(`Team push failed: ${error.message}`);
-
-  const written = data?.[0];
-  return {
-    revision:       written?.revision ?? targetRevision,
-    sharedSetlists: written?.shared_setlists ?? merged,
-    subscribers:    written?.subscribers     ?? nextSubs
-  };
 }
 
 /**
- * Immediately creates or touches the team row for `teamKey`.
- * Called directly from handleSaveTeamKey with the new key (before any sync),
- * bypassing all closure/timing complexity.
+ * Creates or touches the team row immediately when a device enters a team code.
+ * Called from handleSaveTeamKey with the correct key before any sync runs.
  * Returns null on success, or an error message string on failure.
  */
 export async function ensureTeamRow({ teamKey, deviceId }) {
   if (!teamKey || !isSupabaseConfigured()) return null;
   try {
     const existing = await readTeam(teamKey);
-    const subs = Array.isArray(existing.subscribers) ? [...existing.subscribers] : [];
+    const subs = [...(existing.subscribers || [])];
     if (deviceId && !subs.includes(deviceId)) subs.push(deviceId);
-    const { error } = await client()
-      .from("zong_teams")
-      .upsert({
-        team_key:        teamKey,
-        shared_setlists: existing.sharedSetlists || [],
-        revision:        existing.revision || 0,
-        subscribers:     subs,
-        updated_at:      new Date().toISOString()
-      }, { onConflict: "team_key" });
-    if (error) return error.message;
-    return null; // success
+    await writeTeam({
+      teamKey,
+      sharedSetlists: existing.sharedSetlists || [],
+      revision:       (existing.revision || 0) + 1,
+      subscribers:    subs
+    });
+    return null;
   } catch (err) {
     return err?.message || "Unknown error";
   }
@@ -539,6 +512,10 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
   }
 
   // ── 2. Team sync (shared setlists only) ─────────────────────────────────────
+  // Mirrors the songs pattern exactly:
+  //   readTeam()  → get remote state
+  //   merge       → remote wins, local adds anything remote doesn't have
+  //   writeTeam() → single upsert if anything changed (no internal read)
   let nextTeam = {
     revision:       rev.team,
     sharedSetlists: state.sharedSetlists ?? []
@@ -550,71 +527,36 @@ export async function syncLibrary({ key, state, revision = 0, changed, deviceId 
 
   if (isTeam) {
     try {
-    const remoteTeam = await readTeam(key);
-    nextTeam.revision = remoteTeam.revision;
-    nextTeam.sharedSetlists = remoteTeam.sharedSetlists;
+      const remoteTeam = await readTeam(key);
 
-    if (deviceId && Array.isArray(remoteTeam.subscribers) && !remoteTeam.subscribers.includes(deviceId)) {
-      const updatedSubs = [...remoteTeam.subscribers, deviceId];
-      try {
-        // Use UPSERT (not UPDATE) so the team row is created if it doesn't exist yet.
-        // UPDATE is a no-op when the row is absent; a fresh team join would silently fail.
-        await client()
-          .from("zong_teams")
-          .upsert({
-            team_key:        key,
-            subscribers:     updatedSubs,
-            shared_setlists: remoteTeam.sharedSetlists || [],
-            revision:        remoteTeam.revision || 0,
-            updated_at:      new Date().toISOString()
-          }, { onConflict: "team_key" });
-        remoteTeam.subscribers = updatedSubs;
-      } catch (e) {
-        console.warn("[Zong Sync] Failed to register subscriber:", e);
-      }
-    }
+      // Build merged subscriber list
+      const subs = [...(remoteTeam.subscribers || [])];
+      const isNewSubscriber = deviceId && !subs.includes(deviceId);
+      if (isNewSubscriber) subs.push(deviceId);
 
-    // Push team data when: explicitly changed, local has setlists remote doesn't know about,
-    // OR this is the first team sync (rev.team===0) — ensures the row is always created on
-    // initial join, mirroring how global sync forces a push on syncRevision.global===0.
-    const remoteSetlistIds = new Set((remoteTeam.sharedSetlists || []).map((sl) => sl.id));
-    const hasUnpushedSetlists = localSharedSetlists.some((sl) => !remoteSetlistIds.has(sl.id));
-    const shouldPushTeam = changed || hasUnpushedSetlists || rev.team === 0;
+      // Merge setlists: remote is source of truth; local adds anything remote doesn't have
+      const remoteSetlistIds = new Set((remoteTeam.sharedSetlists || []).map((sl) => sl.id));
+      const localOnlySetlists = localSharedSetlists.filter((sl) => !remoteSetlistIds.has(sl.id));
+      const mergedSetlists = [...(remoteTeam.sharedSetlists || []), ...localOnlySetlists];
+      const newRevision = (remoteTeam.revision || 0) + 1;
 
-    if (shouldPushTeam) {
-      try {
-        const pushedTeam = await writeTeam({
-          teamKey:            key,
-          sharedSetlists:     localSharedSetlists,
-          baseRevision:       rev.team,
-          deviceId,
-          currentSubscribers: remoteTeam.subscribers
+      // Push when: something changed, local has setlists remote doesn't, or
+      // this device just joined (isNewSubscriber covers first-join row creation too).
+      const shouldPush = changed || localOnlySetlists.length > 0 || isNewSubscriber;
+
+      if (shouldPush) {
+        await writeTeam({
+          teamKey:        key,
+          sharedSetlists: mergedSetlists,
+          revision:       newRevision,
+          subscribers:    subs
         });
-        if (!pushedTeam) {
-          teamConflict = true;
-        } else {
-          nextTeam = pushedTeam;
-        }
-      } catch (teamErr) {
-        // Team write errors are non-fatal for songs/spelling, but we surface
-        // the message so the UI can show it in the sync status bar.
-        teamConflict = true;
-        teamErrorMessage = teamErr?.message || "Team push failed";
+        nextTeam = { revision: newRevision, sharedSetlists: mergedSetlists };
+      } else {
+        nextTeam = { revision: remoteTeam.revision, sharedSetlists: mergedSetlists };
       }
-    } else {
-      // Pull-only: merge remote setlists, with remote winning for shared content.
-      const mergedMap = new Map();
-      // Remote is source of truth for shared setlists.
-      (remoteTeam.sharedSetlists || []).forEach((rsl) => mergedMap.set(rsl.id, rsl));
-      // Add any local shared setlists that don't exist remotely yet.
-      localSharedSetlists.forEach((lsl) => {
-        if (!mergedMap.has(lsl.id)) mergedMap.set(lsl.id, lsl);
-      });
-      nextTeam.sharedSetlists = Array.from(mergedMap.values());
-    }
-    } catch (teamReadErr) {
-      // If we can't reach the team table at all, skip team sync but surface the error.
-      teamErrorMessage = teamReadErr?.message || "Team read failed";
+    } catch (teamErr) {
+      teamErrorMessage = teamErr?.message || "Team sync failed";
     }
   }
 

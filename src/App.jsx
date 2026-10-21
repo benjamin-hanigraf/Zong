@@ -5435,7 +5435,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
         <input
           autoFocus
           value={draft}
-          onChange={(e) => { setDraft(e.target.value); setError(""); }}
+          onChange={(e) => { setDraft(e.target.value.toUpperCase()); setError(""); }}
           placeholder="e.g. FACA or GRACE-CHURCH"
           style={{
             width: "100%", height: 42, background: C.surface3,
@@ -5891,17 +5891,6 @@ function AppInner() {
     // fires after React processes setBandKey(clean) and runs with the correct key.
   };
 
-  const handleLeaveTeam = () => {
-    if (bandKey) {
-      leaveTeam({ teamKey: bandKey, deviceId: getDeviceId() });
-    }
-    localStorage.setItem("zong:access-key", "");
-    localStorage.removeItem("zong:revision");
-    syncRevision.current = { global: 0, team: 0 };
-    setBandKey("");
-    setSyncStatus("Public only");
-    flash("Left Team");
-  };
 
   const rootRef = useRef(null);
   const isLandscapeScreen = useIsLandscapeScreen();
