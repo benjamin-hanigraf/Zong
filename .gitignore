@@ -4,3 +4,6 @@ dist
 .env.local
 .DS_Store
 *.log
+
+# Native iOS project (managed in Xcode, not tracked)
+ios/
