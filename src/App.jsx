@@ -5,7 +5,12 @@ import {
   ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
-import { syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow, recordDeletedSongId, recordDeletedSpellingKey } from "./supabaseSync";
+import {
+  syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow,
+  recordDeletedSongId, recordDeletedSpellingKey, markSongsDirty, markSpellingDirty,
+  markSharedPending, markSharedDeleted, getPendingSharedIds, getDeletedSharedIds, getDirtySongIds,
+  getDirtySpellingKeys, clearSharedQueues,
+} from "./supabaseSync";
 import { initNativeMetronome, isNativePlatform, nativeMetronome } from "./nativeMetronome";
 
 function getDeviceId() {
@@ -155,6 +160,8 @@ const CLICK_TONES = [
 ];
 // Per-song beat subdivision stored on-device (Requirement 9: saved on-device per song across all modes and events, single beat online)
 const SONG_SUBDIVISIONS_KEY = "zong:song-subdivisions";
+// Per-song beat accents stored on-device (device-local, not synced to Supabase).
+const SONG_ACCENTS_KEY = "zong:song-accents";
 
 function getSongSubdivision(songId) {
   if (!songId) return 1;
@@ -172,6 +179,25 @@ function setSongSubdivision(songId, sub) {
     const map = JSON.parse(localStorage.getItem(SONG_SUBDIVISIONS_KEY) || "{}");
     map[songId] = Number(sub) || 1;
     localStorage.setItem(SONG_SUBDIVISIONS_KEY, JSON.stringify(map));
+  } catch { }
+}
+
+function getSongAccents(songId, beats) {
+  if (!songId) return defaultAccents(beats ?? 4);
+  try {
+    const map = JSON.parse(localStorage.getItem(SONG_ACCENTS_KEY) || "{}");
+    const stored = map[songId];
+    if (Array.isArray(stored) && (!beats || stored.length === beats)) return stored;
+  } catch { }
+  return defaultAccents(beats ?? 4);
+}
+
+function setSongAccentsLocal(songId, accents) {
+  if (!songId) return;
+  try {
+    const map = JSON.parse(localStorage.getItem(SONG_ACCENTS_KEY) || "{}");
+    map[songId] = accents;
+    localStorage.setItem(SONG_ACCENTS_KEY, JSON.stringify(map));
   } catch { }
 }
 const PAN_OPTIONS = [
@@ -212,6 +238,37 @@ function transposeKey(key, semitoneDelta) {
 // Transposes one chord symbol, e.g. "C#m7/G#" -> shift by +2 -> "D#m7/A#".
 // Only the root letters move; everything else (quality suffix) is kept as-is.
 const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
+// Comprehensive regex that recognises ALL standard chord symbol forms:
+//   • Root: optional leading 'b' (flat prefix like bA, bE), then A-G, optional # or b
+//   • Quality: m, min, minor, M, Maj, maj, major, dim, °, aug, +, sus, add, dom, 7, 9, 11, 13,
+//     any combination thereof (e.g. Ebm7, Bbmaj7, C#dim, F#aug, Gsus4, Cadd9)
+//   • Slash chord: / followed by same root pattern
+// Used in parseChordsOnlyLine to classify bare words as chords vs plain text.
+const CHORD_SUFFIX_RE = /^(m(?:in(?:or)?)?|M(?:aj(?:or)?)?|maj(?:or)?|dim|°|aug|\+|sus|add|dom)?(?:[0-9]+)?(?:(?:m(?:in)?|M(?:aj)?|dim|aug|sus|add)?[0-9]*)?(?:\/(?:b?[A-G][#b]?))?$/;
+function isChordSymbol(word) {
+  // Allow optional leading 'b' for flat-prefix notation (bA = Ab, bE = Eb)
+  let s = String(word || "").trim();
+  if (!s) return false;
+  // Handle flat-prefix: bA, bE, bB etc.
+  if (/^b[A-G]/.test(s)) s = s[1] + "b" + s.slice(2); // bA → Ab for further matching
+  // Must start with a note letter (A-G) followed by optional accidental
+  if (!/^[A-G]/.test(s)) return false;
+  // Strip the root (letter + optional accidental)
+  const rootMatch = s.match(/^([A-G][#b]?)/);
+  if (!rootMatch) return false;
+  const suffix = s.slice(rootMatch[0].length);
+  // Empty suffix = bare chord like "G", "Ab" — always a chord
+  if (!suffix) return true;
+  // Slash chord: suffix starts with '/' then an optional root
+  // Check if the suffix looks like a known chord quality or is short
+  // Reject anything with 4+ consecutive plain letters that look like a word
+  // (e.g. "Good", "Great") — but allow known quality keywords.
+  const QUALITY_KEYWORDS = /^(?:m(?:in(?:or)?)?|M(?:aj(?:or)?)?|maj(?:or)?|dim|°|aug|\+|sus\d?|add\d+|dom)?\d*(?:\/[A-G][#b]?)?$/i;
+  // Exception: block long plain-word suffixes that aren't musical (≥4 non-digit, non-slash chars)
+  const plainLetters = suffix.replace(/[\d/]/g, "");
+  if (plainLetters.length >= 4 && !QUALITY_KEYWORDS.test(suffix)) return false;
+  return true;
+};
 function transposeChordSymbol(symbol, semitoneDelta, useFlats) {
   if (!symbol) return symbol;
   const transposeOne = (part) => {
@@ -628,6 +685,18 @@ function maybeTanglishTitle(text, tanglishMode) {
   if (!tanglishMode || !text) return text;
   return TAMIL_RANGE_RE.test(text) ? capitalizeTanglishWords(transliterateTanglish(text)) : text;
 }
+// Strip bracketed [Alt Title] groups from a title for display.
+// The raw title field (e.g. "Way Maker [Camino Hacedor]") keeps the alt title
+// for editing and search, but every display surface calls this so the alt is hidden.
+function stripAltTitle(title) {
+  return String(title || "").replace(/\s*\[[^\]]*\]/g, "").trim();
+}
+// Extract all bracketed groups from a title as separate alt-title strings.
+function getAltTitles(title) {
+  const matches = [];
+  String(title || "").replace(/\[([^\]]*)\]/g, (_, inner) => { if (inner.trim()) matches.push(inner.trim()); });
+  return matches;
+}
 // Tanglish (Latin transliteration of Tamil) is harder to read letter-by-
 // letter than either script alone, so we tighten tracking slightly whenever
 // a given piece of text was actually transliterated. Checked against the
@@ -640,10 +709,13 @@ function tanglishLetterSpacing(sourceText, tanglishMode) {
 function songMatchesQuery(song, query) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return true;
-  const plain = `${song.title || ""} ${song.artist || ""}`.toLowerCase();
-  if (plain.includes(q)) return true;
+  // Build a search corpus: main title (stripped) + all alt titles + artist.
+  const altTitles = getAltTitles(song.title || "");
+  const displayTitle = stripAltTitle(song.title || "");
+  const corpus = [displayTitle, ...altTitles, song.artist || ""].join(" ").toLowerCase();
+  if (corpus.includes(q)) return true;
   if (TAMIL_RANGE_RE.test(song.title || "") || TAMIL_RANGE_RE.test(song.artist || "")) {
-    const translit = transliterateTanglish(`${song.title || ""} ${song.artist || ""}`).toLowerCase();
+    const translit = transliterateTanglish([displayTitle, ...altTitles, song.artist || ""].join(" ")).toLowerCase();
     if (translit.includes(q)) return true;
   }
   return false;
@@ -1364,24 +1436,24 @@ function PianoIcon({ size = 18, height, color, strokeWidth }) {
   );
 }
 function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
-  // Callers (e.g. the bottom nav) pass a bolder strokeWidth for the active
-  // tab, matching the lucide icons alongside it. Match that weight (instead
-  // of capping it far below) so the glyph doesn't read as thin/washed-out
-  // next to the lucide icons beside it, and give the case a light fill so
-  // it has real visual mass rather than being an outline sliver.
-  const sw = Math.min(strokeWidth + 0.2, 1.9);
+  // Shape matches the uploaded reference: a rounded C/U outline body
+  // (inverted rounded-rectangle open at bottom corners) with a diagonal
+  // pendulum arm extending upper-right, capped with a filled circle.
+  const sw = Math.min(strokeWidth + 0.3, 2.1);
   return (
     <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      {/* Pyramid case */}
-      <path d="M8.4 5h7.2l3.1 14.2a1.1 1.1 0 0 1-1.07 1.3H6.37a1.1 1.1 0 0 1-1.07-1.3L8.4 5z" fill={color} fillOpacity="0.16" stroke={color} strokeWidth={sw} strokeLinejoin="round" />
-      {/* Top crossbar the pendulum pivots from */}
-      <path d="M9.3 7.4h5.4" stroke={color} strokeWidth={sw} strokeLinecap="round" />
-      {/* Pendulum rod */}
-      <path d="M12 8.6v9.6" stroke={color} strokeWidth={sw} strokeLinecap="round" />
-      {/* Sliding weight */}
-      <rect x="10.5" y="12.1" width="3" height="2" rx="0.5" fill={color} stroke="none" />
-      {/* Base */}
-      <path d="M6.1 19.4h11.8" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      {/* Body: rounded C shape — top arc + left side + bottom-left curve + right side + bottom-right curve */}
+      <path
+        d="M8 3.5 C8 3.5 8 3 12 3 C16 3 16 3.5 16 3.5 L16 3.5 C17.5 3.5 18.5 4.5 18.5 6 L18.5 18 C18.5 19.4 17.4 20.5 16 20.5 L8 20.5 C6.6 20.5 5.5 19.4 5.5 18 L5.5 6 C5.5 4.5 6.5 3.5 8 3.5 Z"
+        stroke={color}
+        strokeWidth={sw}
+        strokeLinejoin="round"
+        fill="none"
+      />
+      {/* Pendulum arm: from centre-bottom pivot diagonally to upper-right */}
+      <line x1="12" y1="18" x2="17.2" y2="8.5" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      {/* Pendulum bob: filled circle at tip */}
+      <circle cx="17.8" cy="7.4" r="1.6" fill={color} />
     </svg>
   );
 }
@@ -1436,8 +1508,27 @@ const BLACK_KEYS = [
   { name: "G#", semitone: 8, afterWhiteIndex: 4 },
   { name: "A#", semitone: 10, afterWhiteIndex: 5 },
 ];
+// "phone" | "ipad" | "desktop". Phones are locked to portrait, iPads rotate
+// freely, and desktops (Mac/PC) keep a fixed landscape-oriented UI.
+function detectDevice() {
+  if (typeof navigator === "undefined" || typeof window === "undefined") return "desktop";
+  const ua = navigator.userAgent;
+  const smallestDim = Math.min(window.screen?.width || 0, window.screen?.height || 0);
+  const isIPad =
+    /iPad/i.test(ua) ||
+    ((navigator.platform === "MacIntel" || /Macintosh/i.test(ua)) && navigator.maxTouchPoints > 1);
+  if (isIPad) return "ipad";
+  if (/iPhone|iPod/i.test(ua) || (/Mobi|Android/i.test(ua) && smallestDim < 600)) return "phone";
+  if (/Android/i.test(ua)) return "ipad"; // Android tablets rotate freely like iPad
+  return "desktop";
+}
+const DEVICE_CLASS = detectDevice();
+
 function useIsLandscapeScreen() {
-  const getIsLandscape = () => typeof window !== "undefined" && window.innerWidth > window.innerHeight;
+  // The piano rotates to face the wider edge. On phones the UI is always held
+  // portrait (even if the OS reports a landscape viewport, we counter-rotate
+  // the page), so the piano must always rotate itself on phones.
+  const getIsLandscape = () => typeof window !== "undefined" && DEVICE_CLASS !== "phone" && window.innerWidth > window.innerHeight;
   const [isLandscape, setIsLandscape] = useState(getIsLandscape);
   useEffect(() => {
     const update = () => setIsLandscape(getIsLandscape());
@@ -2200,7 +2291,7 @@ function useMetronomeEngine(settings) {
     bpmRef.current = clamped;
     // On native, propagate tempo to the Swift engine in real-time.
     if (isNative && playing) {
-      nativeMetronome.setTempo({ bpm: clamped }).catch(() => {});
+      nativeMetronome.setTempo({ bpm: clamped }).catch(() => { });
     }
   };
   const setTimeSig = (ts) => {
@@ -2209,13 +2300,13 @@ function useMetronomeEngine(settings) {
     const newAccents = defaultAccents(effBeats);
     setAccentsState(newAccents);
     if (isNative && playing) {
-      nativeMetronome.setBeatsPerBar({ beatsPerBar: effBeats, accents: newAccents }).catch(() => {});
+      nativeMetronome.setBeatsPerBar({ beatsPerBar: effBeats, accents: newAccents }).catch(() => { });
     }
   };
   const setAccents = (arr) => {
     setAccentsState(arr);
     if (isNative && playing) {
-      nativeMetronome.setAccents({ accents: arr }).catch(() => {});
+      nativeMetronome.setAccents({ accents: arr }).catch(() => { });
     }
   };
   const setSubdivision = (n) => {
@@ -2369,10 +2460,10 @@ function useMetronomeEngine(settings) {
     if (isNative) {
       const effBeats = timeSigRef.current.beats;
       await nativeMetronome.start({
-        bpm:         bpmRef.current,
+        bpm: bpmRef.current,
         beatsPerBar: effBeats,
-        accents:     accentsRef.current,
-      }).catch(() => {});
+        accents: accentsRef.current,
+      }).catch(() => { });
       setPlaying(true);
       return;
     }
@@ -2407,7 +2498,7 @@ function useMetronomeEngine(settings) {
   };
   const stop = () => {
     if (isNative) {
-      nativeMetronome.stop().catch(() => {});
+      nativeMetronome.stop().catch(() => { });
       setPlaying(false);
       setFlashBeat(-1);
       return;
@@ -2453,7 +2544,7 @@ function useMetronomeEngine(settings) {
     setBpmState(song.tempo || 120);
     setTimeSigState({ beats, unit });
     const effBeats = (beats === 6 && unit === 8) ? 4 : beats;
-    setAccentsState(song.accents && song.accents.length === effBeats ? song.accents : defaultAccents(effBeats));
+    setAccentsState(getSongAccents(song.id, effBeats));
     // Load per-song on-device subdivision (Requirement 9)
     const songSub = getSongSubdivision(song.id);
     setSubdivisionState(songSub);
@@ -2464,7 +2555,7 @@ function useMetronomeEngine(settings) {
     const beats = parseTimeSig(song.timeSignature).beats || 4;
     const unit = parseTimeSig(song.timeSignature).unit || 4;
     const effBeats = (beats === 6 && unit === 8) ? 4 : beats;
-    const pattern = song.accents && song.accents.length === effBeats ? song.accents : defaultAccents(effBeats);
+    const pattern = getSongAccents(song.id, effBeats);
     const sub = getSongSubdivision(song.id);
     bpmRef.current = song.tempo || 120;
     timeSigRef.current = { beats: effBeats, unit };
@@ -2715,14 +2806,14 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
   };
 
   return (
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "60px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "50px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", minHeight: 44, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer", maxWidth: 260 }}>
         {loadedSong ? (
           <>
-            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.25, whiteSpace: "normal", wordBreak: "break-word" }}>{loadedSong.title}</div>
-            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 3 }}>{loadedSong.artist}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}>{stripAltTitle(loadedSong.title)}</div>
+            <div style={{ fontSize: 13, color: C.textMuted, marginTop: 10 }}>{loadedSong.artist}</div>
           </>
         ) : (
           <>
@@ -3082,15 +3173,21 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
 function formatChordsOnlyToken(token, viewKey, keyQuality, nashvilleMode) {
   const trimmed = String(token || "").trim();
   if (!trimmed) return token;
+  // Normalise flat-prefix notation: bA → Ab, bE → Eb, etc.
+  const normTrimmed = /^b[A-G]/.test(trimmed) ? trimmed[1] + "b" + trimmed.slice(2) : trimmed;
   if (nashvilleMode) {
-    if (isValidNashvilleToken(trimmed)) return flatify(trimmed);
-    const asNumber = chordToNumberToken(trimmed, viewKey, keyQuality);
+    if (isValidNashvilleToken(normTrimmed)) return flatify(normTrimmed);
+    // With no key, can't reliably convert chord letters to numbers — show as-is.
+    if (!viewKey) return flatify(normTrimmed);
+    const asNumber = chordToNumberToken(normTrimmed, viewKey, keyQuality);
     return flatify(asNumber);
   } else {
-    if (isValidNashvilleToken(trimmed)) {
-      return flatify(tokenToChord(trimmed, viewKey, keyQuality));
+    if (isValidNashvilleToken(normTrimmed)) {
+      // With no key, can't derive chord names — show numbers as-is.
+      if (!viewKey) return flatify(normTrimmed);
+      return flatify(tokenToChord(normTrimmed, viewKey, keyQuality));
     }
-    return flatify(trimmed);
+    return flatify(normTrimmed);
   }
 }
 
@@ -3100,12 +3197,12 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
   let i = 0;
 
   while (i < line.length) {
-    // Bracketed chord token: e.g. [1], [6m], [G], [4/1]
+    // Bracketed chord token: e.g. [1], [6m], [G], [4/1], [Ebm], [Bbmaj7]
     if (line[i] === "[") {
       const end = line.indexOf("]", i);
       if (end !== -1) {
         const inner = line.slice(i + 1, end).trim();
-        if (isValidNashvilleToken(inner) || CHORD_ROOT_RE.test(inner)) {
+        if (isValidNashvilleToken(inner) || isChordSymbol(inner)) {
           const formatted = formatChordsOnlyToken(inner, viewKey, keyQuality, nashvilleMode);
           segments.push({ type: "chord", text: formatted });
           i = end + 1;
@@ -3131,7 +3228,7 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
     if (isValidNashvilleToken(word.trim())) {
       const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
       segments.push({ type: "chord", text: formatted });
-    } else if (CHORD_ROOT_RE.test(word.trim()) && !/[a-z]{3,}/i.test(word.trim())) {
+    } else if (isChordSymbol(word.trim())) {
       const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
       segments.push({ type: "chord", text: formatted });
     } else {
@@ -3638,7 +3735,7 @@ const escapeHtml = (s) => String(s ?? "")
 // tinted in the given accent colour as the user types. When
 // restrictToNashville is set, only tokens matching the Nashville-number
 // pattern are tinted — anything else in brackets stays plain text colour.
-function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, C }) {
+function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, drumMode, C }) {
   const taRef = useRef(null);
   const backdropRef = useRef(null);
   useEffect(() => {
@@ -3662,10 +3759,20 @@ function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeho
     }
   };
   const raw = String(value || "");
-  const html = escapeHtml(raw).replace(/\[([^\]]*)\]/g, (m, inner) => {
-    const valid = restrictToNashville ? isValidNashvilleToken(inner.trim()) : true;
-    return valid ? `<span style="color:${accent}">[${escapeHtml(inner)}]</span>` : m;
-  }) + (raw.endsWith("\n") ? "&nbsp;" : "");
+  // Lines beginning with "-" are section heads: tint the whole line in the
+  // accent colour as soon as the hyphen is typed.
+  // In drumMode, [bracketed] content is the lyrics (grey); rest is bright white.
+  const html = raw.split("\n").map((line) => {
+    if (line.trimStart().startsWith("-")) {
+      return `<span style="color:${accent}">${escapeHtml(line)}</span>`;
+    }
+    if (drumMode) {
+      // Colour [tag] groups grey; rest stays C.text (bright)
+      return escapeHtml(line).replace(/\[([^\]]*)\]/g,
+        (_, inner) => `<span style="color:#6A6A6E">[${inner}]</span>`);
+    }
+    return escapeHtml(line);
+  }).join("\n") + (raw.endsWith("\n") ? "&nbsp;" : "");
   const baseTextStyle = { ...textStyle, margin: 0, border: "none", background: "transparent", boxSizing: "border-box", width: "100%", letterSpacing: "normal", fontKerning: "none", fontVariantLigatures: "none", fontFeatureSettings: '"kern" 0, "liga" 0, "calt" 0' };
   return (
     <div style={{ position: "relative", width: "100%", boxSizing: "border-box", ...wrapperStyle }}>
@@ -3712,7 +3819,10 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const [chordsText, setChordsText] = useState(migratedInitial?.chordsText ?? "");
   const [chartText, setChartText] = useState(migratedInitial?.chartText ?? "");
   const [drumsText, setDrumsText] = useState(migratedInitial?.drumsText ?? "");
-  const [accents, setAccents] = useState(initial?.accents ?? seed?.accents ?? defaultAccents(4));
+  const [accents, setAccents] = useState(() => {
+    if (initial?.id) return getSongAccents(initial.id, (() => { const { beats, unit } = parseTimeSig(initial.timeSignature || "4/4"); return (beats === 6 && unit === 8) ? 4 : beats; })());
+    return seed?.accents ?? defaultAccents(4);
+  });
   const [subdivision, setSubdivision] = useState(() => (initial?.id ? getSongSubdivision(initial.id) : (seed?.subdivision ?? 1)));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
@@ -3789,12 +3899,20 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     const cleanArtist = toTitleCase(artist.trim());
     const isDuplicate = songs.some((s) => {
       if (initial && s.id === initial.id) return false;
-      return s.title.toLowerCase() === cleanTitle.toLowerCase() && (s.artist || "").toLowerCase() === cleanArtist.toLowerCase();
+      return stripAltTitle(s.title).toLowerCase() === stripAltTitle(cleanTitle).toLowerCase() && (s.artist || "").toLowerCase() === cleanArtist.toLowerCase();
     });
     if (!cleanTitle) return;
     if (isDuplicate) { setError("A song with this title and artist already exists."); return; }
     const savedKey = composeKey(keyNatural, keyAccidental);
     const normalizedChordsText = chordsTaggedToNumbersTagged(autoBracketNumbers(chordsText), savedKey, keyQuality);
+    // Persist accents & subdivision to device-local storage (not synced to Supabase).
+    // We need the song id — for new songs onSave returns the id; for edits we have initial.id.
+    // We save now for edits; for new songs the parent's onSave handler will call setSongAccentsLocal
+    // with the newly-assigned id via the song object's accents field.
+    if (initial?.id) {
+      setSongAccentsLocal(initial.id, accents);
+      setSongSubdivision(initial.id, subdivision);
+    }
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: savedKey, keyQuality, language, description, accents, subdivision,
@@ -3877,6 +3995,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
             accent={C.accent}
             restrictToNashville={sectionTab === "chords"}
+            drumMode={sectionTab === "drums"}
             C={C}
             wrapperStyle={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, minHeight: 140 }}
             textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.4, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
@@ -3981,7 +4100,7 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
         <div style={{ fontSize: 12.5, color: "#6A6A6E", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
@@ -3999,7 +4118,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
   const filtered = songs
     .filter((s) => songMatchesQuery(s, query))
     .filter((s) => langFilter === "All" || s.language === langFilter)
-    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+    .sort((a, b) => stripAltTitle(a.title).localeCompare(stripAltTitle(b.title), undefined, { sensitivity: "base" }));
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -4085,7 +4204,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
               <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {checked && <Check size={14} color="#fff" />}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(s.title, tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(stripAltTitle(s.title), tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>
                 {mode === "drums" ? (s.tempo !== "" && s.tempo != null ? `${s.tempo}` : "—") : keyLabel(s)}
               </div>
@@ -4115,7 +4234,12 @@ function SongDetailScreen({
 
   const showBottomBar = mode === "drums" && !!engine && metroBarVisible;
 
-  useEffect(() => { setViewKey(contextKey ?? song.key); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    setViewKey(contextKey ?? song.key);
+    setDescOpen(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mode === "drums" && engine) engine.loadSong({ ...song, tempo: contextTempo ?? song.tempo }); }, [song.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const cycleSubdivision = () => engine && engine.setSubdivision((engine.subdivision % 3) + 1);
 
@@ -4162,6 +4286,9 @@ function SongDetailScreen({
   const hasTempoChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && currentBpm !== Number(baseTempo));
 
   return (
+    <>
+    {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
+    {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: isInSetlist ? (dragging ? "none" : dragTransition || "none") : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
@@ -4171,7 +4298,7 @@ function SongDetailScreen({
           onMouseDown={startTitlePress} onMouseUp={cancelTitlePress} onMouseLeave={cancelTitlePress}
           style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", maxWidth: "calc(100% - 140px)", textAlign: "center", cursor: "pointer" }}
         >
-          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode)}</div>}
         </div>
         {mode === "drums" && !!engine && song.description && (
@@ -4243,7 +4370,7 @@ function SongDetailScreen({
         </div>
       )}
 
-      <div className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y" }}>
+      <div ref={scrollRef} className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y" }}>
         {descOpen && song.description && (
           <div style={{ marginBottom: 18, padding: "11px 13px", background: C.surface2, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 8, fontSize: 13.5, color: C.textMuted, whiteSpace: "pre-wrap" }}>
             {maybeTanglish(song.description, tanglishMode)}
@@ -4303,6 +4430,7 @@ function SongDetailScreen({
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -4317,7 +4445,7 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
   return (
     <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.title, tanglishMode)}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
@@ -4330,7 +4458,7 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
    in Drums mode per spec #11) with Chords' setlist stage (reorder, swipe
    to delete, song picker).
    ========================================================================= */
-function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSong, onDeleteSetlist, initialPickerOpen, mode, tanglishMode, C }) {
+function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateSetlist, onOpenSong, onDeleteSetlist, initialPickerOpen, mode, tanglishMode, C }) {
   const [pickerOpen, setPickerOpen] = useState(!!initialPickerOpen);
   const [openSwipeId, setOpenSwipeId] = useState(null);
   const [editingName, setEditingName] = useState(false);
@@ -4344,7 +4472,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
   const startYRef = useRef(0);
   const justDraggedRef = useRef(false);
 
-  const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed) onUpdateSetlist({ ...setlist, name: trimmed }); setEditingName(false); };
+  const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed) { onUpdateSetlist({ ...setlist, name: trimmed }); onCommit?.(setlist.id); } setEditingName(false); };
   const startNameLongPress = () => { if (nameLongPressTimerRef.current) clearTimeout(nameLongPressTimerRef.current); nameLongPressTimerRef.current = setTimeout(() => { setPickerOpen(true); }, 500); };
   const cancelNameLongPress = () => { if (nameLongPressTimerRef.current) { clearTimeout(nameLongPressTimerRef.current); nameLongPressTimerRef.current = null; } };
 
@@ -4355,13 +4483,16 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
     return song ? { song, keyOverride: e.keyOverride, tempoOverride: e.tempoOverride } : null;
   }).filter(Boolean);
 
-  const removeFromStage = (songId) => onUpdateSetlist({ ...setlist, entries: setlist.entries.filter((e) => e.songId !== songId) });
+  const removeFromStage = (songId, commit = false) => {
+    onUpdateSetlist({ ...setlist, entries: setlist.entries.filter((e) => e.songId !== songId) });
+    if (commit) onCommit?.(setlist.id);
+  };
   const requestRemoveFromStage = (songId) => {
     if (setlist.shared) {
       const s = songs.find((item) => item.id === songId);
       if (s) { setSongToRemove(s); return; }
     }
-    removeFromStage(songId);
+    removeFromStage(songId, true);
   };
   const toggleSong = (songId) => {
     const has = setlist.entries.some((e) => e.songId === songId);
@@ -4398,7 +4529,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
       }
     }
   };
-  const endSongDrag = () => { if (dragTimerRef.current) clearTimeout(dragTimerRef.current); if (activeDragIndex !== null) justDraggedRef.current = true; setActiveDragIndex(null); setDragY(0); mouseDragIdxRef.current = null; };
+  const endSongDrag = () => { if (dragTimerRef.current) clearTimeout(dragTimerRef.current); if (activeDragIndex !== null) { justDraggedRef.current = true; onCommit?.(setlist.id); } setActiveDragIndex(null); setDragY(0); mouseDragIdxRef.current = null; };
   const handleSongTouchStart = (idx, e) => { if (e.touches.length !== 1) return; startSongDrag(idx, e.touches[0].clientY); };
   const handleSongTouchMove = (idx, e) => { if (e.touches.length !== 1) return; moveSongDrag(idx, e.touches[0].clientY, () => { e.preventDefault(); e.stopPropagation(); }); };
   const handleSongTouchEnd = () => endSongDrag();
@@ -4468,7 +4599,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
           songs={songs}
           selectedIds={setlist.entries.map((e) => e.songId)}
           onToggle={toggleSong}
-          onClose={() => setPickerOpen(false)}
+          onClose={() => { setPickerOpen(false); onCommit?.(setlist.id); }}
           setlistName={setlist.name}
           onRenameSetlist={(name) => onUpdateSetlist({ ...setlist, name })}
           isShared={Boolean(setlist.shared)}
@@ -4484,7 +4615,7 @@ function SetlistStageScreen({ setlist, songs, onBack, onUpdateSetlist, onOpenSon
           song={songToRemove}
           setlist={setlist}
           onConfirm={() => {
-            removeFromStage(songToRemove.id);
+            removeFromStage(songToRemove.id, !pickerOpen);
             setSongToRemove(null);
           }}
           onCancel={() => setSongToRemove(null)}
@@ -5543,19 +5674,11 @@ function AppInner() {
   useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Public only");
-  const syncRevision = useRef(() => {
-    try {
-      const stored = localStorage.getItem("zong:revision");
-      if (!stored) return { global: 0, team: 0 };
-      const parsed = JSON.parse(stored);
-      if (typeof parsed === "object" && parsed !== null) return parsed;
-      // Legacy plain-number value — migrate
-      return { global: Number(parsed) || 0, team: 0 };
-    } catch { return { global: 0, team: 0 }; }
-  });
-  // Unwrap the lazy-init function so the ref holds the value, not the fn
-  if (typeof syncRevision.current === "function") syncRevision.current = syncRevision.current();
-  const syncDirty = useRef(false);
+  // Shared setlist ids edited locally but not yet committed with "Done" —
+  // incoming remote updates must not clobber these mid-edit.
+  const uncommittedSharedEdits = useRef(new Set());
+  // A brand-new setlist lives only here until the user presses Done with ≥1 song.
+  const [draftSetlist, setDraftSetlist] = useState(null);
   const syncing = useRef(false);
 
   // Stable refs that always hold the latest state values.
@@ -5567,10 +5690,6 @@ function AppInner() {
   useEffect(() => { songsRef.current = songs; }, [songs]);
   useEffect(() => { spellingChartRef.current = spellingChart; }, [spellingChart]);
   useEffect(() => { setlistsRef.current = setlists; }, [setlists]);
-  // Fix #6/#7: track which songs/spelling keys changed since the last push
-  // so writeGlobal only upserts the modified rows, not the entire library.
-  const dirtySongIds = useRef(new Set());
-  const dirtySpellingKeys = useRef(new Set());
 
   const C = colorsFor(mode);
   const engine = useMetronomeEngine(clickSettings);
@@ -5609,54 +5728,97 @@ function AppInner() {
   // performSync checks this on completion and retries immediately.
   const pendingSync = useRef(false);
 
-  const saveSongs = (next) => {
-    const resolved = typeof next === "function" ? next(songsRef.current) : next;
-    // Record which songs changed so we only upsert them (Fix #6)
-    const prevIds = new Set((songsRef.current || []).map((s) => s.id));
-    (resolved || []).forEach((s) => {
-      if (!prevIds.has(s.id) || s.updatedAt > (songsRef.current.find((p) => p.id === s.id)?.updatedAt ?? 0)) {
-        dirtySongIds.current.add(s.id);
-      }
-    });
-    songsRef.current = resolved;
-    syncDirty.current = true;
-    setSongs(resolved);
-    setTimeout(() => performSyncRef.current?.(true), 0);
+  // Debounced trigger so rapid commits collapse into one network round-trip.
+  const syncTimer = useRef(null);
+  const requestSync = (delay = 0) => {
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => { syncTimer.current = null; performSyncRef.current?.(); }, delay);
   };
+
+  // Called ONLY on commit actions (Save / Done / delete / import). Rows that
+  // actually changed (by reference) are stamped, queued as dirty and pushed.
+  // `silent` = persist locally without queueing a push.
+  const saveSongs = (next, opts = {}) => {
+    const resolved = typeof next === "function" ? next(songsRef.current) : next;
+    let out = resolved;
+    if (!opts.silent) {
+      const prevById = new Map((songsRef.current || []).map((s) => [s.id, s]));
+      const now = Date.now();
+      const changedIds = [];
+      out = (resolved || []).map((s) => {
+        if (prevById.get(s.id) === s) return s;
+        changedIds.push(s.id);
+        return { ...s, updatedAt: now };
+      });
+      markSongsDirty(changedIds);
+    }
+    songsRef.current = out;
+    setSongs(out);
+    if (!opts.silent) requestSync(opts.debounce || 0);
+  };
+  // Local persistence only. Shared setlists are pushed via commitSetlist().
   const saveSetlists = (next) => {
     const resolved = typeof next === "function" ? next(setlistsRef.current) : next;
     setlistsRef.current = resolved;
-    syncDirty.current = true;
     persistSetlists(resolved);
-    setTimeout(() => performSyncRef.current?.(true), 0);
   };
   const saveSpellingChart = (next) => {
     const resolved = typeof next === "function" ? next(spellingChartRef.current) : next;
-    // Record which keys changed so we only upsert them (Fix #7)
     const prev = spellingChartRef.current || {};
-    Object.keys(resolved || {}).forEach((k) => {
-      if (prev[k] !== resolved[k]) dirtySpellingKeys.current.add(k);
-    });
+    const changed = Object.keys(resolved || {}).filter((k) => prev[k] !== resolved[k]);
+    markSpellingDirty(changed);
     spellingChartRef.current = resolved;
-    syncDirty.current = true;
     setSpellingChart(resolved);
-    setTimeout(() => performSyncRef.current?.(true), 0);
+    requestSync();
+  };
+
+  // Merge the team's shared setlists into local state.
+  //  • Remote is the source of truth: setlists missing remotely were deleted
+  //    (or un-shared) on another device and are dropped locally.
+  //  • Exceptions: setlists with a queued push / mid-edit are kept as-is.
+  //  • Unsaved per-device key/tempo overrides on entries are preserved.
+  const mergeSharedSetlists = (localList, remoteShared) => {
+    const protectedIds = new Set([...getPendingSharedIds(), ...uncommittedSharedEdits.current]);
+    const deletedIds = new Set(getDeletedSharedIds());
+    const localShared = new Map(localList.filter((sl) => sl.shared).map((sl) => [sl.id, sl]));
+    const merged = [];
+    const seen = new Set();
+    (remoteShared || []).forEach((rsl) => {
+      if (deletedIds.has(rsl.id)) return;
+      seen.add(rsl.id);
+      const lsl = localShared.get(rsl.id);
+      if (lsl && protectedIds.has(rsl.id)) { merged.push(lsl); return; }
+      const entries = (rsl.entries || []).map((re) => {
+        const le = lsl?.entries?.find((e) => e.songId === re.songId);
+        const rk = re.keyOverride ?? null;
+        const rt = re.tempoOverride ?? null;
+        const localKeyUnsaved = le && (le.keyOverride ?? null) !== (le.syncedKeyOverride ?? null);
+        const localTempoUnsaved = le && (le.tempoOverride ?? null) !== (le.syncedTempoOverride ?? null);
+        return {
+          songId: re.songId,
+          keyOverride: localKeyUnsaved ? le.keyOverride : rk,
+          tempoOverride: localTempoUnsaved ? le.tempoOverride : rt,
+          syncedKeyOverride: rk,
+          syncedTempoOverride: rt,
+        };
+      });
+      merged.push({ ...rsl, shared: true, teamSynced: true, entries, lastOpenedAt: lsl?.lastOpenedAt ?? rsl.lastOpenedAt });
+    });
+    localShared.forEach((lsl, id) => { if (!seen.has(id) && protectedIds.has(id)) merged.push(lsl); });
+    return [...localList.filter((sl) => !sl.shared), ...merged];
   };
 
   const performSync = useCallback(async (force = false) => {
     // Keep the ref in sync so save functions can call the latest closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     performSyncRef.current = performSync;
+    if (!isSupabaseConfigured()) return;
     if (!navigator.onLine) {
-      // Surface offline state to the manual sync button so it can show the
-      // right toast message.
       if (force) throw new Error("offline");
       return;
     }
     if (syncing.current) {
-      // Another sync is in-flight. Mark pending so we retry when it finishes.
-      // If force=true (manual button), wait up to 3 s for the current sync
-      // to complete, then run immediately — never show a spurious error.
+      // Another sync is in-flight — retry as soon as it finishes.
       pendingSync.current = true;
       if (force) {
         await new Promise((resolve) => {
@@ -5665,7 +5827,6 @@ function AppInner() {
           }, 100);
           setTimeout(() => { clearInterval(interval); resolve(); }, 3000);
         });
-        // After the in-flight sync finished, run the forced sync ourselves.
         if (!syncing.current) return performSync(true);
       }
       return;
@@ -5674,133 +5835,70 @@ function AppInner() {
     pendingSync.current = false;
     if (bandKey) setSyncStatus("Syncing…");
     try {
-      // Always read from stable refs so we never push stale state from a
-      // captured closure (fixes the "song added on iPhone not appearing
-      // elsewhere" stale-closure bug).
-      const latestSongs = songsRef.current;
-      const latestSpelling = spellingChartRef.current;
-      const latestSetlists = setlistsRef.current;
-      const sharedSetlists = latestSetlists.filter((sl) => sl.shared);
-      const isChanged = force || syncDirty.current;
-      // Snapshot and clear dirty sets BEFORE the async write so any saves
-      // that happen mid-flight are captured in the next sync, not lost.
-      const snapshotDirtySongs = isChanged ? new Set(dirtySongIds.current) : undefined;
-      const snapshotDirtySpelling = isChanged ? new Set(dirtySpellingKeys.current) : undefined;
-      if (isChanged) { dirtySongIds.current.clear(); dirtySpellingKeys.current.clear(); }
       const result = await syncLibrary({
-        key: bandKey,
-        state: { songs: latestSongs, spellingChart: latestSpelling, sharedSetlists, dirtySongIds: snapshotDirtySongs, dirtySpellingKeys: snapshotDirtySpelling },
-        revision: syncRevision.current,
-        changed: isChanged || syncRevision.current.global === 0,
-        deviceId: getDeviceId()
+        teamKey: bandKey,
+        deviceId: getDeviceId(),
+        songs: songsRef.current,
+        spellingChart: spellingChartRef.current,
+        sharedSetlists: setlistsRef.current.filter((sl) => sl.shared),
       });
-      syncRevision.current = result.revision;
-      localStorage.setItem("zong:revision", JSON.stringify(result.revision));
 
-      if (result.conflict || result.pulled) {
-        const remoteSongs = result.state?.songs || [];
-        const remoteSpelling = result.state?.spellingChart || {};
-        const remoteSharedSetlists = result.state?.sharedSetlists || [];
-
-        // 1. Merge Songs (prevent duplicates by id, apply remote deletions, prefer newer edits)
-        const remoteDeletedIds = new Set(result.state?.deletedIds || []);
-        let mergedSongs = latestSongs.filter((s) => !remoteDeletedIds.has(s.id));
-        remoteSongs.forEach((rs) => {
-          if (remoteDeletedIds.has(rs.id)) return;
-          const idx = mergedSongs.findIndex((ls) =>
-            ls.id === rs.id ||
-            (ls.title.trim().toLowerCase() === rs.title.trim().toLowerCase() &&
-              (ls.artist || "").trim().toLowerCase() === (rs.artist || "").trim().toLowerCase())
-          );
-          if (idx !== -1) {
-            const localUpdated = mergedSongs[idx].updatedAt || 0;
-            const remoteUpdated = rs.updatedAt || 0;
-            if (remoteUpdated >= localUpdated) {
-              mergedSongs[idx] = { ...mergedSongs[idx], ...rs };
-            }
-          } else {
-            mergedSongs.push(rs);
-          }
-        });
-
-        // 2. Merge Spelling Chart (apply remote deletions)
-        const remoteDeletedSpelling = new Set(result.state?.deletedSpellingKeys || []);
-        const mergedSpelling = { ...latestSpelling };
-        remoteDeletedSpelling.forEach((k) => {
-          delete mergedSpelling[k];
-        });
-        Object.entries(remoteSpelling).forEach(([k, v]) => {
-          if (!remoteDeletedSpelling.has(k)) {
-            mergedSpelling[k] = v;
-          }
-        });
-
-        // 3. Merge Setlists (keep personal setlists, merge shared setlists for team subscribers)
-        let mergedSetlists = latestSetlists;
-        if (bandKey) {
-          const personalSetlists = latestSetlists.filter((sl) => !sl.shared);
-          const sharedMap = new Map();
-          remoteSharedSetlists.forEach((rsl) => {
-            const normalizedEntries = (rsl.entries || []).map((e) => ({
-              ...e,
-              syncedKeyOverride: e.syncedKeyOverride ?? e.keyOverride,
-              syncedTempoOverride: e.syncedTempoOverride ?? e.tempoOverride
-            }));
-            sharedMap.set(rsl.id, { ...rsl, shared: true, entries: normalizedEntries });
+      // ── Apply remote songs (functional updates → safe against mid-flight edits)
+      const dirtySongs = new Set(getDirtySongIds());
+      const remoteDeleted = new Set(result.deletedSongIds || []);
+      if ((result.songs && result.songs.length) || remoteDeleted.size) {
+        setSongs((prev) => {
+          let changed = false;
+          let next = prev.filter((s) => {
+            const drop = remoteDeleted.has(s.id) && !dirtySongs.has(s.id);
+            if (drop) changed = true;
+            return !drop;
           });
-          latestSetlists.filter((sl) => sl.shared).forEach((lsl) => {
-            if (sharedMap.has(lsl.id)) {
-              const remoteSl = sharedMap.get(lsl.id);
-              const mergedEntries = remoteSl.entries.map((re) => {
-                const le = lsl.entries.find((e) => e.songId === re.songId);
-                if (le) {
-                  return {
-                    ...re,
-                    keyOverride: le.keyOverride ?? re.keyOverride,
-                    tempoOverride: le.tempoOverride ?? re.tempoOverride,
-                    syncedKeyOverride: re.syncedKeyOverride ?? re.keyOverride,
-                    syncedTempoOverride: re.syncedTempoOverride ?? re.tempoOverride
-                  };
-                }
-                return re;
-              });
-              sharedMap.set(lsl.id, { ...remoteSl, entries: mergedEntries });
-            } else {
-              // Local shared setlist not yet on remote — always keep it locally
-              // and mark dirty so it gets pushed on the next sync cycle.
-              sharedMap.set(lsl.id, lsl);
-              syncDirty.current = true;
+          result.songs.forEach((rs) => {
+            if (dirtySongs.has(rs.id)) return; // our unpushed edit wins
+            const idx = next.findIndex((ls) =>
+              ls.id === rs.id ||
+              ((ls.title || "").trim().toLowerCase() === (rs.title || "").trim().toLowerCase() &&
+                (ls.artist || "").trim().toLowerCase() === (rs.artist || "").trim().toLowerCase())
+            );
+            if (idx === -1) { next = [...next, rs]; changed = true; return; }
+            const local = next[idx];
+            if ((rs.updatedAt || 0) >= (local.updatedAt || 0) && (local.id !== rs.id || rs.updatedAt !== local.updatedAt)) {
+              next = [...next]; next[idx] = { ...rs, subdivision: local.subdivision ?? rs.subdivision }; changed = true;
             }
           });
-          mergedSetlists = [...personalSetlists, ...Array.from(sharedMap.values())];
-        }
-
-        setSongs(mergedSongs);
-        setSpellingChart(mergedSpelling);
-        persistSetlists(mergedSetlists);
-        if (result.conflict) {
-          // The merge produced a superset of both sides — push it back so the
-          // server is up to date and other devices can receive it.
-          syncDirty.current = true;
-        } else {
-          syncDirty.current = false;
-        }
-        if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
-      } else {
-        syncDirty.current = false;
-        if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
+          return changed ? next : prev;
+        });
       }
+
+      // ── Apply remote spelling changes
+      const { upserts, deleted } = result.spelling || { upserts: {}, deleted: [] };
+      if (Object.keys(upserts).length || deleted.length) {
+        const dirtyKeys = new Set(getDirtySpellingKeys());
+        setSpellingChart((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          deleted.forEach((k) => { if (!dirtyKeys.has(k) && k in next) { delete next[k]; changed = true; } });
+          Object.entries(upserts).forEach(([k, v]) => { if (!dirtyKeys.has(k) && next[k] !== v) { next[k] = v; changed = true; } });
+          return changed ? next : prev;
+        });
+      }
+
+      // ── Apply team setlists
+      if (bandKey && result.team) {
+        persistSetlists((prev) => mergeSharedSetlists(prev, result.team.sharedSetlists));
+      }
+
+      if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
     } catch (error) {
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
-      // Re-throw when force=true so the calling UI (sync button) can show
-      // a specific error toast (Issue 7).
+      // Re-throw for manual sync so the UI can show a specific toast.
       if (force) throw error;
     } finally {
       syncing.current = false;
-      // If a save was blocked while we were busy, run one more sync cycle now.
       if (pendingSync.current) {
         pendingSync.current = false;
-        setTimeout(() => performSyncRef.current?.(true), 0);
+        setTimeout(() => performSyncRef.current?.(), 0);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5811,7 +5909,6 @@ function AppInner() {
   // prevents StrictMode double-invocation from creating duplicate subscriptions.
   const prevBandKeyRef = useRef(undefined);
   useEffect(() => {
-    // Skip the StrictMode double-run (same key, already set up)
     if (prevBandKeyRef.current === bandKey) return;
     prevBandKeyRef.current = bandKey;
 
@@ -5819,59 +5916,83 @@ function AppInner() {
     performSync();
 
     const online = () => performSync();
+    // Realtime sockets can be suspended while the app is backgrounded; one
+    // incremental sync on return catches anything missed (tiny payload).
+    const onVisible = () => { if (document.visibilityState === "visible") performSync(); };
     window.addEventListener("online", online);
+    document.addEventListener("visibilitychange", onVisible);
 
-    // No polling — Realtime subscriptions handle push from other devices.
-    // Syncs happen on: app open, save, online event, and Realtime push.
+    // No polling — Realtime pushes changes from other devices instantly.
     let unsubscribeRealtime = null;
     if (isSupabaseConfigured()) {
       unsubscribeRealtime = subscribeToChanges({
         teamKey: bandKey || null,
-        // Apply Realtime payloads directly — no full table refetch
         onSongChange: (_eventType, song, songId) => {
+          if (getDirtySongIds().includes(songId)) return; // don't clobber our unpushed edit
           setSongs((prev) => {
-            if (!song) return prev.filter((s) => s.id !== songId);
+            if (!song) return prev.some((s) => s.id === songId) ? prev.filter((s) => s.id !== songId) : prev;
             const idx = prev.findIndex((s) => s.id === songId);
             if (idx === -1) return [...prev, song];
             const existing = prev[idx];
             if (song.updatedAt >= (existing.updatedAt ?? 0)) {
-              const next = [...prev]; next[idx] = song; return next;
+              const next = [...prev]; next[idx] = { ...song, subdivision: existing.subdivision ?? song.subdivision }; return next;
             }
             return prev;
           });
         },
         onSpellingChange: (_eventType, tamil, latin) => {
+          if (getDirtySpellingKeys().includes(tamil)) return;
           setSpellingChart((prev) => {
-            if (latin === null) { const n = { ...prev }; delete n[tamil]; return n; }
-            return { ...prev, [tamil]: latin };
+            if (latin === null) { if (!(tamil in prev)) return prev; const n = { ...prev }; delete n[tamil]; return n; }
+            return prev[tamil] === latin ? prev : { ...prev, [tamil]: latin };
           });
         },
         onTeam: (teamData) => {
-          persistSetlists((prev) => {
-            const personal = prev.filter((sl) => !sl.shared);
-            const sharedMap = new Map((teamData.sharedSetlists || []).map((sl) => [sl.id, { ...sl, shared: true }]));
-            return [...personal, ...Array.from(sharedMap.values())];
-          });
+          persistSetlists((prev) => mergeSharedSetlists(prev, teamData.sharedSetlists));
         }
       });
     }
 
     return () => {
       window.removeEventListener("online", online);
+      document.removeEventListener("visibilitychange", onVisible);
       if (unsubscribeRealtime) unsubscribeRealtime();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
+
+  // Called when the user commits a setlist edit (Done / leaving the stage).
+  // Shared setlists are queued for upload; un-sharing removes them from the team.
+  const commitSetlist = (setlistId) => {
+    uncommittedSharedEdits.current.delete(setlistId);
+    const sl = setlistsRef.current.find((s) => s.id === setlistId);
+    if (!sl) return;
+    if (sl.shared && bandKey) {
+      markSharedPending(sl.id);
+      requestSync();
+    } else if (!sl.shared && sl.teamSynced) {
+      markSharedDeleted(sl.id);
+      saveSetlists((list) => list.map((s) => (s.id === sl.id ? { ...s, teamSynced: false } : s)));
+      requestSync();
+    }
+  };
 
   const handleSaveTeamKey = (newKey) => {
     const clean = newKey.trim().toUpperCase();
     setTeamKeyModalOpen(false);
-    if (bandKey && bandKey !== clean) {
+    if (clean === bandKey) return;
+    if (bandKey) {
+      // Leaving a team: unregister this device and drop the team's shared
+      // setlists from this device (they belong to the team, not to us).
       leaveTeam({ teamKey: bandKey, deviceId: getDeviceId() });
+      clearSharedQueues();
+      uncommittedSharedEdits.current.clear();
+      saveSetlists((list) => list.filter((sl) => !sl.shared));
+      setStageIndex(null);
+      setDraftSetlist(null);
+      setViewing((v) => (v?.fromSetlistId ? null : v));
     }
     localStorage.setItem("zong:access-key", clean);
-    localStorage.removeItem("zong:revision");
-    syncRevision.current = { global: 0, team: 0 };
     setBandKey(clean);
     if (!clean) {
       setSyncStatus("Public only");
@@ -5879,16 +6000,11 @@ function AppInner() {
       return;
     }
     flash("Connected to Team");
-    syncDirty.current = true;
-    // Immediately create/touch the team row using the new clean key directly —
-    // we know the correct key here, so we don't need to go through the sync pipeline.
-    // This also surfaces any Supabase permission errors right away in the status bar.
+    // Surface any Supabase permission errors right away in the status bar.
+    // The useEffect([bandKey]) then runs the first sync with the correct key.
     ensureTeamRow({ teamKey: clean, deviceId: getDeviceId() })
       .then((err) => { if (err) setSyncStatus(`Team DB error: ${err}`); })
-      .catch(() => {});
-    // Do NOT call performSync here — performSync captures bandKey from its render
-    // closure, so it still holds the OLD key here. The useEffect([bandKey]) below
-    // fires after React processes setBandKey(clean) and runs with the correct key.
+      .catch(() => { });
   };
 
 
@@ -5910,37 +6026,48 @@ function AppInner() {
     };
   }, []);
 
-  // Screen rotation rules (applied once on mount):
-  //   Phone  → always portrait, ignore device rotation setting
-  //   iPad   → free rotation per device setting (no JS lock; Info.plist & OS handle native)
-  //   Mac/PC → attempt landscape lock so the app stays landscape-oriented
+  // Screen rotation rules:
+  //   Phone  → always portrait, whatever the rotation setting / lock state is.
+  //            Native shell: locked by Info.plist + ZongBridgeViewController.
+  //            Android / browsers: orientation.lock("portrait") where allowed.
+  //            Everywhere else (iOS Safari/PWA can't be locked): if the OS rotates
+  //            the viewport to landscape anyway, the whole page (incl. portal
+  //            modals, since we transform <body>) is counter-rotated so it stays
+  //            fixed relative to the phone body.
+  //   iPad   → free rotation per the device setting.
+  //   Mac/PC → UI never rotates; it stays landscape-oriented at any window size.
   //
-  // The piano uses <LandscapeLock> which independently rotates it to always face
-  // the wider edge, regardless of what the OS orientation is.
+  // On every device class the piano uses <LandscapeLock>, which rotates it to
+  // always face the wider edge regardless of OS orientation.
   useEffect(() => {
-    const ua = navigator.userAgent;
-    const smallestDim = Math.min(window.screen.width, window.screen.height);
+    if (DEVICE_CLASS !== "phone") return undefined;
+    window.screen?.orientation?.lock?.("portrait")?.catch?.(() => { });
 
-    // iPhone or small Android phone (narrowest dimension < 600px and mobile UA)
-    const isPhone =
-      /iPhone/i.test(ua) ||
-      (/Mobi|Android/i.test(ua) && smallestDim < 600);
-
-    // iPad (includes iPadOS 13+ which reports as Macintosh in Safari)
-    const isIPad =
-      /iPad/i.test(ua) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ||
-      (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
-
-    if (isPhone) {
-      // Hard portrait lock — ignore hardware rotation switch entirely.
-      window.screen?.orientation?.lock?.("portrait").catch(() => { });
-    } else if (!isIPad) {
-      // Desktop / Mac — attempt landscape lock. Rejected silently on most browsers
-      // (orientation lock is a mobile-only API), but works on some PWA installs.
-      window.screen?.orientation?.lock?.("landscape").catch(() => { });
-    }
-    // iPad: no lock — free rotation controlled by the device's rotation settings.
+    const body = document.body;
+    const reset = () => {
+      ["top", "left", "right", "bottom", "width", "height", "transform", "transformOrigin"].forEach((p) => { body.style[p] = ""; });
+    };
+    const apply = () => {
+      const iw = window.innerWidth;
+      const ih = window.innerHeight;
+      if (iw <= ih) { reset(); return; }
+      const angle = window.screen?.orientation?.angle ?? (typeof window.orientation === "number" ? window.orientation : 90);
+      const rot = (angle === 270 || angle === -90) ? 90 : -90;
+      Object.assign(body.style, {
+        top: "50%", left: "50%", right: "auto", bottom: "auto",
+        width: `${ih}px`, height: `${iw}px`,
+        transformOrigin: "center center",
+        transform: `translate(-50%, -50%) rotate(${rot}deg)`,
+      });
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", apply);
+    return () => {
+      window.removeEventListener("resize", apply);
+      window.removeEventListener("orientationchange", apply);
+      reset();
+    };
   }, []);
 
   // iOS Safari quirk: focusing a text input (e.g. the search bar) makes the
@@ -6015,6 +6142,7 @@ function AppInner() {
 
   const flash = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(""), 2000); };
 
+  const stageSetlist = draftSetlist || (stageIndex !== null ? setlists[stageIndex] : null);
   const viewingSong = viewing ? songs.find((s) => s.id === viewing.songId) : null;
   const viewingSetlist = viewing?.fromSetlistId ? setlists.find((sl) => sl.id === viewing.fromSetlistId) : null;
   const viewingEntry = viewingSetlist ? viewingSetlist.entries.find((e) => e.songId === viewing.songId) : null;
@@ -6027,10 +6155,12 @@ function AppInner() {
   const handleSaveSong = (data) => {
     if (editingSong) {
       saveSongs(songs.map((s) => (s.id === editingSong.id ? { ...s, ...data } : s)));
-      if (data.subdivision != null) setSongSubdivision(editingSong.id, data.subdivision);
+      // accents & subdivision are device-local; already written by SongForm's handleSave for edits.
     } else {
       const newSong = { id: uid(), ...data };
       saveSongs([...songs, newSong]);
+      // Seed device-local stores for the brand-new song id.
+      if (data.accents) setSongAccentsLocal(newSong.id, data.accents);
       if (data.subdivision != null) setSongSubdivision(newSong.id, data.subdivision);
       setViewing({ songId: newSong.id, fromSetlistId: null });
     }
@@ -6043,6 +6173,8 @@ function AppInner() {
   };
   const executeDeleteSong = (id) => {
     recordDeletedSongId(id);
+    // Shared setlists that contained this song need to be re-pushed without it.
+    if (bandKey) setlists.forEach((sl) => { if (sl.shared && sl.entries.some((e) => e.songId === id)) markSharedPending(sl.id); });
     saveSongs(songs.filter((s) => s.id !== id));
     saveSetlists(setlists.map((sl) => ({ ...sl, entries: sl.entries.filter((e) => e.songId !== id) })));
     setEditingSong(undefined);
@@ -6062,15 +6194,33 @@ function AppInner() {
     setViewing({ songId: newSong.id, fromSetlistId: null });
     flash(`Duplicated as "${candidate}"`);
   };
+  // A new setlist exists only as an in-memory draft until the user presses
+  // Done with at least one song selected (see handleCommitStage).
   const handleCreateSetlist = () => {
     let n = 1;
     while (setlists.some((sl) => sl.name.toLowerCase() === `setlist ${n}`.toLowerCase())) n += 1;
     const now = Date.now();
-    const newSl = { id: uid(), name: `Setlist ${n}`, entries: [], shared: false, createdAt: now, updatedAt: now, lastOpenedAt: now };
-    const next = [newSl, ...setlists];
-    saveSetlists(next);
+    setDraftSetlist({ id: uid(), name: `Setlist ${n}`, entries: [], shared: false, createdAt: now, updatedAt: now, lastOpenedAt: now });
     setStageAutoOpenPicker(true);
-    setStageIndex(0);
+    setStageIndex(null);
+  };
+  const handleCommitStage = (id) => {
+    if (draftSetlist && draftSetlist.id === id) {
+      const d = draftSetlist;
+      setDraftSetlist(null);
+      if (!d.entries.length) { setStageIndex(null); return; } // nothing selected → nothing created
+      saveSetlists([d, ...setlists]);
+      setStageIndex(0);
+      if (d.shared && bandKey) { markSharedPending(d.id); requestSync(); }
+      return;
+    }
+    commitSetlist(id);
+  };
+  const handleCloseStage = () => {
+    if (draftSetlist) { setDraftSetlist(null); setStageIndex(null); return; }
+    const sl = setlists[stageIndex];
+    if (sl) commitSetlist(sl.id);
+    setStageIndex(null);
   };
   const handleOpenSetlist = (id) => {
     const now = Date.now();
@@ -6089,7 +6239,13 @@ function AppInner() {
     }
   };
   const handleDeleteSetlist = requestDeleteSetlist;
-  const handleUpdateSetlist = (updated) => saveSetlists(setlists.map((sl) => (sl.id === updated.id ? { ...updated, updatedAt: Date.now() } : sl)));
+  const handleUpdateSetlist = (updated) => {
+    const stamped = { ...updated, updatedAt: Date.now() };
+    if (draftSetlist && updated.id === draftSetlist.id) { setDraftSetlist(stamped); return; }
+    // Local only — shared setlists upload when the user commits (Done / back).
+    if (stamped.shared || stamped.teamSynced) uncommittedSharedEdits.current.add(stamped.id);
+    saveSetlists(setlists.map((sl) => (sl.id === updated.id ? stamped : sl)));
+  };
   const handleRemoveSongFromSetlist = (setlistId, songId) => {
     const sl = setlists.find((s) => s.id === setlistId);
     if (sl?.shared) {
@@ -6097,6 +6253,7 @@ function AppInner() {
       if (song) { setSharedSongToRemove({ song, setlist: sl }); return; }
     }
     saveSetlists(setlists.map((s) => (s.id !== setlistId ? s : { ...s, entries: s.entries.filter((e) => e.songId !== songId) })));
+    if (sl?.shared) { uncommittedSharedEdits.current.add(setlistId); commitSetlist(setlistId); }
     setViewing(null);
   };
   const handleKeyOverrideChange = (setlistId, songId, newKey) => {
@@ -6126,11 +6283,12 @@ function AppInner() {
       };
     }));
     flash("Saved to Team");
-    performSync(true);
+    markSharedPending(setlistId);
+    requestSync();
   };
-  const handleUpdateSongAccents = (songId, accents) => saveSongs(songs.map((s) => (s.id === songId ? { ...s, accents } : s)));
+  // Accents and subdivision are both device-local (localStorage), not synced.
+  const handleUpdateSongAccents = (songId, accents) => setSongAccentsLocal(songId, accents);
   const handleUpdateSongSubdivision = (songId, subdivision) => {
-    saveSongs(songs.map((s) => (s.id === songId ? { ...s, subdivision } : s)));
     setSongSubdivision(songId, subdivision);
   };
 
@@ -6250,7 +6408,7 @@ function AppInner() {
 
       {viewingSong && (
         <SongDetailScreen
-          key={viewingSong.id}
+          key={viewing?.fromSetlistId ? `setlist-${viewing.fromSetlistId}` : viewingSong.id}
           song={viewingSong}
           contextKey={viewingEntry ? (viewingEntry.keyOverride ?? viewingSong.key) : viewingSong.key}
           onKeyChange={viewing?.fromSetlistId ? (newKey) => handleKeyOverrideChange(viewing.fromSetlistId, viewingSong.id, newKey) : null}
@@ -6273,12 +6431,13 @@ function AppInner() {
         />
       )}
 
-      {stageIndex !== null && setlists[stageIndex] && (
+      {stageSetlist && (
         <SetlistStageScreen
-          setlist={setlists[stageIndex]} songs={songs}
-          onBack={() => setStageIndex(null)}
+          setlist={stageSetlist} songs={songs}
+          onBack={handleCloseStage}
+          onCommit={handleCommitStage}
           onUpdateSetlist={handleUpdateSetlist}
-          onOpenSong={(s) => setViewing({ songId: s.id, fromSetlistId: setlists[stageIndex].id })}
+          onOpenSong={(s) => setViewing({ songId: s.id, fromSetlistId: stageSetlist.id })}
           onDeleteSetlist={handleDeleteSetlist}
           initialPickerOpen={stageAutoOpenPicker}
           mode={mode} tanglishMode={tanglishMode} C={C}
@@ -6301,7 +6460,14 @@ function AppInner() {
       {deletingSetlist && (
         <DeleteSetlistModal
           setlist={deletingSetlist}
-          onConfirm={() => { saveSetlists(setlists.filter((sl) => sl.id !== deletingSetlist.id)); setDeletingSetlist(null); }}
+          onConfirm={() => {
+            // Deleting a shared setlist removes it for every device on the team.
+            markSharedDeleted(deletingSetlist.id);
+            uncommittedSharedEdits.current.delete(deletingSetlist.id);
+            saveSetlists(setlists.filter((sl) => sl.id !== deletingSetlist.id));
+            setDeletingSetlist(null);
+            requestSync();
+          }}
           onCancel={() => setDeletingSetlist(null)}
           C={C}
         />
@@ -6314,6 +6480,8 @@ function AppInner() {
           onConfirm={() => {
             const { song, setlist } = sharedSongToRemove;
             saveSetlists(setlists.map((sl) => (sl.id !== setlist.id ? sl : { ...sl, entries: sl.entries.filter((e) => e.songId !== song.id) })));
+            uncommittedSharedEdits.current.add(setlist.id);
+            commitSetlist(setlist.id);
             setSharedSongToRemove(null);
             setViewing(null);
           }}

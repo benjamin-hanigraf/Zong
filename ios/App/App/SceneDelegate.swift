@@ -2,13 +2,54 @@ import UIKit
 import Capacitor
 import WebKit
 
+/// Bridge controller that:
+///  • locks iPhones to portrait (iPads rotate freely, per the device setting),
+///  • keeps the web view fully black and edge-to-edge so no hairline shows at the top.
+class ZongBridgeViewController: CAPBridgeViewController {
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        return UIDevice.current.userInterfaceIdiom == .phone ? .portrait : .all
+    }
+
+    override var shouldAutorotate: Bool { return true }
+
+    override var preferredStatusBarStyle: UIStatusBarStyle { return .lightContent }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        applyEdgeToEdgeWebView()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        applyEdgeToEdgeWebView()
+    }
+
+    private func applyEdgeToEdgeWebView() {
+        guard let webView = self.webView else { return }
+        view.backgroundColor = .black
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        if #available(iOS 15.0, *) { webView.underPageBackgroundColor = .black }
+        let sv = webView.scrollView
+        sv.backgroundColor = .black
+        sv.contentInsetAdjustmentBehavior = .never
+        sv.contentInset = .zero
+        sv.scrollIndicatorInsets = .zero
+        sv.bounces = false
+        sv.showsVerticalScrollIndicator = false
+        sv.showsHorizontalScrollIndicator = false
+        if webView.frame != view.bounds { webView.frame = view.bounds }
+    }
+}
+
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
-        let bridgeVC = CAPBridgeViewController()
+        let bridgeVC = ZongBridgeViewController()
         window = UIWindow(windowScene: windowScene)
         // Extend the window edge-to-edge so no gap appears under the status bar.
         window?.backgroundColor = .black

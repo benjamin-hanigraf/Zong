@@ -1,5 +1,10 @@
 {
   "appId": "com.benjamin.zong",
   "appName": "Zong",
-  "webDir": "dist"
+  "webDir": "dist",
+  "backgroundColor": "#000000",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#000000"
+  }
 }
