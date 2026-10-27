@@ -207,9 +207,9 @@ final class NativeMetronomeEngine {
 
     // MARK: - Click samples
     private func loadSamples() {
-        // Capacitor copies the web assets into the bundle under public/audio/
-        let hi  = loadWav(named: "m_hi",  inSubdir: "public/audio")
-        let low = loadWav(named: "m_low", inSubdir: "public/audio")
+        // Capacitor copies the web assets into the bundle under public/ (the same /tones files the PWA uses)
+        let hi  = loadWav(named: "m_hi",  inSubdir: "public/tones")
+        let low = loadWav(named: "m_low", inSubdir: "public/tones")
 
         var rate = hi?.format.sampleRate ?? low?.format.sampleRate ?? 0
         if rate <= 0 { rate = 44100 }

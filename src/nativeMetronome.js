@@ -15,9 +15,14 @@ const native = Capacitor.isNativePlatform();
 const Plugin = native ? registerPlugin("NativeMetronome") : null;
 
 if (native) {
-  // Keep WebKit's own audio (piano) on the "playback" category so it never
-  // switches the shared session to one the silent switch can mute.
-  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch { /* unsupported */ }
+  // The iOS app must never show a "Now Playing" media card for the web view (it would be
+  // titled "localhost"): the native engine and the Live Activity own the lock-screen UI.
+  try {
+    if (navigator.mediaSession) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+    }
+  } catch { /* unsupported */ }
 }
 
 // Synchronous: Capacitor knows the platform at load time.
