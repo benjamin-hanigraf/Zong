@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
@@ -3446,89 +3446,141 @@ function useEdgeSwipeBack(onBack, edgeZone = 24) {
   return { dragX, leaving, dragging: dragX > 0, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown } };
 }
 
-function useSetlistSongSwipe(onPrev, onNext) {
-  const draggingRef = useRef(false);
+// Swipe between the songs of a setlist.
+//
+// The page follows the finger (transform written straight to the element — no React
+// re-render while dragging, so it tracks at full frame rate). On release the old page is
+// copied into a "ghost" that slides out while the new song slides in from the other side,
+// both with the same easing and distance so their edges stay flush: a clean push transition.
+// Uses the Web Animations API (all current browsers, iOS Safari, desktop and the app).
+const SWIPE_MS = 300;
+const SWIPE_EASE = "cubic-bezier(0.22, 0.61, 0.36, 1)";
+function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
   const startRef = useRef({ x: 0, y: 0 });
-  const dxRef = useRef(0);
-  const directionRef = useRef(null);
+  const dirRef = useRef(null);
+  const shownRef = useRef(0);       // current horizontal offset of the card
+  const velRef = useRef({ x: 0, t: 0, v: 0 });
+  const activeRef = useRef(false);
+  const busyRef = useRef(false);
+  const pendingRef = useRef(null);  // enter animation to run once the new song has rendered
+  const ghostRef = useRef(null);
   const mouseActiveRef = useRef(false);
-  const [dragX, setDragX] = useState(0);
-  // 'idle' | 'exiting-left' | 'exiting-right' | 'entering-left' | 'entering-right'
-  const [swipePhase, setSwipePhase] = useState("idle");
-  const transitioning = swipePhase !== "idle";
+
+  const setX = (x) => {
+    shownRef.current = x;
+    const el = cardRef.current;
+    if (el) el.style.transform = x === 0 ? "" : `translate3d(${x}px,0,0)`;
+  };
 
   const start = (x, y) => {
-    if (transitioning) return;
+    if (busyRef.current) return;
     startRef.current = { x, y };
-    directionRef.current = null;
-    dxRef.current = 0;
-    draggingRef.current = true;
+    velRef.current = { x, t: performance.now(), v: 0 };
+    dirRef.current = null;
+    activeRef.current = true;
   };
   const move = (x, y) => {
-    if (!draggingRef.current || transitioning) return;
+    if (!activeRef.current || busyRef.current) return;
     const dx = x - startRef.current.x;
     const dy = y - startRef.current.y;
-    if (directionRef.current === null) {
+    if (dirRef.current === null) {
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      directionRef.current = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
+      dirRef.current = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
     }
-    if (directionRef.current === "y") return;
-    dxRef.current = dx;
-    setDragX(dx);
+    if (dirRef.current !== "x") return;
+    const now = performance.now();
+    const dt = now - velRef.current.t;
+    if (dt > 0) velRef.current = { x, t: now, v: (x - velRef.current.x) / dt };
+    // Resistance when there is no song in that direction.
+    const canGo = dx > 0 ? !!onPrev : !!onNext;
+    setX(canGo ? dx : dx * 0.25);
   };
-  const end = () => {
-    if (!draggingRef.current) return;
-    const wasHorizontal = directionRef.current === "x";
-    const dx = dxRef.current;
-    draggingRef.current = false;
-    directionRef.current = null;
-    dxRef.current = 0;
 
-    if (wasHorizontal) {
-      const threshold = Math.min(130, window.innerWidth * 0.28);
-      const W = window.innerWidth;
+  const animateBack = () => {
+    const el = cardRef.current;
+    const from = shownRef.current;
+    setX(0);
+    if (el && el.animate && from !== 0) {
+      el.animate([{ transform: `translate3d(${from}px,0,0)` }, { transform: "translate3d(0,0,0)" }], { duration: 240, easing: SWIPE_EASE });
+    }
+  };
 
-      if (dx > threshold && onPrev) {
-        // Swiped right → go to previous song.
-        // Phase 1: slide current card fully off to the right (180ms).
-        setSwipePhase("exiting-right");
-        setDragX(W);
-        setTimeout(() => {
-          // Switch song content, immediately position card off-screen to the left.
-          onPrev();
-          setDragX(-W);
-          setSwipePhase("entering-right");
-          // Phase 2: one rAF ensures the -W position is painted before we
-          // apply the transition back to 0, giving a true slide-in effect.
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              setDragX(0);
-              setTimeout(() => setSwipePhase("idle"), 270);
-            });
-          });
-        }, 200);
-        return;
-      } else if (dx < -threshold && onNext) {
-        // Swiped left → go to next song.
-        setSwipePhase("exiting-left");
-        setDragX(-W);
-        setTimeout(() => {
-          onNext();
-          setDragX(W);
-          setSwipePhase("entering-left");
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              setDragX(0);
-              setTimeout(() => setSwipePhase("idle"), 270);
-            });
-          });
-        }, 200);
-        return;
+  const commit = (dir) => {   // dir: -1 = next song (page moves left), 1 = previous
+    const el = cardRef.current;
+    const go = () => (dir < 0 ? onNext() : onPrev());
+    if (!el || !el.animate) { setX(0); go(); return; }
+    busyRef.current = true;
+    const W = window.innerWidth;
+    const from = shownRef.current;
+
+    // Ghost copy of the outgoing page slides away.
+    const ghost = el.cloneNode(true);
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.style.pointerEvents = "none";
+    ghost.style.transform = "";
+    ghost.style.zIndex = "101";
+    document.body.appendChild(ghost);
+    const srcScroll = el.querySelector(".scroll-list");
+    const dstScroll = ghost.querySelector(".scroll-list");
+    if (srcScroll && dstScroll) dstScroll.scrollTop = srcScroll.scrollTop;
+    ghostRef.current = ghost;
+    const out = ghost.animate(
+      [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${dir * W}px,0,0)` }],
+      { duration: SWIPE_MS, easing: SWIPE_EASE, fill: "forwards" }
+    );
+    const removeGhost = () => { ghost.remove(); if (ghostRef.current === ghost) ghostRef.current = null; };
+    out.onfinish = removeGhost; out.oncancel = removeGhost;
+
+    // The real card waits off-screen on the opposite side until the new song is rendered.
+    const enterFrom = from - dir * W;
+    el.style.transform = `translate3d(${enterFrom}px,0,0)`;
+    shownRef.current = 0;
+    pendingRef.current = { enterFrom };
+    go();
+    // Safety net: if the song never changed, put the card back.
+    setTimeout(() => {
+      if (pendingRef.current) {
+        pendingRef.current = null;
+        if (cardRef.current) cardRef.current.style.transform = "";
+        busyRef.current = false;
       }
-    }
-    // Snap back.
-    setDragX(0);
+    }, 800);
   };
+
+  // New song has rendered (before the browser paints): slide it in.
+  useLayoutEffect(() => {
+    const pending = pendingRef.current;
+    const el = cardRef.current;
+    if (!pending || !el) return;
+    pendingRef.current = null;
+    el.style.transform = "";
+    if (!el.animate) { busyRef.current = false; return; }
+    const enter = el.animate(
+      [{ transform: `translate3d(${pending.enterFrom}px,0,0)` }, { transform: "translate3d(0,0,0)" }],
+      { duration: SWIPE_MS, easing: SWIPE_EASE }
+    );
+    const done = () => { busyRef.current = false; };
+    enter.onfinish = done; enter.oncancel = done;
+  }, [songId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => { if (ghostRef.current) ghostRef.current.remove(); }, []);
+
+  const end = () => {
+    if (!activeRef.current) return;
+    activeRef.current = false;
+    const wasHorizontal = dirRef.current === "x";
+    dirRef.current = null;
+    if (!wasHorizontal) return;
+    const dx = shownRef.current;
+    const v = velRef.current.v;
+    const threshold = Math.min(120, window.innerWidth * 0.25);
+    const flick = Math.abs(v) > 0.5 && Math.abs(dx) > 24;
+    const far = Math.abs(dx) > threshold;
+    if (dx > 0 && onPrev && (far || (flick && v > 0))) commit(1);
+    else if (dx < 0 && onNext && (far || (flick && v < 0))) commit(-1);
+    else animateBack();
+  };
+
   const handleTouchStart = (e) => { if (e.touches.length !== 1) return; start(e.touches[0].clientX, e.touches[0].clientY); };
   const handleTouchMove = (e) => move(e.touches[0].clientX, e.touches[0].clientY);
   const handleTouchEnd = () => end();
@@ -3541,28 +3593,8 @@ function useSetlistSongSwipe(onPrev, onNext) {
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
 
-  // Compute the CSS transition for each swipe phase.
-  // During dragging: no transition (follow finger).
-  // During exit (phase 1): fast ease-in to feel snappy.
-  // During enter (phase 2): smooth ease-out so new content glides in.
-  // When snapping back to 0 after a partial drag: spring-like ease.
-  let dragTransition = "none";
-  if (!draggingRef.current) {
-    if (swipePhase === "exiting-left" || swipePhase === "exiting-right") {
-      dragTransition = "transform 200ms cubic-bezier(0.4,0,1,1)";
-    } else if (swipePhase === "entering-left" || swipePhase === "entering-right") {
-      dragTransition = "transform 260ms cubic-bezier(0,0,0.2,1)";
-    } else if (dragX !== 0) {
-      dragTransition = "transform 220ms cubic-bezier(0.34,1.56,0.64,1)";
-    }
-  }
-
   return {
-    dragX,
-    dragging: draggingRef.current && directionRef.current === "x",
-    transitioning,
-    dragTransition,
-    handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown }
+    handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown },
   };
 }
 
@@ -4348,7 +4380,8 @@ function SongDetailScreen({
   const showBottomBar = mode === "drums" && !!engine && metroBarVisible;
 
   const scrollRef = useRef(null);
-  useEffect(() => {
+  // Layout effect: the reset must land before the new song is painted (it may be sliding in).
+  useLayoutEffect(() => {
     setViewKey(contextKey ?? song.key);
     setDescOpen(false);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -4370,10 +4403,11 @@ function SongDetailScreen({
   const incBpmHold = useHoldRepeat(() => stepBpm(1));
 
   const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
-  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong);
-  const { dragX, leaving, dragging, handlers, transitioning, dragTransition } = isInSetlist
-    ? { dragX: setlistSwipe.dragX, leaving: false, dragging: setlistSwipe.dragging, handlers: setlistSwipe.handlers, transitioning: setlistSwipe.transitioning, dragTransition: setlistSwipe.dragTransition }
-    : { ...edgeBack, transitioning: false, dragTransition: undefined };
+  const cardRef = useRef(null);
+  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong, cardRef, song.id);
+  const { dragX, leaving, dragging, handlers, transitioning } = isInSetlist
+    ? { dragX: 0, leaving: false, dragging: false, handlers: setlistSwipe.handlers, transitioning: false }
+    : { ...edgeBack, transitioning: false };
 
   const stepKey = (delta) => { const next = transposeKey(viewKey, delta); setViewKey(next); if (onKeyChange) onKeyChange(next); };
 
@@ -4402,7 +4436,7 @@ function SongDetailScreen({
     <>
     {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: isInSetlist ? (dragging ? "none" : dragTransition || "none") : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
+    <div ref={cardRef} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, willChange: isInSetlist ? "transform" : undefined, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
