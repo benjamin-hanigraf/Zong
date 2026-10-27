@@ -778,32 +778,50 @@ function sanitizeChordsOnlyNashville(text) {
     isValidNashvilleToken(inner.trim()) ? m : `\uFF3B${inner}\uFF3D`
   ));
 }
+// Splits a whitespace-delimited word into surrounding punctuation and the note
+// itself, so "(Bb", "1)", "'4/1'" or "-5" are still read as notes. Interior
+// characters (the slash in 4/1 or G/B) and accidentals/chord marks (# b + °)
+// stay part of the note.
+function splitNotePunct(word) {
+  const w = String(word || "");
+  const lead = w.match(/^[^A-Za-z0-9#]*/)[0].replace(/^$/, "");
+  const rest = w.slice(lead.length);
+  const trail = rest.match(/[^A-Za-z0-9#\u00B0+]*$/)[0];
+  return { lead, core: rest.slice(0, rest.length - trail.length), trail };
+}
+// A lone "x" (as in "x2" repeat markers written "x 2") turns the note right after
+// it into plain text. Only "x" does this; all other punctuation is ignored.
+const isStandaloneX = (core) => core === "x" || core === "X";
+// True when the text before `offset` ends with a standalone "x" (punctuation/space allowed between).
+function precededByStandaloneX(text, offset) {
+  return /(?:^|[^A-Za-z0-9#])[xX][^A-Za-z0-9#]*$/.test(String(text || "").slice(0, offset));
+}
 // Auto-brackets bare Nashville-number tokens typed in the Chords tab (e.g.
 // typing "1 4 5" becomes "[1] [4] [5]") so they behave as real chord tags
 // without the user needing to type the brackets themselves. Anything already
-// inside [] is left alone, and anything inside () is left completely
-// untouched (literal plain-number text, never turned into a tag).
+// inside [] is left alone. Surrounding punctuation (brackets, slashes, hyphens,
+// quotes) doesn't stop a number being a chord, but a number right after a
+// standalone "x" stays text.
 function autoBracketNumbers(text) {
   const s = String(text || "");
   let out = "";
   let i = 0;
+  let afterX = false;
   while (i < s.length) {
     const ch = s[i];
     if (ch === "[") {
       const end = s.indexOf("]", i);
       if (end === -1) { out += s.slice(i); break; }
-      out += s.slice(i, end + 1); i = end + 1; continue;
-    }
-    if (ch === "(") {
-      const end = s.indexOf(")", i);
-      if (end === -1) { out += s.slice(i); break; }
-      out += s.slice(i, end + 1); i = end + 1; continue;
+      out += s.slice(i, end + 1); i = end + 1; afterX = false; continue;
     }
     if (/\s/.test(ch)) { out += ch; i++; continue; }
     let j = i;
-    while (j < s.length && !/[\s[\]()]/.test(s[j])) j++;
-    const run = s.slice(i, j);
-    out += isValidNashvilleToken(run) ? `[${run}]` : run;
+    while (j < s.length && !/[\s[]/.test(s[j])) j++;
+    const { lead, core, trail } = splitNotePunct(s.slice(i, j));
+    if (isStandaloneX(core)) { afterX = true; out += s.slice(i, j); }
+    else if (!afterX && core && isValidNashvilleToken(core)) out += `${lead}[${core}]${trail}`;
+    else { afterX = false; out += s.slice(i, j); }
+    if (!isStandaloneX(core)) afterX = false;
     i = j;
   }
   return out;
@@ -957,13 +975,17 @@ function chordToNumberToken(symbol, key, quality) {
 // (e.g. typing "[D]" while in the Chords tab) get stored in the canonical
 // number form once saved.
 function chordsTaggedToNumbersTagged(taggedText, key, quality) {
-  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (m, tok) => `[${chordToNumberToken(tok, key, quality)}]`);
+  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (m, tok, off, whole) => (
+    precededByStandaloneX(whole, off) ? tok : `[${chordToNumberToken(tok, key, quality)}]`
+  ));
 }
 // Converts every [number] tag in a tagged (lyric-interleaved) text block
 // into its derived [ChordLetter] for the given key/quality, leaving the
 // lyric characters and non-number tags untouched.
 function numbersTaggedToChordsTagged(taggedText, key, quality) {
-  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (_, tok) => `[${tokenToChord(tok, key, quality)}]`);
+  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (_, tok, off, whole) => (
+    precededByStandaloneX(whole, off) ? tok : `[${tokenToChord(tok, key, quality)}]`
+  ));
 }
 
 /* =========================================================================
@@ -3189,6 +3211,7 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
   const line = String(rawLine || "");
   const segments = [];
   let i = 0;
+  let afterX = false; // the note right after a standalone "x" is plain text
 
   while (i < line.length) {
     // Bracketed chord token: e.g. [1], [6m], [G], [4/1], [Ebm], [Bbmaj7]
@@ -3197,8 +3220,9 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
       if (end !== -1) {
         const inner = line.slice(i + 1, end).trim();
         if (isValidNashvilleToken(inner) || isChordSymbol(inner)) {
-          const formatted = formatChordsOnlyToken(inner, viewKey, keyQuality, nashvilleMode);
-          segments.push({ type: "chord", text: formatted });
+          if (afterX) segments.push({ type: "text", text: inner });
+          else segments.push({ type: "chord", text: formatChordsOnlyToken(inner, viewKey, keyQuality, nashvilleMode) });
+          afterX = false;
           i = end + 1;
           continue;
         }
@@ -3218,15 +3242,21 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
     let j = i;
     while (j < line.length && !/\s|\[/.test(line[j])) j++;
     const word = line.slice(i, j);
+    const { lead, core, trail } = splitNotePunct(word);
 
-    if (isValidNashvilleToken(word.trim())) {
-      const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
-      segments.push({ type: "chord", text: formatted });
-    } else if (isChordSymbol(word.trim())) {
-      const formatted = formatChordsOnlyToken(word.trim(), viewKey, keyQuality, nashvilleMode);
-      segments.push({ type: "chord", text: formatted });
-    } else {
+    if (isStandaloneX(core)) {
       segments.push({ type: "text", text: word });
+      afterX = true;
+    } else {
+      const isNote = core && (isValidNashvilleToken(core) || isChordSymbol(core));
+      if (isNote && !afterX) {
+        if (lead) segments.push({ type: "text", text: lead });
+        segments.push({ type: "chord", text: formatChordsOnlyToken(core, viewKey, keyQuality, nashvilleMode) });
+        if (trail) segments.push({ type: "text", text: trail });
+      } else {
+        segments.push({ type: "text", text: word });
+      }
+      afterX = false;
     }
     i = j;
   }
