@@ -1,6 +1,5 @@
 import Accelerate
 import AVFoundation
-import MediaPlayer
 
 // ============================================================
 // NativeMetronomeEngine
@@ -20,15 +19,21 @@ import MediaPlayer
 //     (start, stop, audio interruption, lock-screen button) is published via
 //     `onState`, and JS mirrors it. Nothing can stop the sound without the UI
 //     finding out.
+//   • The lock-screen Live Activity (MetronomeLiveActivity.swift) mirrors the state and
+//     its +/−/play buttons call handle(_:).
 //   • The engine recovers by itself from audio route / configuration changes
 //     and category changes made by the web view.
 // ============================================================
 
 final class NativeMetronomeEngine {
 
+    /// One engine for the whole app: the plugin (JS) and the Live Activity buttons share it.
+    static let shared = NativeMetronomeEngine()
+
     // MARK: - Callbacks (set by the plugin)
     var onBeat: ((Int) -> Void)?
     var onState: ((Bool) -> Void)?
+    var onTempo: ((Int) -> Void)?   // tempo changed by a lock-screen button
 
     // MARK: - State (only touched on `q`)
     private let q = DispatchQueue(label: "com.zong.metronome.audio", qos: .userInteractive)
@@ -36,6 +41,7 @@ final class NativeMetronomeEngine {
     private var beatsPerBar: Int = 4
     private var subdivision: Int = 1
     private var accents: [String] = []   // "normal" | "accent" | "mute"
+    private var title = "Metronome"     // shown on the lock-screen Live Activity
     private var volume: Float = 1.0
     private var isPlaying = false
     private var resumeAfterInterruption = false
@@ -57,7 +63,6 @@ final class NativeMetronomeEngine {
             activateSession()
             setupEngine()
             loadSamples()
-            setupRemoteCommands()
             observeSystemEvents()
         }
     }
@@ -67,8 +72,9 @@ final class NativeMetronomeEngine {
     /// Starts playing. If already playing with identical settings this is a no-op
     /// (prevents a double click when JS and the lock screen both ask to play).
     /// `completion` receives the resulting playing state once the command has been applied.
-    func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, completion: @escaping (Bool) -> Void) {
+    func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, title: String?, completion: @escaping (Bool) -> Void) {
         q.async { [self] in
+            setTitle(title)
             let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
             if !isPlaying || changed { startPlayback() }
             completion(isPlaying)
@@ -76,10 +82,45 @@ final class NativeMetronomeEngine {
     }
 
     /// Updates settings; restarts the bar only if something actually changed and we are playing.
-    func update(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int) {
+    func update(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, title: String?) {
         q.async { [self] in
+            setTitle(title)
             let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
-            if isPlaying && changed { startPlayback() }
+            if isPlaying && changed { startPlayback() } else { syncLiveActivity() }
+        }
+    }
+
+    /// Lock-screen / Live Activity buttons.
+    func handle(_ command: MetronomeCommand) {
+        q.async { [self] in
+            switch command {
+            case .toggle:
+                if isPlaying { resumeAfterInterruption = false; halt() } else { startPlayback() }
+            case .tempoUp:
+                adjustTempo(by: 1)
+            case .tempoDown:
+                adjustTempo(by: -1)
+            }
+        }
+    }
+
+    private func adjustTempo(by delta: Double) {
+        let next = max(30, min(300, bpm + delta))
+        guard next != bpm else { return }
+        bpm = next
+        if isPlaying { startPlayback() } else { syncLiveActivity() }
+        let tempo = Int(next.rounded())
+        DispatchQueue.main.async { [weak self] in self?.onTempo?(tempo) }
+    }
+
+    private func setTitle(_ newTitle: String?) {
+        let t = (newTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        title = t.isEmpty ? "Metronome" : t
+    }
+
+    private func syncLiveActivity() {
+        if #available(iOS 16.2, *) {
+            MetronomeLiveActivity.shared.sync(title: title, bpm: Int(bpm.rounded()), playing: isPlaying)
         }
     }
 
@@ -98,8 +139,8 @@ final class NativeMetronomeEngine {
         }
     }
 
-    func queryState(_ completion: @escaping (Bool) -> Void) {
-        q.async { [self] in completion(isPlaying) }
+    func queryState(_ completion: @escaping (Bool, Int) -> Void) {
+        q.async { [self] in completion(isPlaying, Int(bpm.rounded())) }
     }
 
     // MARK: - Settings
@@ -295,7 +336,6 @@ final class NativeMetronomeEngine {
         isPlaying = true
         startTicker(barFrames: Int(buf.frameLength), beats: beatsPerBar)
         publishState()
-        updateNowPlaying()
         print("[NativeMetronome] playing: bpm=\(bpm) beats=\(beatsPerBar) sub=\(subdivision) hi=\(hiBuffer != nil) low=\(lowBuffer != nil) rate=\(buf.format.sampleRate)")
     }
 
@@ -307,7 +347,6 @@ final class NativeMetronomeEngine {
         clkNode.stop()
         clkNode.reset()
         if wasPlaying { publishState() }
-        updateNowPlaying()
     }
 
     // MARK: - Beat ticker (driven by the audio clock)
@@ -342,6 +381,7 @@ final class NativeMetronomeEngine {
     private func publishState() {
         let playing = isPlaying
         DispatchQueue.main.async { [weak self] in self?.onState?(playing) }
+        syncLiveActivity()
     }
 
     // MARK: - System events
@@ -410,41 +450,5 @@ final class NativeMetronomeEngine {
         if !engine.isRunning {
             startPlayback()
         }
-    }
-
-    // MARK: - Lock-screen / Now Playing
-    private func setupRemoteCommands() {
-        let center = MPRemoteCommandCenter.shared()
-
-        center.playCommand.isEnabled = true
-        center.playCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.q.async { if !self.isPlaying { self.startPlayback() } }
-            return .success
-        }
-        center.pauseCommand.isEnabled = true
-        center.pauseCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.q.async { self.resumeAfterInterruption = false; self.halt() }
-            return .success
-        }
-        center.togglePlayPauseCommand.isEnabled = true
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.q.async {
-                if self.isPlaying { self.resumeAfterInterruption = false; self.halt() } else { self.startPlayback() }
-            }
-            return .success
-        }
-    }
-
-    private func updateNowPlaying() {
-        let info: [String: Any] = [
-            MPMediaItemPropertyTitle:            "Zong",
-            MPMediaItemPropertyArtist:           "\(Int(bpm)) BPM",
-            MPNowPlayingInfoPropertyIsLiveStream: false,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
-        ]
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 }

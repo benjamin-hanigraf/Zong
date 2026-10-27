@@ -38,15 +38,18 @@ function listen(event, handler) {
 }
 
 export const nativeMetronome = {
-  /** { bpm, beatsPerBar, accents, subdivision } */
+  /** { bpm, beatsPerBar, accents, subdivision, title } */
   start(settings) { return Plugin?.start(settings); },   // resolves { playing }
   /** Applies new settings while playing (restarts the bar only if something changed). */
   update(settings) { return Plugin?.update(settings); },
   stop() { return Plugin?.stop(); },                       // resolves { playing }
   setVolume({ volume }) { return Plugin?.setVolume({ volume }); },
-  async getState() { return (await Plugin?.getState())?.playing ?? false; },
+  /** Resolves { playing, bpm } */
+  async getState() { return (await Plugin?.getState()) ?? { playing: false }; },
   /** handler({ beatIndex }) */
   addBeatListener(handler) { return listen("beat", handler); },
   /** handler({ playing }) */
   addStateListener(handler) { return listen("state", handler); },
+  /** handler({ bpm }) — tempo changed by the lock-screen +/- buttons */
+  addTempoListener(handler) { return listen("tempo", handler); },
 };

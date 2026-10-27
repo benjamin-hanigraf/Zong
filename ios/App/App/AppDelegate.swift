@@ -11,6 +11,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         // Activating the session can block, so keep it off the main thread.
         DispatchQueue.global(qos: .userInitiated).async { try? AVAudioSession.sharedInstance().setActive(true) }
+        // Lock-screen Live Activity buttons run in this process and drive the shared engine.
+        MetronomeIntentBridge.handler = { NativeMetronomeEngine.shared.handle($0) }
         // Override point for customization after application launch.
         return true
     }

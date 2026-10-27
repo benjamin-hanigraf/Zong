@@ -1,6 +1,5 @@
 import AVFoundation
 import Capacitor
-import MediaPlayer
 
 // ============================================================
 // NativeMetronomePlugin — local Capacitor plugin (Capacitor 7/8)
@@ -19,7 +18,7 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
     ]
 
-    private lazy var engine = NativeMetronomeEngine()
+    private let engine = NativeMetronomeEngine.shared
 
     public override func load() {
         // Touching `engine` here creates it at launch, so audio is ready before the first tap.
@@ -30,25 +29,31 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         engine.onState = { [weak self] playing in
             self?.notifyListeners("state", data: ["playing": playing])
         }
+        // Tempo changed from the lock-screen +/- buttons.
+        engine.onTempo = { [weak self] bpm in
+            self?.notifyListeners("tempo", data: ["bpm": bpm])
+        }
+        if #available(iOS 16.2, *) { MetronomeLiveActivity.shared.endStale() }
     }
 
-    private func settings(_ call: CAPPluginCall) -> (bpm: Double, beats: Int, accents: [String]?, sub: Int) {
+    private func settings(_ call: CAPPluginCall) -> (bpm: Double, beats: Int, accents: [String]?, sub: Int, title: String?) {
         (call.getDouble("bpm") ?? 120.0,
          call.getInt("beatsPerBar") ?? 4,
          call.getArray("accents") as? [String],
-         call.getInt("subdivision") ?? 1)
+         call.getInt("subdivision") ?? 1,
+         call.getString("title"))
     }
 
     @objc func start(_ call: CAPPluginCall) {
         let s = settings(call)
-        engine.start(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub) { playing in
+        engine.start(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub, title: s.title) { playing in
             call.resolve(["playing": playing])
         }
     }
 
     @objc func update(_ call: CAPPluginCall) {
         let s = settings(call)
-        engine.update(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub)
+        engine.update(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub, title: s.title)
         call.resolve()
     }
 
@@ -63,6 +68,6 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func getState(_ call: CAPPluginCall) {
-        engine.queryState { playing in call.resolve(["playing": playing]) }
+        engine.queryState { playing, bpm in call.resolve(["playing": playing, "bpm": bpm]) }
     }
 }

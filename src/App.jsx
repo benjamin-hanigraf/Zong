@@ -2457,14 +2457,19 @@ function useMetronomeEngine(settings) {
       setPlaying(p);
       if (!p) setFlashBeat(-1);
     });
-    // Re-sync when the app returns to the foreground (e.g. after a call or Siri).
+    const removeTempo = nativeMetronome.addTempoListener(({ bpm: b }) => { if (b) setBpm(b, true); });
+    // Re-sync when the app returns to the foreground (e.g. after a call, or lock-screen buttons).
     const resync = () => {
       if (document.visibilityState !== "visible") return;
-      nativeMetronome.getState().then((p) => { setPlaying(p); if (!p) setFlashBeat(-1); }).catch(() => { });
+      nativeMetronome.getState().then(({ playing: p, bpm: b }) => {
+        setPlaying(Boolean(p));
+        if (!p) setFlashBeat(-1);
+        if (p && b) setBpm(b, true);
+      }).catch(() => { });
     };
     document.addEventListener("visibilitychange", resync);
     resync();
-    return () => { removeBeat(); removeState(); document.removeEventListener("visibilitychange", resync); };
+    return () => { removeBeat(); removeState(); removeTempo(); document.removeEventListener("visibilitychange", resync); };
   }, [isNative]);
 
   // Number of start/stop commands sent to the engine that haven't answered yet.
@@ -2490,6 +2495,7 @@ function useMetronomeEngine(settings) {
     beatsPerBar: timeSigRef.current.beats,
     accents: accentsRef.current,
     subdivision: subdivisionRef.current,
+    title: loadedSongRef.current ? stripAltTitle(loadedSongRef.current.title) : "Metronome",
   });
   // Any change to tempo / time signature / accents / subdivision while playing is
   // sent to the engine once (debounced), whatever caused it — knob, song load, etc.
@@ -2497,7 +2503,7 @@ function useMetronomeEngine(settings) {
     if (!isNative || !playing) return;
     const t = setTimeout(() => { nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e)); }, 60);
     return () => clearTimeout(t);
-  }, [isNative, playing, bpm, timeSig, accents, subdivision]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNative, playing, bpm, timeSig, accents, subdivision, loadedSong]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const start = async () => {
     if (isNative) {
