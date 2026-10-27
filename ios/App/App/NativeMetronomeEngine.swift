@@ -131,7 +131,6 @@ final class NativeMetronomeEngine {
     // MARK: - Bar buffer construction
     /// Builds one bar of audio as a single PCMBuffer with clicks at the right positions.
     private func buildBarBuffer(bpm: Double, beatsPerBar: Int, accents: [String]) -> AVAudioPCMBuffer? {
-        let sampleRate   = engine.outputNode.outputFormat(forBus: 0).sampleRate
         let beatDuration = 60.0 / bpm                             // seconds
         let barDuration  = beatDuration * Double(beatsPerBar)
         let barFrames    = AVAudioFrameCount(barDuration * sampleRate)
@@ -299,16 +298,9 @@ final class NativeMetronomeEngine {
     private func scheduleBeatTimers() {
         cancelBeatTimers()
         let beatDuration = 60.0 / bpm            // seconds per beat
-        let sampleRate   = engine.outputNode.outputFormat(forBus: 0).sampleRate
 
-        // Determine the engine render time of the first beat in this bar.
-        // We anchor on the last render time and schedule ahead from now.
-        guard let lastRender = engine.outputNode.lastRenderTime else { return }
-        let startTime = clkNode.nodeTime(forPlayerTime: AVAudioTime(sampleTime: 0, atRate: sampleRate))
-            ?? lastRender
-
-        let nowHostTime = mach_absolute_time()
-        let nowSecs     = Double(nowHostTime) * machTimebaseInfo()
+        // Beat callbacks are scheduled relative to now; bail out if the engine isn't rendering yet.
+        guard engine.outputNode.lastRenderTime != nil else { return }
 
         for beat in 0..<beatsPerBar {
             let accentState = beat < accents.count ? accents[beat] : "normal"
@@ -360,13 +352,6 @@ final class NativeMetronomeEngine {
         var arr = incoming ?? Array(repeating: "normal", count: beats)
         while arr.count < beats { arr.append("normal") }
         return Array(arr.prefix(beats))
-    }
-
-    // MARK: - Mach timebase
-    private func machTimebaseInfo() -> Double {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return Double(info.numer) / Double(info.denom) / 1_000_000_000.0
     }
 
     // MARK: - Interruption handling
@@ -436,7 +421,7 @@ final class NativeMetronomeEngine {
     }
 
     private func updateNowPlaying(playing: Bool) {
-        var info: [String: Any] = [
+        let info: [String: Any] = [
             MPMediaItemPropertyTitle:           "Zong",
             MPMediaItemPropertyArtist:          "\(Int(bpm)) BPM",
             MPNowPlayingInfoPropertyIsLiveStream: false,
