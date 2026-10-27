@@ -2451,6 +2451,9 @@ function useMetronomeEngine(settings) {
     if (!isNative) return;
     const removeBeat = nativeMetronome.addBeatListener(({ beatIndex }) => setFlashBeat(beatIndex));
     const removeState = nativeMetronome.addStateListener(({ playing: p }) => {
+      // While one of our own start/stop commands is in flight, its result decides the
+      // final state; applying in-between events would make the button flicker.
+      if (pendingNativeRef.current > 0) return;
       setPlaying(p);
       if (!p) setFlashBeat(-1);
     });
@@ -2464,6 +2467,24 @@ function useMetronomeEngine(settings) {
     return () => { removeBeat(); removeState(); document.removeEventListener("visibilitychange", resync); };
   }, [isNative]);
 
+  // Number of start/stop commands sent to the engine that haven't answered yet.
+  const pendingNativeRef = useRef(0);
+  const runNativeCommand = async (command) => {
+    pendingNativeRef.current += 1;
+    let result = null;
+    try {
+      result = await command();
+    } catch (e) {
+      console.error("[Zong metronome]", e);
+    } finally {
+      pendingNativeRef.current -= 1;
+    }
+    if (pendingNativeRef.current === 0) {
+      const p = Boolean(result?.playing);
+      setPlaying(p);
+      if (!p) setFlashBeat(-1);
+    }
+  };
   const nativeSettings = () => ({
     bpm: bpmRef.current,
     beatsPerBar: timeSigRef.current.beats,
@@ -2480,14 +2501,8 @@ function useMetronomeEngine(settings) {
 
   const start = async () => {
     if (isNative) {
-      setPlaying(true); // optimistic; the engine confirms via its "state" event
-      try {
-        await nativeMetronome.start(nativeSettings());
-      } catch (e) {
-        console.error("[Zong metronome] start failed", e);
-        setPlaying(false);
-        setFlashBeat(-1);
-      }
+      setPlaying(true); // instant feedback; the engine's answer is applied when it arrives
+      await runNativeCommand(() => nativeMetronome.start(nativeSettings()));
       return;
     }
     unlockAudioPlayback();
@@ -2521,9 +2536,9 @@ function useMetronomeEngine(settings) {
   };
   const stop = () => {
     if (isNative) {
-      nativeMetronome.stop().catch((e) => console.error("[Zong metronome] stop failed", e));
       setPlaying(false);
       setFlashBeat(-1);
+      runNativeCommand(() => nativeMetronome.stop());
       return;
     }
     clearInterval(schedulerRef.current);

@@ -39,6 +39,7 @@ final class NativeMetronomeEngine {
     private var volume: Float = 1.0
     private var isPlaying = false
     private var resumeAfterInterruption = false
+    private var sessionActive = false   // avoids re-activating the audio session on every start
 
     // MARK: - Audio objects
     private let engine  = AVAudioEngine()
@@ -65,11 +66,12 @@ final class NativeMetronomeEngine {
 
     /// Starts playing. If already playing with identical settings this is a no-op
     /// (prevents a double click when JS and the lock screen both ask to play).
-    func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int) {
+    /// `completion` receives the resulting playing state once the command has been applied.
+    func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, completion: @escaping (Bool) -> Void) {
         q.async { [self] in
             let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
-            if isPlaying && !changed { return }
-            startPlayback()
+            if !isPlaying || changed { startPlayback() }
+            completion(isPlaying)
         }
     }
 
@@ -81,10 +83,11 @@ final class NativeMetronomeEngine {
         }
     }
 
-    func stop() {
+    func stop(completion: @escaping (Bool) -> Void) {
         q.async { [self] in
             resumeAfterInterruption = false
             halt()
+            completion(isPlaying)
         }
     }
 
@@ -118,13 +121,17 @@ final class NativeMetronomeEngine {
     }
 
     // MARK: - Audio session
-    private func activateSession() {
+    /// `force` re-applies category + activation (after an interruption or a category change by the web view).
+    private func activateSession(force: Bool = false) {
+        if sessionActive && !force { return }
         let session = AVAudioSession.sharedInstance()
         do {
             // .playback ignores the hardware silent switch and keeps playing with the screen locked.
             try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
+            sessionActive = true
         } catch {
+            sessionActive = false
             print("[NativeMetronome] Audio session error: \(error)")
         }
     }
@@ -259,7 +266,7 @@ final class NativeMetronomeEngine {
     // MARK: - Playback
     private func startPlayback() {
         stopTicker()
-        activateSession()   // safe: we are not on the main thread
+        activateSession()   // no-op when already active; never runs on the main thread
 
         guard let buf = buildBarBuffer() else {
             isPlaying = false
@@ -361,6 +368,7 @@ final class NativeMetronomeEngine {
                 guard let self = self, self.isPlaying else { return }
                 print("[NativeMetronome] media services reset — restarting")
                 self.connectedFormat = nil
+                self.activateSession(force: true)
                 self.startPlayback()
             }
         }
@@ -372,6 +380,7 @@ final class NativeMetronomeEngine {
               let type = AVAudioSession.InterruptionType(rawValue: typeVal) else { return }
         switch type {
         case .began:
+            sessionActive = false
             if isPlaying {
                 resumeAfterInterruption = true
                 halt()   // publishes state so the UI never shows "playing" while silent
@@ -381,6 +390,7 @@ final class NativeMetronomeEngine {
             let opts = AVAudioSession.InterruptionOptions(rawValue: optVal)
             if resumeAfterInterruption && opts.contains(.shouldResume) {
                 resumeAfterInterruption = false
+                activateSession(force: true)
                 startPlayback()
             }
         @unknown default:
@@ -395,7 +405,7 @@ final class NativeMetronomeEngine {
         // The web view (piano / web audio) can switch the shared session to another
         // category; that would mute the click on the silent switch. Put it back.
         if reason == .categoryChange && AVAudioSession.sharedInstance().category != .playback {
-            activateSession()
+            activateSession(force: true)
         }
         if !engine.isRunning {
             startPlayback()

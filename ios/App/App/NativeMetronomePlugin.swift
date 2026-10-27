@@ -41,8 +41,9 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func start(_ call: CAPPluginCall) {
         let s = settings(call)
-        engine.start(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub)
-        call.resolve()
+        engine.start(bpm: s.bpm, beatsPerBar: s.beats, accents: s.accents, subdivision: s.sub) { playing in
+            call.resolve(["playing": playing])
+        }
     }
 
     @objc func update(_ call: CAPPluginCall) {
@@ -52,8 +53,7 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func stop(_ call: CAPPluginCall) {
-        engine.stop()
-        call.resolve()
+        engine.stop { playing in call.resolve(["playing": playing]) }
     }
 
     @objc func setVolume(_ call: CAPPluginCall) {

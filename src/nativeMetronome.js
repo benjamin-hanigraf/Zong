@@ -39,10 +39,10 @@ function listen(event, handler) {
 
 export const nativeMetronome = {
   /** { bpm, beatsPerBar, accents, subdivision } */
-  start(settings) { return Plugin?.start(settings); },
+  start(settings) { return Plugin?.start(settings); },   // resolves { playing }
   /** Applies new settings while playing (restarts the bar only if something changed). */
   update(settings) { return Plugin?.update(settings); },
-  stop() { return Plugin?.stop(); },
+  stop() { return Plugin?.stop(); },                       // resolves { playing }
   setVolume({ volume }) { return Plugin?.setVolume({ volume }); },
   async getState() { return (await Plugin?.getState())?.playing ?? false; },
   /** handler({ beatIndex }) */
