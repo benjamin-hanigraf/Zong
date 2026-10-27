@@ -1,28 +1,27 @@
-import Accelerate
 import AVFoundation
 
 // ============================================================
 // NativeMetronomeEngine
 //
-// Design:
-//   • One AVAudioEngine + one AVAudioPlayerNode (the "click node").
-//   • One bar of audio (clicks at their exact sample positions, including
-//     subdivisions) is pre-rendered into a buffer and looped by the player
-//     node, so timing is sample-accurate and never depends on timers.
-//   • Beat flashes are derived from the audio clock itself (a lightweight
-//     ticker reads the player's sample position), so they can never drift
-//     away from the sound.
-//   • ALL mutable state is touched on one serial queue (`q`). Public methods
-//     can be called from any thread; blocking work (activating the audio
-//     session) never runs on the main thread.
-//   • The native side is the source of truth for "playing": every change
-//     (start, stop, audio interruption, lock-screen button) is published via
-//     `onState`, and JS mirrors it. Nothing can stop the sound without the UI
-//     finding out.
-//   • The lock-screen Live Activity (MetronomeLiveActivity.swift) mirrors the state and
-//     its +/−/play buttons call handle(_:).
-//   • The engine recovers by itself from audio route / configuration changes
-//     and category changes made by the web view.
+// This is the same mechanism as the PWA's Web Audio metronome, on AVAudioEngine:
+//
+//   • Clicks are NOT pre-rendered into a looping bar. A small scheduler runs every
+//     few milliseconds and schedules each upcoming click (a short sample buffer) at
+//     its exact sample time, ~120 ms ahead of the audio clock ("look-ahead").
+//   • The time of the next click is always "previous click + one beat at the CURRENT
+//     tempo", so a tempo / accent / time-signature change simply takes effect on the
+//     next click. Nothing is restarted, so changing tempo never causes a stray click.
+//   • Start: the first click is scheduled to play immediately and the player is started;
+//     Stop: the player is stopped, which discards everything still queued.
+//   • Beat flashes are fired from the same audio clock, so they match the sound.
+//
+// Threading: ALL mutable state lives on one serial queue (`q`). Public methods can be
+// called from any thread. Blocking work (activating the audio session) never runs on the
+// main thread. The engine is the source of truth for "playing": every change (start,
+// stop, interruption, lock-screen button) is published via `onState` and JS mirrors it.
+// The lock-screen Live Activity (MetronomeLiveActivity.swift) mirrors the state and its
+// +/−/play buttons call handle(_:). The engine recovers by itself from audio route /
+// configuration changes and category changes made by the web view.
 // ============================================================
 
 final class NativeMetronomeEngine {
@@ -41,23 +40,28 @@ final class NativeMetronomeEngine {
     private var beatsPerBar: Int = 4
     private var subdivision: Int = 1
     private var accents: [String] = []   // "normal" | "accent" | "mute"
-    private var title = "Metronome"     // shown on the lock-screen Live Activity
+    private var title = "Metronome"      // shown on the lock-screen Live Activity
     private var volume: Float = 1.0
     private var isPlaying = false
     private var resumeAfterInterruption = false
-    private var sessionActive = false   // avoids re-activating the audio session on every start
+    private var sessionActive = false    // avoids re-activating the audio session on every start
 
     // MARK: - Audio objects
     private let engine  = AVAudioEngine()
     private let clkNode = AVAudioPlayerNode()
     private let mixNode = AVAudioMixerNode()   // volume control
-    private var hiBuffer:  AVAudioPCMBuffer?   // m_hi.wav  (accent)
-    private var lowBuffer: AVAudioPCMBuffer?   // m_low.wav (normal)
-    private var connectedFormat: AVAudioFormat?
-    private var cachedBar: AVAudioPCMBuffer?
-    private var cachedKey = ""
-    private var ticker: DispatchSourceTimer?
-    private var lastBeat = -1
+    private var format: AVAudioFormat?          // canonical click format (stereo float)
+    private var accentClick: AVAudioPCMBuffer?  // m_hi.wav
+    private var normalClick: AVAudioPCMBuffer?  // m_low.wav
+    private var subClick: AVAudioPCMBuffer?     // m_low.wav, quieter (subdivisions)
+
+    // MARK: - Scheduler state
+    private let lookahead = 0.12                // seconds scheduled ahead of the audio clock
+    private var scheduler: DispatchSourceTimer?
+    private var nextFrame: Double = 0           // player-timeline frame of the next click
+    private var nextBeat = 0
+    private var nextSub = 0
+    private var upcomingBeats: [(frame: Int64, beat: Int)] = []   // scheduled, not yet flashed
 
     // MARK: - Init
     init() {
@@ -65,34 +69,36 @@ final class NativeMetronomeEngine {
             activateSession()
             loadSamples()
             setupEngine()
-            prepareBar()
             observeSystemEvents()
         }
     }
 
     // MARK: - Public API (thread-safe)
 
-    /// Starts playing. If already playing with identical settings this is a no-op
-    /// (prevents a double click when JS and the lock screen both ask to play).
     /// `completion` receives the resulting playing state once the command has been applied.
     func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, title: String?, completion: @escaping (Bool) -> Void) {
         q.async { [self] in
             setTitle(title)
-            let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
-            if !isPlaying || changed { startPlayback() }
+            apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
+            if !isPlaying { startPlayback() }
             completion(isPlaying)
         }
     }
 
-    /// Updates settings; restarts the bar only if something actually changed and we are playing.
+    /// Updates settings on the fly; they apply from the next click (nothing restarts).
     func update(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int, title: String?) {
         q.async { [self] in
             setTitle(title)
-            let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
-            if isPlaying && changed { startPlayback() } else {
-                if changed { prepareBar() }
-                syncLiveActivity()
-            }
+            apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
+            syncLiveActivity()
+        }
+    }
+
+    func stop(completion: @escaping (Bool) -> Void) {
+        q.async { [self] in
+            resumeAfterInterruption = false
+            halt()
+            completion(isPlaying)
         }
     }
 
@@ -110,11 +116,34 @@ final class NativeMetronomeEngine {
         }
     }
 
+    func setVolume(_ v: Float) {
+        q.async { [self] in
+            volume = max(0, min(1, v))
+            mixNode.outputVolume = volume
+        }
+    }
+
+    func queryState(_ completion: @escaping (Bool, Int) -> Void) {
+        q.async { [self] in completion(isPlaying, Int(bpm.rounded())) }
+    }
+
+    // MARK: - Settings
+    private func apply(bpm newBpm: Double, beatsPerBar newBeats: Int, accents newAccents: [String]?, subdivision newSub: Int) {
+        bpm = max(30, min(300, newBpm))
+        beatsPerBar = max(1, newBeats)
+        subdivision = max(1, min(4, newSub))
+        var arr = newAccents ?? []
+        while arr.count < beatsPerBar { arr.append("normal") }
+        accents = Array(arr.prefix(beatsPerBar))
+        if nextBeat >= beatsPerBar { nextBeat = 0; nextSub = 0 }
+        if nextSub >= subdivision { nextSub = 0 }
+    }
+
     private func adjustTempo(by delta: Double) {
         let next = max(30, min(300, bpm + delta))
         guard next != bpm else { return }
-        bpm = next
-        if isPlaying { startPlayback() } else { prepareBar(); syncLiveActivity() }
+        bpm = next   // takes effect on the next scheduled click; no restart
+        syncLiveActivity()
         let tempo = Int(next.rounded())
         DispatchQueue.main.async { [weak self] in self?.onTempo?(tempo) }
     }
@@ -131,43 +160,6 @@ final class NativeMetronomeEngine {
         if #available(iOS 16.2, *) {
             MetronomeLiveActivity.shared.sync(title: t, bpm: b, playing: p)
         }
-    }
-
-    func stop(completion: @escaping (Bool) -> Void) {
-        q.async { [self] in
-            resumeAfterInterruption = false
-            halt()
-            completion(isPlaying)
-        }
-    }
-
-    func setVolume(_ v: Float) {
-        q.async { [self] in
-            volume = max(0, min(1, v))
-            mixNode.outputVolume = volume
-        }
-    }
-
-    func queryState(_ completion: @escaping (Bool, Int) -> Void) {
-        q.async { [self] in completion(isPlaying, Int(bpm.rounded())) }
-    }
-
-    // MARK: - Settings
-    /// Returns true when any setting differs from the current one.
-    private func apply(bpm newBpm: Double, beatsPerBar newBeats: Int, accents newAccents: [String]?, subdivision newSub: Int) -> Bool {
-        let b   = max(30, min(300, newBpm))
-        let n   = max(1, newBeats)
-        let s   = max(1, min(4, newSub))
-        let acc = normalizedAccents(newAccents, beats: n)
-        let changed = b != bpm || n != beatsPerBar || s != subdivision || acc != accents
-        bpm = b; beatsPerBar = n; subdivision = s; accents = acc
-        return changed
-    }
-
-    private func normalizedAccents(_ incoming: [String]?, beats: Int) -> [String] {
-        var arr = incoming ?? []
-        while arr.count < beats { arr.append("normal") }
-        return Array(arr.prefix(beats))
     }
 
     // MARK: - Audio session
@@ -192,12 +184,9 @@ final class NativeMetronomeEngine {
     private func setupEngine() {
         engine.attach(clkNode)
         engine.attach(mixNode)
-        // clkNode → mixNode → mainMixerNode → outputNode.
-        // Connect the player with the format of the click buffers right away, so the
-        // first Play never has to re-wire a running engine (that caused a long delay).
-        let fmt = barFormat()
-        engine.connect(clkNode, to: mixNode, format: fmt)
-        connectedFormat = fmt
+        // clkNode → mixNode → mainMixerNode → outputNode, connected with the click format up
+        // front so the first Play never has to re-wire a running engine.
+        engine.connect(clkNode, to: mixNode, format: format)
         engine.connect(mixNode, to: engine.mainMixerNode, format: nil)
         mixNode.outputVolume = volume
         startEngineIfNeeded()
@@ -216,12 +205,21 @@ final class NativeMetronomeEngine {
         }
     }
 
-    // MARK: - Samples
+    // MARK: - Click samples
     private func loadSamples() {
         // Capacitor copies the web assets into the bundle under public/audio/
-        hiBuffer  = loadWav(named: "m_hi",  inSubdir: "public/audio")
-        lowBuffer = loadWav(named: "m_low", inSubdir: "public/audio")
-        print("[NativeMetronome] samples loaded: hi=\(hiBuffer != nil) low=\(lowBuffer != nil)")
+        let hi  = loadWav(named: "m_hi",  inSubdir: "public/audio")
+        let low = loadWav(named: "m_low", inSubdir: "public/audio")
+
+        var rate = hi?.format.sampleRate ?? low?.format.sampleRate ?? 0
+        if rate <= 0 { rate = 44100 }
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return }
+        format = fmt
+
+        accentClick = (hi.flatMap  { canonical($0, to: fmt, gain: 1.0) })  ?? synthClick(fmt, accent: true,  gain: 1.0)
+        normalClick = (low.flatMap { canonical($0, to: fmt, gain: 0.85) }) ?? synthClick(fmt, accent: false, gain: 0.85)
+        subClick    = (low.flatMap { canonical($0, to: fmt, gain: 0.7) })  ?? synthClick(fmt, accent: false, gain: 0.7)
+        print("[NativeMetronome] samples: hi=\(hi != nil) low=\(low != nil) rate=\(rate)")
     }
 
     private func loadWav(named name: String, inSubdir subdir: String) -> AVAudioPCMBuffer? {
@@ -231,9 +229,8 @@ final class NativeMetronomeEngine {
         }
         do {
             let file   = try AVAudioFile(forReading: url)
-            let format = file.processingFormat
             let count  = AVAudioFrameCount(file.length)
-            guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count) else { return nil }
+            guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: count) else { return nil }
             try file.read(into: buf)
             return buf
         } catch {
@@ -242,177 +239,158 @@ final class NativeMetronomeEngine {
         }
     }
 
-    // MARK: - Bar buffer
-    /// Renders one bar (all beats and subdivisions) into a single stereo buffer.
-    /// Frame positions use the buffer's own sample rate, so tempo is exact.
-    private func barFormat() -> AVAudioFormat? {
-        var rate = hiBuffer?.format.sampleRate ?? lowBuffer?.format.sampleRate ?? 0
-        if rate <= 0 {
-            let out = engine.outputNode.outputFormat(forBus: 0).sampleRate
-            rate = out > 0 ? out : 44100
+    /// Converts a loaded WAV (any channel count / rate) to the canonical stereo format and scales it.
+    private func canonical(_ src: AVAudioPCMBuffer, to fmt: AVAudioFormat, gain: Float) -> AVAudioPCMBuffer? {
+        var out: AVAudioPCMBuffer?
+        if src.format == fmt {
+            out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: src.frameLength)
+            if let out = out, let s = src.floatChannelData, let d = out.floatChannelData {
+                for ch in 0..<Int(fmt.channelCount) { memcpy(d[ch], s[ch], Int(src.frameLength) * MemoryLayout<Float>.size) }
+                out.frameLength = src.frameLength
+            }
+        } else if let converter = AVAudioConverter(from: src.format, to: fmt) {
+            let ratio = fmt.sampleRate / src.format.sampleRate
+            let capacity = AVAudioFrameCount(Double(src.frameLength) * ratio) + 64
+            out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: capacity)
+            var fed = false
+            var error: NSError?
+            if let out = out {
+                converter.convert(to: out, error: &error) { _, status in
+                    if fed { status.pointee = .noDataNow; return nil }
+                    fed = true
+                    status.pointee = .haveData
+                    return src
+                }
+            }
+            if let error = error { print("[NativeMetronome] sample conversion error: \(error)"); return nil }
         }
-        return AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)
-    }
-
-    /// The last rendered bar is kept, so pressing Play with unchanged settings does no
-    /// audio rendering at all — it just schedules the ready buffer.
-    private func currentBar() -> AVAudioPCMBuffer? {
-        let key = "\(bpm)|\(beatsPerBar)|\(subdivision)|\(accents.joined(separator: ","))"
-        if let cached = cachedBar, cachedKey == key { return cached }
-        guard let bar = buildBarBuffer() else { return nil }
-        cachedBar = bar
-        cachedKey = key
-        return bar
-    }
-
-    /// Renders the bar for the current settings ahead of time (while stopped).
-    private func prepareBar() { _ = currentBar() }
-
-    private func buildBarBuffer() -> AVAudioPCMBuffer? {
-        guard let fmt = barFormat() else { return nil }
-        let rate = fmt.sampleRate
-
-        let beatFrames = 60.0 / bpm * rate
-        let barFrames  = AVAudioFrameCount((beatFrames * Double(beatsPerBar)).rounded())
-        guard barFrames > 0,
-              let bar = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: barFrames),
-              let dst = bar.floatChannelData else {
-            print("[NativeMetronome] could not allocate bar buffer (bpm \(bpm), beats \(beatsPerBar))")
-            return nil
-        }
-        bar.frameLength = barFrames
+        guard let result = out, let d = result.floatChannelData else { return nil }
+        let n = Int(result.frameLength)
         for ch in 0..<Int(fmt.channelCount) {
-            memset(dst[ch], 0, Int(barFrames) * MemoryLayout<Float>.size)
+            for i in 0..<n { d[ch][i] *= gain }
         }
-
-        let subs = max(1, subdivision)
-        for beat in 0..<beatsPerBar {
-            let state = beat < accents.count ? accents[beat] : "normal"
-            if state == "mute" { continue }
-            for k in 0..<subs {
-                let isAccent = (k == 0 && state == "accent")
-                let gain: Float = isAccent ? 1.0 : (k == 0 ? 0.85 : 0.7)
-                let offset = Int((Double(beat) * beatFrames + Double(k) * beatFrames / Double(subs)).rounded())
-                mixClick(isAccent ? hiBuffer : lowBuffer, into: bar, at: offset, gain: gain, isAccent: isAccent, rate: rate)
-            }
-        }
-        return bar
+        return result
     }
 
-    private func mixClick(_ src: AVAudioPCMBuffer?, into bar: AVAudioPCMBuffer, at offset: Int, gain: Float, isAccent: Bool, rate: Double) {
-        let total = Int(bar.frameLength)
-        guard offset >= 0, offset < total, let dst = bar.floatChannelData else { return }
-        let channels = Int(bar.format.channelCount)
-        if let src = src, let srcData = src.floatChannelData, src.format.channelCount > 0 {
-            let count = min(Int(src.frameLength), total - offset)
-            guard count > 0 else { return }
-            let srcChannels = Int(src.format.channelCount)
-            for ch in 0..<channels {
-                vDSP_vsma(
-                    srcData[min(ch, srcChannels - 1)], 1,
-                    [gain],
-                    dst[ch] + offset, 1,
-                    dst[ch] + offset, 1,
-                    vDSP_Length(count)
-                )
-            }
-        } else {
-            synthesizeClick(into: bar, at: offset, isAccent: isAccent, sampleRate: rate)
+    /// Short sine blip, used only if the WAV files can't be loaded.
+    private func synthClick(_ fmt: AVAudioFormat, accent: Bool, gain: Float) -> AVAudioPCMBuffer? {
+        let rate = fmt.sampleRate
+        let frames = AVAudioFrameCount(0.05 * rate)
+        guard frames > 0, let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames), let d = buf.floatChannelData else { return nil }
+        buf.frameLength = frames
+        let freq: Double = accent ? 1500 : 1000
+        let amp: Float   = (accent ? 0.7 : 0.4) * gain
+        for i in 0..<Int(frames) {
+            let env = Float(1.0 - Double(i) / Double(frames))
+            let sample = amp * env * Float(sin(2 * .pi * freq * Double(i) / rate))
+            for ch in 0..<Int(fmt.channelCount) { d[ch][i] = sample }
         }
-    }
-
-    /// Synthetic sine-click fallback (used if the WAV files fail to load).
-    private func synthesizeClick(into buf: AVAudioPCMBuffer, at offset: Int, isAccent: Bool, sampleRate: Double) {
-        let freq: Double = isAccent ? 1500 : 1000
-        let amp: Float   = isAccent ? 0.7 : 0.4
-        let dur          = Int(0.05 * sampleRate)
-        let end          = min(offset + dur, Int(buf.frameLength))
-        guard dur > 0, offset < end, let ch = buf.floatChannelData else { return }
-        for i in offset..<end {
-            let t = Double(i - offset) / sampleRate
-            let env = Float(1.0 - Double(i - offset) / Double(dur))
-            let sample = amp * env * Float(sin(2 * .pi * freq * t))
-            for c in 0..<Int(buf.format.channelCount) {
-                ch[c][i] += sample
-            }
-        }
+        return buf
     }
 
     // MARK: - Playback
     private func startPlayback() {
-        stopTicker()
+        stopScheduler()
         activateSession()   // no-op when already active; never runs on the main thread
 
-        guard let buf = currentBar() else {
+        guard format != nil, accentClick != nil, normalClick != nil, startEngineIfNeeded() else {
             isPlaying = false
             publishState()
             return
         }
 
-        // Only a restart (tempo change while playing) needs the node cleared.
+        // Restarts (interruption recovery) need the node cleared.
         if isPlaying {
             clkNode.stop()
             clkNode.reset()
         }
 
-        // The player must be connected with the format of the buffer it plays.
-        if connectedFormat != buf.format {
-            engine.disconnectNodeOutput(clkNode)
-            engine.connect(clkNode, to: mixNode, format: buf.format)
-            connectedFormat = buf.format
-        }
-        guard startEngineIfNeeded() else {
-            isPlaying = false
-            publishState()
-            return
-        }
+        nextFrame = 0
+        nextBeat = 0
+        nextSub = 0
+        upcomingBeats.removeAll()
 
-        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionHandler: nil)
+        // First click plays the instant the player starts; the scheduler takes over right after.
+        scheduleNextClick(immediate: true)
         clkNode.play()
-
         isPlaying = true
-        startTicker(barFrames: Int(buf.frameLength), beats: beatsPerBar)
+        startScheduler()
         publishState()
-        print("[NativeMetronome] playing: bpm=\(bpm) beats=\(beatsPerBar) sub=\(subdivision) hi=\(hiBuffer != nil) low=\(lowBuffer != nil) rate=\(buf.format.sampleRate)")
+        print("[NativeMetronome] playing: bpm=\(bpm) beats=\(beatsPerBar) sub=\(subdivision)")
     }
 
-    /// Stops sound and notifies JS.
+    /// Stops sound (discarding everything still queued) and notifies JS.
     private func halt() {
         let wasPlaying = isPlaying
         isPlaying = false
-        stopTicker()
+        stopScheduler()
         clkNode.stop()
         clkNode.reset()
+        upcomingBeats.removeAll()
         if wasPlaying { publishState() }
     }
 
-    // MARK: - Beat ticker (driven by the audio clock)
-    private func startTicker(barFrames: Int, beats: Int) {
-        stopTicker()
-        lastBeat = -1
-        guard barFrames > 0, beats > 0 else { return }
-        let beatFrames = Double(barFrames) / Double(beats)
+    // MARK: - Look-ahead scheduler (same idea as the PWA's scheduler())
+    private func startScheduler() {
+        stopScheduler()
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: q)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in
-            guard let self = self, self.isPlaying,
-                  let nodeTime = self.clkNode.lastRenderTime,
-                  let playerTime = self.clkNode.playerTime(forNodeTime: nodeTime) else { return }
-            let sample = Int(playerTime.sampleTime)
-            guard sample >= 0 else { return }
-            let beat = min(beats - 1, Int(Double(sample % barFrames) / beatFrames))
-            if beat != self.lastBeat {
-                self.lastBeat = beat
-                self.onBeat?(beat)
-            }
-        }
-        ticker = timer
+        timer.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self] in self?.tick() }
+        scheduler = timer
         timer.resume()
     }
 
-    private func stopTicker() {
-        ticker?.cancel()
-        ticker = nil
+    private func stopScheduler() {
+        scheduler?.cancel()
+        scheduler = nil
+    }
+
+    private func tick() {
+        guard isPlaying, let fmt = format else { return }
+        let now = currentFrame()
+        let horizon = Double(now) + lookahead * fmt.sampleRate
+        while nextFrame < horizon {
+            scheduleNextClick(immediate: false)
+        }
+        while let first = upcomingBeats.first, first.frame <= now {
+            upcomingBeats.removeFirst()
+            onBeat?(first.beat)
+        }
+    }
+
+    /// Position of the audio clock on the player's timeline.
+    private func currentFrame() -> Int64 {
+        if let nodeTime = clkNode.lastRenderTime, let playerTime = clkNode.playerTime(forNodeTime: nodeTime) {
+            return max(0, playerTime.sampleTime)
+        }
+        return 0
+    }
+
+    /// Schedules the click at `nextFrame`, then advances to the following one using the
+    /// CURRENT tempo / subdivision (so changes apply from the next click, like the PWA).
+    private func scheduleNextClick(immediate: Bool) {
+        guard let fmt = format else { return }
+        let beat = nextBeat
+        let state = beat < accents.count ? accents[beat] : "normal"
+        let frame = Int64(nextFrame.rounded())
+
+        if state != "mute" {
+            let buffer: AVAudioPCMBuffer?
+            if nextSub == 0 { buffer = (state == "accent") ? accentClick : normalClick } else { buffer = subClick }
+            if let buffer = buffer {
+                let when: AVAudioTime? = immediate ? nil : AVAudioTime(sampleTime: frame, atRate: fmt.sampleRate)
+                clkNode.scheduleBuffer(buffer, at: when, options: [], completionHandler: nil)
+            }
+            if nextSub == 0 { upcomingBeats.append((frame: frame, beat: beat)) }
+        }
+
+        let subFrames = (60.0 / bpm) * fmt.sampleRate / Double(subdivision)
+        nextFrame += subFrames
+        nextSub += 1
+        if nextSub >= subdivision {
+            nextSub = 0
+            nextBeat = (nextBeat + 1) % beatsPerBar
+        }
     }
 
     private func publishState() {
@@ -444,7 +422,6 @@ final class NativeMetronomeEngine {
             self?.q.async {
                 guard let self = self, self.isPlaying else { return }
                 print("[NativeMetronome] media services reset — restarting")
-                self.connectedFormat = nil
                 self.activateSession(force: true)
                 self.startPlayback()
             }
