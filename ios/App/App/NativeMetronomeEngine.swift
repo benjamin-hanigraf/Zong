@@ -461,15 +461,17 @@ final class NativeMetronomeEngine {
     }
 
     private func handleRouteChange(_ note: Notification) {
-        guard isPlaying else { return }
         let reasonVal = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
         let reason = AVAudioSession.RouteChangeReason(rawValue: reasonVal)
-        // The web view (piano / web audio) can switch the shared session to another
-        // category; that would mute the click on the silent switch. Put it back.
+        // The web view plays the piano with Web Audio, and WebKit puts the shared session into
+        // an "ambient" category for it. Ambient audio is silenced by the phone's silent switch,
+        // so the piano went mute while the metronome (our .playback session) still played.
+        // Whenever anything changes the category away from .playback — playing or not — put it back.
         if reason == .categoryChange && AVAudioSession.sharedInstance().category != .playback {
+            print("[NativeMetronome] audio category changed to \(AVAudioSession.sharedInstance().category.rawValue) — restoring playback")
             activateSession(force: true)
         }
-        if !engine.isRunning {
+        if isPlaying && !engine.isRunning {
             startPlayback()
         }
     }

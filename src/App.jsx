@@ -3035,6 +3035,9 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
         if (hyphenateOverlaps && !editable) tokens = insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags);
+        // A line without any note/tag has nothing to put above its text, so it must not
+        // reserve the empty "tag row" (that made plain lines look double-spaced).
+        const rowPad = (editable || tokens.some((t) => t.tag)) ? topPad : 0;
 
         // Merge Tamil vowel-sign/pulli combining marks into the preceding
         // base consonant so each syllable shapes as one connected grapheme
@@ -3099,7 +3102,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
               key={ti}
               onClick={editable ? () => openEditor(li, ti, tok.tag) : undefined}
               style={{
-                position: "relative", display: "inline-block", paddingTop: topPad,
+                position: "relative", display: "inline-block", paddingTop: rowPad,
                 cursor: editable ? "pointer" : "default", width: tok.ch && (tok.ch.length > 1 || TAMIL_RANGE_RE.test(tok.ch)) ? undefined : "1ch",
                 lineHeight: `${lineHeightMult}em`,
               }}
@@ -3183,7 +3186,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
                         margin: "0 0.35em",
                         textAlign: "center",
                         lineHeight: 1,
-                        paddingTop: topPad,
+                        paddingTop: rowPad,
                         position: "relative"
                       }}
                     >
