@@ -1,9 +1,8 @@
-import AVFoundation
 import Capacitor
 
 // ============================================================
 // NativeMetronomePlugin — local Capacitor plugin (Capacitor 7/8)
-// Registered automatically because it is compiled into the App target.
+// Registered explicitly in ZongBridgeViewController.capacitorDidLoad (SceneDelegate.swift).
 // ============================================================
 
 @objc(NativeMetronomePlugin)
@@ -14,7 +13,6 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start",    returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop",     returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "update",   returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setVolume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
         // Piano / pad chord voices (rendered natively so they ignore the silent switch)
         CAPPluginMethod(name: "pianoNoteOn",  returnType: CAPPluginReturnPromise),
@@ -65,12 +63,6 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func stop(_ call: CAPPluginCall) {
         engine.stop { playing in call.resolve(["playing": playing]) }
-    }
-
-    @objc func setVolume(_ call: CAPPluginCall) {
-        let volume = call.getDouble("volume") ?? 1.0
-        engine.setVolume(Float(volume))
-        call.resolve()
     }
 
     @objc func getState(_ call: CAPPluginCall) {

@@ -24,8 +24,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL      = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_URL) || (typeof process !== "undefined" && process.env?.VITE_SUPABASE_URL);
-const SUPABASE_ANON_KEY = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SUPABASE_ANON_KEY) || (typeof process !== "undefined" && process.env?.VITE_SUPABASE_ANON_KEY);
+const SUPABASE_URL      = import.meta.env?.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env?.VITE_SUPABASE_ANON_KEY;
 
 let _client = null;
 function client() {
@@ -174,22 +174,31 @@ function songToRow(song) {
 //  Songs
 // ---------------------------------------------------------------------------
 
+// PostgREST returns at most 1000 rows per request, so every read pages through the table
+// (stable order by primary key). A truncated read would otherwise look like "rows deleted".
+const PAGE_SIZE = 1000;
+async function selectAll(table, columns, orderBy, sinceIso) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let q = client().from(table).select(columns).order(orderBy).range(from, from + PAGE_SIZE - 1);
+    if (sinceIso) q = q.gte("updated_at", sinceIso);
+    const { data, error } = await q;
+    if (error) throw new Error(`${table} read failed: ${error.message}`);
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
+}
+
 async function pullSongs(cursorIso) {
-  let q = client().from("zong_songs").select(SONG_COLUMNS);
-  const since = cursorToFilter(cursorIso);
-  if (since) q = q.gte("updated_at", since);
-  const { data, error } = await q;
-  if (error) throw new Error(`Songs pull failed: ${error.message}`);
-  const rows = data || [];
+  const rows = await selectAll("zong_songs", SONG_COLUMNS, "id", cursorToFilter(cursorIso));
   return { songs: rows.map(rowToSong), cursor: maxIso(rows, cursorIso) };
 }
 
 // Hard deletes leave no trace to pull, so each sync lists the ids that still exist
 // (primary keys only — tiny) to learn which rows other devices removed.
 async function listIds(table, column) {
-  const { data, error } = await client().from(table).select(column);
-  if (error) throw new Error(`${table} id list failed: ${error.message}`);
-  return (data || []).map((r) => r[column]);
+  const rows = await selectAll(table, column, column);
+  return rows.map((r) => r[column]);
 }
 
 async function pushSongs(songs) {
@@ -222,12 +231,7 @@ async function pushSongs(songs) {
 // ---------------------------------------------------------------------------
 
 async function pullSpelling(cursorIso) {
-  let q = client().from("zong_spelling_chart").select("tamil, latin, updated_at");
-  const since = cursorToFilter(cursorIso);
-  if (since) q = q.gte("updated_at", since);
-  const { data, error } = await q;
-  if (error) throw new Error(`Spelling pull failed: ${error.message}`);
-  const rows = data || [];
+  const rows = await selectAll("zong_spelling_chart", "tamil, latin, updated_at", "tamil", cursorToFilter(cursorIso));
   const upserts = {};
   rows.forEach((r) => { upserts[r.tamil] = r.latin; });
   return { upserts, cursor: maxIso(rows, cursorIso) };
@@ -315,7 +319,8 @@ async function mutateTeam({ teamKey, deviceId, mutate }) {
 
 // Strip device-local overrides that were never explicitly saved to the team.
 function toRemoteSetlist(sl) {
-  const { shared, ...rest } = sl;
+  const rest = { ...sl };
+  delete rest.shared;   // "shared" is a local-only flag
   return {
     ...rest,
     entries: (sl.entries || []).map((e) => ({
@@ -409,10 +414,18 @@ export async function syncLibrary({ teamKey, deviceId, songs, spellingChart, sha
   const remoteSongIds = new Set(songIds);
   const remoteSpellKeys = new Set(spellKeys);
   const dirtySongIds = new Set(dirtySongs.ids());
-  const deletedSongIds = isFirstSongSync ? [] :
+  // Safety: an EMPTY remote table while this device still holds data means the server was
+  // wiped or misconfigured, not that every song was deleted. Never delete local data then —
+  // restore the server from this device instead.
+  const remoteLooksWiped = !isFirstSongSync && remoteSongIds.size === 0 && (songs || []).length > 0;
+  const deletedSongIds = (isFirstSongSync || remoteLooksWiped) ? [] :
     (songs || []).filter((s) => !remoteSongIds.has(s.id) && !dirtySongIds.has(s.id)).map((s) => s.id);
+  if (remoteLooksWiped) {
+    const { error } = await client().from("zong_songs").upsert(songs.map(songToRow), { onConflict: "id" });
+    if (error) throw new Error(`Song restore failed: ${error.message}`);
+  }
   const knownSpelling = readKnownSpelling();
-  const deletedSpelling_ = [...knownSpelling].filter((k) => !remoteSpellKeys.has(k));
+  const deletedSpelling_ = remoteSpellKeys.size === 0 ? [] : [...knownSpelling].filter((k) => !remoteSpellKeys.has(k));
   writeKnownSpelling(remoteSpellKeys);
 
   // First sync on this device: upload any local-only songs/spellings the server has never seen.

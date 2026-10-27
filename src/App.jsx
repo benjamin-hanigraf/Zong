@@ -2,8 +2,8 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useSyncExter
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
-  ListMusic, Layers, Minus, MoreVertical, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Upload, Download, ClipboardPaste, Copy, Save, RefreshCw, AlertTriangle,
+  ListMusic, Layers, Minus, AlignLeft, AlignCenter, AlignRight, Check, X,
+  Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import {
   syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow,
@@ -66,29 +66,29 @@ async function idbSet(key, value) {
 }
 function useIndexedDbState(key, seed) {
   const [value, setValue] = useState(seed);
+  const loadedRef = useRef(false);
+  const queuedRef = useRef([]);   // updates requested before the stored value was read
   useEffect(() => {
     let cancelled = false;
-    idbGet(key).then((stored) => {
+    // If storage never answers (blocked / private mode), carry on in memory rather than hang.
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(undefined), 4000));
+    Promise.race([idbGet(key).catch(() => undefined), timeout]).then((stored) => {
       if (cancelled) return;
-      if (stored !== undefined) {
-        if (key === "songs" && Array.isArray(stored) && !stored.some((s) => s.id === "seed-4")) {
-          const tamilSeed = Array.isArray(seed) ? seed.find((s) => s.id === "seed-4") : null;
-          if (tamilSeed) {
-            const updated = [...stored, tamilSeed];
-            setValue(updated);
-            idbSet(key, updated).catch(() => { });
-            return;
-          }
-        }
-        setValue(stored);
-      } else {
-        idbSet(key, seed).catch(() => { });
-      }
-    }).catch(() => { });
+      let base = stored !== undefined ? stored : seed;
+      loadedRef.current = true;
+      // Apply anything requested while loading ON TOP of the stored data, so an early
+      // update (e.g. a sync result) can never overwrite what was saved on this device.
+      const queued = queuedRef.current;
+      queuedRef.current = [];
+      queued.forEach((next) => { base = typeof next === "function" ? next(base) : next; });
+      setValue(base);
+      if (stored === undefined || queued.length) idbSet(key, base).catch(() => { });
+    });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   const persist = useCallback((next) => {
+    if (!loadedRef.current) { queuedRef.current.push(next); return; }
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
       idbSet(key, resolved).catch(() => { });
@@ -207,7 +207,6 @@ const PAN_OPTIONS = [
 ];
 const DEFAULT_CLICK_SETTINGS = { clickTone: "classic", pan: "center" };
 
-const DEFAULT_PIANO_SETTINGS = { pianoTone: "grand" };
 const LANGUAGES = [
   { id: "English", label: "English" },
   { id: "Tamil", label: "தமிழ்" },
@@ -238,13 +237,6 @@ function transposeKey(key, semitoneDelta) {
 // Transposes one chord symbol, e.g. "C#m7/G#" -> shift by +2 -> "D#m7/A#".
 // Only the root letters move; everything else (quality suffix) is kept as-is.
 const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
-// Comprehensive regex that recognises ALL standard chord symbol forms:
-//   • Root: optional leading 'b' (flat prefix like bA, bE), then A-G, optional # or b
-//   • Quality: m, min, minor, M, Maj, maj, major, dim, °, aug, +, sus, add, dom, 7, 9, 11, 13,
-//     any combination thereof (e.g. Ebm7, Bbmaj7, C#dim, F#aug, Gsus4, Cadd9)
-//   • Slash chord: / followed by same root pattern
-// Used in parseChordsOnlyLine to classify bare words as chords vs plain text.
-const CHORD_SUFFIX_RE = /^(m(?:in(?:or)?)?|M(?:aj(?:or)?)?|maj(?:or)?|dim|°|aug|\+|sus|add|dom)?(?:[0-9]+)?(?:(?:m(?:in)?|M(?:aj)?|dim|aug|sus|add)?[0-9]*)?(?:\/(?:b?[A-G][#b]?))?$/;
 function isChordSymbol(word) {
   // Allow optional leading 'b' for flat-prefix notation (bA = Ab, bE = Eb)
   let s = String(word || "").trim();
@@ -269,18 +261,6 @@ function isChordSymbol(word) {
   if (plainLetters.length >= 4 && !QUALITY_KEYWORDS.test(suffix)) return false;
   return true;
 };
-function transposeChordSymbol(symbol, semitoneDelta, useFlats) {
-  if (!symbol) return symbol;
-  const transposeOne = (part) => {
-    const m = part.match(CHORD_ROOT_RE);
-    if (!m) return part;
-    const root = m[1] + m[2];
-    const rest = part.slice(m[0].length);
-    const semitone = (KEY_TO_SEMITONE[root] ?? 0) + semitoneDelta;
-    return spellNote(semitone, useFlats) + rest;
-  };
-  return symbol.split("/").map(transposeOne).join("/");
-}
 function flatify(str) {
   let s = String(str ?? "");
   // A flat immediately followed by a sharp (or vice versa) on the same note
@@ -322,30 +302,6 @@ function decomposeKey(keyStr) {
   return { natural, accidental };
 }
 const composeKey = (natural, accidental) => natural ? natural + (accidental === "flat" ? "b" : accidental === "sharp" ? "#" : "") : "";
-const KEY_ENHARMONIC_FIX = { "E#": "F", "B#": "C", Cb: "B", Fb: "E" };
-function parseKeyPaste(raw) {
-  const m = String(raw || "").trim().match(/^([A-Ga-g])\s*([#b])?\s*(maj(?:or)?|min(?:or)?|m)?\.?$/i);
-  if (!m) return null;
-  let natural = m[1].toUpperCase();
-  let accChar = m[2] || "";
-  const combo = natural + accChar;
-  if (KEY_ENHARMONIC_FIX[combo]) { natural = KEY_ENHARMONIC_FIX[combo]; accChar = ""; }
-  const accidental = accChar === "#" ? "sharp" : accChar === "b" ? "flat" : "natural";
-  const qualityRaw = (m[3] || "").toLowerCase();
-  const quality = (qualityRaw === "m" || qualityRaw.startsWith("mi")) ? "Minor" : "Major";
-  return { natural, accidental, quality };
-}
-
-function dedupeTitle(candidateTitle, artist, existingSongs) {
-  let n = 0;
-  let title = candidateTitle;
-  const collides = (t) => existingSongs.some(
-    (s) => s.title.toLowerCase() === t.toLowerCase() && (s.artist || "").toLowerCase() === (artist || "").toLowerCase()
-  );
-  while (collides(title)) { n += 1; title = `${candidateTitle} (${n})`; }
-  return title;
-}
-
 /* =========================================================================
    Tanglish transliteration engine — offline Tamil-script → Latin-script
    conversion. Works at the tokenized [Tag]/character level (reusing the
@@ -394,13 +350,6 @@ const TANGLISH_CONSONANTS = {
   "\u0BB5": "v", "\u0BB4": "zh", "\u0BB3": "l", "\u0BB1": "r",
   "\u0BB7": "sh", "\u0BB8": "s", "\u0BB9": "h",
 };
-// Voiced counterparts for the five consonants that actually alternate.
-const TANGLISH_VOICED = {
-  "\u0B95": "g", "\u0B9A": "j", "\u0B9F": "d", "\u0BA4": "dh", "\u0BAA": "b",
-};
-// Nasal consonants — a voicing-capable consonant right after one of these
-// (in a nasal+stop cluster, e.g. ன்ப, ம்ப, ந்த, ங்க) voices reliably.
-const TANGLISH_NASALS = new Set(["\u0B99", "\u0B9E", "\u0BA3", "\u0BA8", "\u0BAE", "\u0BA9"]);
 const TANGLISH_VOWEL_SIGNS = {
   "\u0BBE": "aa", "\u0BBF": "i", "\u0BC0": "ee", "\u0BC1": "u", "\u0BC2": "oo",
   "\u0BC6": "e", "\u0BC7": "ae", "\u0BC8": "ai", "\u0BCA": "o", "\u0BCB": "o", "\u0BCC": "ou",
@@ -491,8 +440,8 @@ function transliterateTamilWordWithOffsets(word, prevWordEndedWithSach = false) 
         // --- PURE CONSONANT WITH PULLI (Mei Ezhuthu) ---
         if (isGeminate && (ch === SA || ch === THA)) {
           // ச்ச and த்த: suppress the leading pulli so the second twin consonant
-          // produces the full clean cluster (e.g. பச்சை -> pachai, பத்து -> pathu)
-          base = "";
+          // produces the full clean cluster (e.g. பச்சை -> pachai, பத்து -> pathu).
+          // `base` is already "" here.
         } else if (isGeminateRa) {
           base = "t"; // ற் in ற்ற carries a "t" sound -> "tri"
         } else if (isNgaCluster || isNjaCluster || isNraCluster) {
@@ -804,15 +753,6 @@ function parseTextIntoBlocks(text, stripTrailingBlanks = false) {
   }
   return blocks;
 }
-// Chords tab only accepts Nashville-number tokens as chord tags — any
-// bracketed content that isn't a valid number token is treated as plain
-// text. Swapped to fullwidth brackets so the tokenizer (which only looks
-// for ASCII "["/"]") renders it as literal characters instead of a tag.
-function sanitizeChordsOnlyNashville(text) {
-  return String(text || "").replace(/\[([^\]]*)\]/g, (m, inner) => (
-    isValidNashvilleToken(inner.trim()) ? m : `\uFF3B${inner}\uFF3D`
-  ));
-}
 // Splits a whitespace-delimited word into surrounding punctuation and the note
 // itself, so "(Bb", "1)", "'4/1'" or "-5" are still read as notes. Interior
 // characters (the slash in 4/1 or G/B) and accidentals/chord marks (# b + °)
@@ -887,10 +827,6 @@ function tokenizeTaggedLine(rawLine) {
   if (pendingTag !== null) tokens.push({ ch: null, tag: pendingTag });
   return tokens;
 }
-function transposeTaggedText(text, semitoneDelta, useFlats) {
-  return String(text || "").replace(/\[([^\]]*)\]/g, (_, sym) => `[${transposeChordSymbol(sym, semitoneDelta, useFlats)}]`);
-}
-
 /* =========================================================================
    Nashville Number System <-> Chord conversion, major AND minor aware.
    Chords are stored as NUMBER tokens (e.g. "6m", "b7", "4/1") — the same
@@ -1022,52 +958,6 @@ function numbersTaggedToChordsTagged(taggedText, key, quality) {
     precededByStandaloneX(whole, off) ? tok : `[${tokenToChord(tok, key, quality)}]`
   ));
 }
-
-/* =========================================================================
-   Seed data
-   ========================================================================= */
-const SEED_SONGS = [
-  {
-    id: "seed-1", title: "Oceans", artist: "Hillsong United", tempo: 72, timeSignature: "4/4", key: "D", keyQuality: "Major",
-    description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
-    accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    lyricsText: "-Verse\nYou call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes above the waves",
-    chordsText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
-    chartText: "-Verse\n[1]You call me [4]out upon the [5]waters\nThe [6]great unknown where [4]feet may [5]fail\n-Chorus\n[1]And I will [5]call upon Your [6]name\nAnd [4]keep my eyes a[5]bove the [1]waves",
-    drumsText: "-Verse\n[Half-time]You call me out upon the waters\nThe great unknown where feet may fail\n-Chorus\nAnd I will call upon Your name\nAnd keep my eyes a[Double Kick]bove the waves",
-  },
-  {
-    id: "seed-2", title: "Way Maker", artist: "Sinach", tempo: 68, timeSignature: "4/4", key: "E", keyQuality: "Major",
-    description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
-    accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    lyricsText: "-Chorus\nWay maker, miracle worker, promise keeper",
-    chordsText: "-Chorus\n[1]Way maker, [4]miracle worker, [6]promise [5]keeper",
-    chartText: "-Chorus\n[1]Way maker, [4]miracle worker, [6]promise [5]keeper",
-    drumsText: "-Chorus\n[Shuffle]Way maker, miracle worker, [Double Kick]promise keeper",
-  },
-  {
-    id: "seed-3", title: "Our God", artist: "Chris Tomlin", tempo: 105, timeSignature: "4/4", key: "A", keyQuality: "Major", language: "English",
-    description: "Benny's key: D | Sherly's key: G\nStyle: Rock Shuffle",
-    accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    lyricsText: "-Verse\nInto the darkness You shine",
-    chordsText: "-Verse\n[1]Into the [5]darkness You [6]shine",
-    chartText: "-Verse\n[1]Into the [5]darkness You [6]shine",
-    drumsText: "-Verse\nInto the darkness You [Double Kick]shine",
-  },
-  {
-    id: "seed-4", title: "தூயவரே", artist: "Gersson Edinbaro", tempo: 75, timeSignature: "4/4", key: "D", keyQuality: "Major", language: "Tamil",
-    description: "Original key: D",
-    accents: ["normal", "normal", "normal", "normal"], subdivision: 1,
-    lyricsText: "-Chorus\nதூயவரே தூயவரே\nதுதிக்கு பாத்திரரே\n-Verse\nஉம்மைப் போல ஒரு தெய்வம் இல்லை\nஉம்மைப் போல ஒரு ராஜா இல்லை",
-    chordsText: "-Chorus\n[1]தூயவரே [4]தூயவரே\n[5]துதிக்கு [1]பாத்திரரே\n-Verse\n[1]உம்மைப் போல ஒரு [4]தெய்வம் இல்லை\n[5]உம்மைப் போல ஒரு [1]ராஜா இல்லை",
-    chartText: "-Chorus\n[1]தூயவரே [4]தூயவரே\n[5]துதிக்கு [1]பாத்திரரே\n-Verse\n[1]உம்மைப் போல ஒரு [4]தெய்வம் இல்லை\n[5]உம்மைப் போல ஒரு [1]ராஜா இல்லை",
-    drumsText: "-Chorus\n[Half-time]தூயவரே தூயவரே\nதுதிக்கு பாத்திரரே\n-Verse\nஉம்மைப் போல ஒரு தெய்வம் இல்லை\nஉம்மைப் போல ஒரு ராஜா இல்லை",
-  },
-];
-const SEED_SETLISTS = [{
-  id: "sl-1", name: "Sunday AM",
-  entries: [{ songId: "seed-1", keyOverride: null }, { songId: "seed-2", keyOverride: "F" }],
-}];
 
 /* =========================================================================
    Shared bits
@@ -1295,26 +1185,6 @@ function AccidentalButton({ variant, natural, value, onChange, C }) {
   );
 }
 
-function ToggleSwitch({ checked, onChange, offLabel, onLabel, C }) {
-  return (
-    <div
-      role="switch" aria-checked={checked} tabIndex={0}
-      onClick={() => onChange(!checked)}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onChange(!checked); } }}
-      style={{
-        width: "100%", height: 44, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`,
-        background: C.surface2, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px",
-        cursor: "pointer",
-      }}
-    >
-      <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 700, color: checked ? C.textFaint : C.accent }}>{offLabel}</span>
-      <span style={{ position: "relative", width: 46, height: 26, borderRadius: 13, flexShrink: 0, margin: "0 10px", background: C.surface3, border: `1px solid ${C.borderStrong}`, boxSizing: "border-box" }}>
-        <span style={{ position: "absolute", top: 2, left: checked ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.4)", transition: "left 150ms ease" }} />
-      </span>
-      <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 700, color: checked ? C.accent : C.textFaint }}>{onLabel}</span>
-    </div>
-  );
-}
 // Plain iOS-style switch — a single toggle knob with no embedded text
 // labels, for rows where the label already lives outside the control
 // (e.g. "Tamil Transliteration" ...... [ o--]).
@@ -1351,133 +1221,6 @@ function TabSelect({ options, value, onChange, C }) {
 }
 
 /* =========================================================================
-   Merge a section's plain lyrics with the tag positions already stored in
-   its chords/drums field, so the Add/Edit form can show the lyric text as
-   a fixed (uneditable) backdrop while still letting chords/notes be typed
-   in between characters (spec #11).
-   ========================================================================= */
-function extractTagsByIndex(taggedText) {
-  return String(taggedText || "").split("\n").map((line) => tokenizeTaggedLine(line).map((t) => t.tag || null));
-}
-function mergeLyricsWithTags(lyricsText, taggedText) {
-  const lyricLines = String(lyricsText || "").split("\n");
-  const tagLines = extractTagsByIndex(taggedText);
-  return lyricLines.map((line, li) => {
-    const tags = tagLines[li] || [];
-    let out = "";
-    for (let i = 0; i < line.length; i++) {
-      if (tags[i]) out += `[${tags[i]}]`;
-      out += line[i];
-    }
-    if (tags[line.length]) out += `[${tags[line.length]}]`;
-    return out;
-  }).join("\n");
-}
-
-/* =========================================================================
-   Unified section content — a single string per section holds lyrics plus
-   BOTH tag types inline: [Chord] for chords, <Drum> for drum notes, each
-   attached to the character immediately following it. This lets the
-   Add/Edit form store one canonical string per section ("<Basic>[G]All to
-   [C]Jesus...") while Chords/Drums/Vocals modes each derive their own
-   [Tag]-only view from it (reusing the existing ChordText/ tag pipeline).
-   ========================================================================= */
-function tokenizeContentLine(rawLine) {
-  const line = String(rawLine || "").replace(/^ +/, "");
-  const tokens = [];
-  let i = 0;
-  let pendingChord = null, pendingDrum = null;
-  while (i < line.length) {
-    if (line[i] === "[") {
-      const end = line.indexOf("]", i);
-      if (end === -1) { tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum }); pendingChord = null; pendingDrum = null; i++; continue; }
-      pendingChord = line.slice(i + 1, end);
-      i = end + 1;
-      continue;
-    }
-    if (line[i] === "<") {
-      const end = line.indexOf(">", i);
-      if (end === -1) { tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum }); pendingChord = null; pendingDrum = null; i++; continue; }
-      pendingDrum = line.slice(i + 1, end);
-      i = end + 1;
-      continue;
-    }
-    tokens.push({ ch: line[i], chordTag: pendingChord, drumTag: pendingDrum });
-    pendingChord = null; pendingDrum = null;
-    i++;
-  }
-  if (pendingChord !== null || pendingDrum !== null) tokens.push({ ch: null, chordTag: pendingChord, drumTag: pendingDrum });
-  return tokens;
-}
-function contentToLyricsPlain(content) {
-  return String(content || "").split("\n").map((line) => tokenizeContentLine(line).filter((t) => t.ch !== null).map((t) => t.ch).join("")).join("\n");
-}
-function contentToChordsTagged(content) {
-  return String(content || "").split("\n").map((line) => {
-    let out = "";
-    tokenizeContentLine(line).forEach((t) => {
-      if (t.chordTag) out += `[${t.chordTag}]`;
-      if (t.ch !== null) out += t.ch;
-    });
-    return out;
-  }).join("\n");
-}
-function contentToDrumsTagged(content) {
-  return String(content || "").split("\n").map((line) => {
-    let out = "";
-    tokenizeContentLine(line).forEach((t) => {
-      if (t.drumTag) out += `[${t.drumTag}]`;
-      if (t.ch !== null) out += t.ch;
-    });
-    return out;
-  }).join("\n");
-}
-function mergeLegacyToContent(lyricsText, chordsText, drumsText) {
-  const lyricLines = String(lyricsText || "").split("\n");
-  const chordTagLines = extractTagsByIndex(chordsText);
-  const drumTagLines = extractTagsByIndex(drumsText);
-  return lyricLines.map((line, li) => {
-    const chordTags = chordTagLines[li] || [];
-    const drumTags = drumTagLines[li] || [];
-    let out = "";
-    for (let i = 0; i < line.length; i++) {
-      if (drumTags[i]) out += `<${drumTags[i]}>`;
-      if (chordTags[i]) out += `[${chordTags[i]}]`;
-      out += line[i];
-    }
-    if (drumTags[line.length]) out += `<${drumTags[line.length]}>`;
-    if (chordTags[line.length]) out += `[${chordTags[line.length]}]`;
-    return out;
-  }).join("\n");
-}
-function resyncContentWithLyrics(content, newLyricsText) {
-  const oldLines = String(content || "").split("\n");
-  const newLines = String(newLyricsText || "").split("\n");
-  const maxLen = Math.max(oldLines.length, newLines.length);
-  const outLines = [];
-  for (let li = 0; li < maxLen; li++) {
-    const chordTags = [], drumTags = [];
-    let idx = 0;
-    tokenizeContentLine(oldLines[li] || "").forEach((t) => {
-      if (t.chordTag) chordTags[idx] = t.chordTag;
-      if (t.drumTag) drumTags[idx] = t.drumTag;
-      if (t.ch !== null) idx++;
-    });
-    const newLine = newLines[li] || "";
-    let out = "";
-    for (let i = 0; i < newLine.length; i++) {
-      if (drumTags[i]) out += `<${drumTags[i]}>`;
-      if (chordTags[i]) out += `[${chordTags[i]}]`;
-      out += newLine[i];
-    }
-    if (drumTags[newLine.length]) out += `<${drumTags[newLine.length]}>`;
-    if (chordTags[newLine.length]) out += `[${chordTags[newLine.length]}]`;
-    outLines.push(out);
-  }
-  return outLines.join("\n");
-}
-
-/* =========================================================================
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
 function PianoIcon({ size = 18, height, color, strokeWidth }) {
@@ -1509,45 +1252,9 @@ function MetronomeIcon({ size = 20, color, strokeWidth = 2 }) {
   );
 }
 
-// ---- Acoustic grand-piano voice -----------------------------------------
-// A single fixed-harmonic PeriodicWave — the same exact spectral shape at
-// every pitch, decaying uniformly under one lowpass filter — is what reads
-// as "electronic"; it's the textbook organ/synth-pad giveaway. A struck
-// piano string instead does three things a single wave can't:
-//   1. Inharmonicity — a stiff string's overtones aren't exact integer
-//      multiples of the fundamental, they stretch sharp (more so in the
-//      bass): f_n = n * f0 * sqrt(1 + B * n^2).
-//   2. Independent partial decay — upper partials die out far faster than
-//      the fundamental, so the *color* visibly darkens as the note rings on
-//      instead of just getting quieter at a fixed timbre.
-//   3. Two or three lightly-detuned unison strings per note (bass notes on
-//      a real grand only have one, mid/treble have two or three), each with
-//      its own tiny random detune, producing the natural chorus-like
-//      beating a single oscillator per note can never produce.
-const PIANO_HARMONICS = [
-  { n: 1, relAmp: 1.0, decayMult: 1.0 },
-  { n: 2, relAmp: 0.52, decayMult: 0.65 },
-  { n: 3, relAmp: 0.26, decayMult: 0.44 },
-  { n: 4, relAmp: 0.15, decayMult: 0.30 },
-  { n: 5, relAmp: 0.08, decayMult: 0.20 },
-  { n: 6, relAmp: 0.04, decayMult: 0.13 },
-  { n: 7, relAmp: 0.02, decayMult: 0.09 },
-  { n: 8, relAmp: 0.01, decayMult: 0.06 },
-];
-function pianoInharmonicity(freq) {
-  const t = Math.min(1, Math.max(0, (freq - 30) / (1500 - 30)));
-  return 0.00035 * Math.pow(1 - t, 2) + 0.00002;
-}
-function pianoFundamentalDecay(freq) {
-  if (freq < 150) return 4.5;
-  if (freq < 350) return 3.2;
-  if (freq < 700) return 2.2;
-  return 1.4;
-}
 const WHITE_KEY_BG = "#F2F1EC";
-const WHITE_KEY_BG_PRESSED = null; // filled in per-mode below (needs accent colour)
+ // filled in per-mode below (needs accent colour)
 const BLACK_KEY_BG = "#0A0A0A";
-const BLACK_KEY_BG_PRESSED = null;
 const WHITE_KEYS = [
   { name: "C", semitone: 0 }, { name: "D", semitone: 2 }, { name: "E", semitone: 4 },
   { name: "F", semitone: 5 }, { name: "G", semitone: 7 }, { name: "A", semitone: 9 }, { name: "B", semitone: 11 },
@@ -1824,11 +1531,9 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const containerRef = useRef(null);
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
-  const isLandscapeScreen = useIsLandscapeScreen();
   const isVocals = mode === "vocals";
   const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
   const chordQualityRef = useRef(loadedQuality || "Major");
-  const [samplesReady, setSamplesReady] = useState(false);
 
 
   useEffect(() => {
@@ -1873,13 +1578,9 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
 
   useEffect(() => {
     // In the iOS app the native engine plays the piano: no Web Audio context is created at all.
-    if (isNativePlatform()) { setSamplesReady(true); return; }
+    if (isNativePlatform()) return;
     const ctx = ensureCtx();
-    if (_pianoBuffers && Object.keys(_pianoBuffers).length > 0) {
-      setSamplesReady(true);
-    } else {
-      loadAudioSamples(ctx).then(() => setSamplesReady(true));
-    }
+    if (!_pianoBuffers || Object.keys(_pianoBuffers).length === 0) loadAudioSamples(ctx).catch(() => { });
   }, []);
 
   const midiFor = (semitone) => (octaveStartRef.current + 1) * 12 + semitone;
@@ -2085,6 +1786,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   };
 
   useEffect(() => {
+    const activeVoices = activeRef.current;   // the Map is created once and never replaced
     const stopEntry = (entry) => {
       if (!entry) return;
       if (entry.padVoice) stopPadChord(entry.padVoice);
@@ -2143,11 +1845,11 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleUp);
       document.removeEventListener("visibilitychange", handleVisibility);
-      activeRef.current.forEach((entry) => {
+      activeVoices.forEach((entry) => {
         if (entry.padVoice) stopPadChord(entry.padVoice);
         else if (entry.voice) releaseVoice(entry.voice);
       });
-      activeRef.current.clear();
+      activeVoices.clear();
     };
   }, [isVocals]);
 
@@ -2592,7 +2294,7 @@ function useMetronomeEngine(settings) {
       if (playingStore.value) nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e));
     }, 60);
     return () => clearTimeout(t);
-  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong]);
 
   const start = async () => {
     if (isNative) {
@@ -2883,9 +2585,6 @@ function SubdivisionIcon({ value, size = 18, color }) {
     </svg>
   );
 }
-const stepBtnStyle = (C) => ({ width: 40, height: 40, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 20, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 });
-const bigStepBtnStyle = (C) => ({ width: 56, height: 56, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.text, fontSize: 26, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 });
-
 function useHoldRepeat(step, { onStart, onEnd } = {}) {
   const timeoutRef = useRef(null);
   const startTimeRef = useRef(0);
@@ -3637,24 +3336,6 @@ function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
   };
 }
 
-/* =========================================================================
-   Modal / SwipeToDelete / Kebab menu
-   ========================================================================= */
-function Modal({ title, onClose, children, C }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "flex-end" }}>
-      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)" }} />
-      <div className="scroll-list" style={{ position: "relative", width: "100%", background: C.surface2, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32, fontFamily: FONT, color: C.text, maxHeight: "80vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 17, fontWeight: 700 }}>{title}</div>
-          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={18} color={C.textMuted} /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 const SWIPE_REVEAL = 76;
 function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, elevated = false, C }) {
   const [translateX, setTranslateX] = useState(0);
@@ -3722,167 +3403,6 @@ function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: R
 }
 
 /* =========================================================================
-   SectionChordEditor — lets users edit chords/notes inline on the same line
-   as the lyrics between characters. The lyric characters are read-only,
-   and users can navigate/type only in the slots between/before/after them.
-   ========================================================================= */
-function parseLine(taggedLine, plainLyricsLine) {
-  const lyrics = plainLyricsLine || "";
-  const insertions = Array(lyrics.length + 1).fill("");
-  const tokens = tokenizeTaggedLine(taggedLine);
-  let lyricIndex = 0;
-  tokens.forEach((t) => {
-    if (t.tag) {
-      insertions[lyricIndex] = t.tag;
-    }
-    if (t.ch !== null) {
-      lyricIndex++;
-    }
-  });
-  return { lyrics, insertions };
-}
-
-function serializeLine(lyrics, insertions) {
-  let out = "";
-  for (let i = 0; i < lyrics.length; i++) {
-    if (insertions[i]) {
-      out += `[${insertions[i]}]`;
-    }
-    out += lyrics[i];
-  }
-  if (insertions[lyrics.length]) {
-    out += `[${insertions[lyrics.length]}]`;
-  }
-  return out;
-}
-
-function SectionChordEditor({ content, onChangeContent, tagType, C, accent, fontSize = 15, tagFontSize = 13, lyricsBold = false, notesBold = false, textAlign = "left" }) {
-  const lines = String(content || "").split("\n");
-  const [activeCell, setActiveCell] = useState(null); // { lineIdx, charIdx }
-
-  const handleUpdate = (lineIdx, charIdx, value) => {
-    const nextLines = lines.map((line, li) => {
-      if (li !== lineIdx) return line;
-      const chordTags = [], drumTags = [];
-      let idx = 0;
-      const chars = [];
-      tokenizeContentLine(line).forEach((t) => {
-        if (t.chordTag) chordTags[idx] = t.chordTag;
-        if (t.drumTag) drumTags[idx] = t.drumTag;
-        if (t.ch !== null) { chars.push(t.ch); idx++; }
-      });
-      if (tagType === "chords") chordTags[charIdx] = value; else drumTags[charIdx] = value;
-      let out = "";
-      for (let i = 0; i < chars.length; i++) {
-        if (drumTags[i]) out += `<${drumTags[i]}>`;
-        if (chordTags[i]) out += `[${chordTags[i]}]`;
-        out += chars[i];
-      }
-      if (drumTags[chars.length]) out += `<${drumTags[chars.length]}>`;
-      if (chordTags[chars.length]) out += `[${chordTags[chars.length]}]`;
-      return out;
-    });
-    onChangeContent(nextLines.join("\n"));
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, fontFamily: MONO, fontSize, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.75, textAlign, letterSpacing: "normal" }}>
-      {lines.map((line, li) => {
-        const chordTags = [], drumTags = [];
-        let idx = 0;
-        const chars = [];
-        tokenizeContentLine(line).forEach((t) => {
-          if (t.chordTag) chordTags[idx] = t.chordTag;
-          if (t.drumTag) drumTags[idx] = t.drumTag;
-          if (t.ch !== null) { chars.push(t.ch); idx++; }
-        });
-        const activeTagsArr = tagType === "chords" ? chordTags : drumTags;
-
-        return (
-          <div key={li} style={{ whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }}>
-            {Array.from({ length: chars.length + 1 }).map((_, ci) => {
-              const isEditing = activeCell && activeCell.lineIdx === li && activeCell.charIdx === ci;
-              const value = activeTagsArr[ci] || "";
-              const hasVal = value !== "";
-              const char = chars[ci] || ""; // character after this slot
-
-              return (
-                <span key={ci} style={{ position: "relative" }}>
-                  {isEditing ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={value}
-                      size={Math.max(1, value.length || 1)}
-                      onChange={(e) => handleUpdate(li, ci, e.target.value)}
-                      onBlur={() => setActiveCell(null)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === "Escape") {
-                          e.preventDefault();
-                          setActiveCell(null);
-                        } else if (e.key === "ArrowLeft" && e.target.selectionStart === 0) {
-                          e.preventDefault();
-                          if (ci > 0) setActiveCell({ lineIdx: li, charIdx: ci - 1 });
-                        } else if (e.key === "ArrowRight" && e.target.selectionEnd === e.target.value.length) {
-                          e.preventDefault();
-                          if (ci < chars.length) setActiveCell({ lineIdx: li, charIdx: ci + 1 });
-                        } else if (e.key === "Backspace" && e.target.value === "") {
-                          e.preventDefault();
-                          handleUpdate(li, ci, "");
-                          if (ci > 0) setActiveCell({ lineIdx: li, charIdx: ci - 1 });
-                        }
-                      }}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        outline: "none",
-                        boxShadow: "none",
-                        color: accent,
-                        caretColor: accent,
-                        fontFamily: MONO,
-                        fontWeight: lyricsBold ? 700 : 400,
-                        fontSize,
-                        padding: 0,
-                        margin: 0,
-                        letterSpacing: "normal",
-                        verticalAlign: "baseline",
-                        lineHeight: "inherit",
-                      }}
-                    />
-                  ) : hasVal ? (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
-                      style={{ color: accent, fontWeight: lyricsBold ? 700 : 400, cursor: "pointer", userSelect: "none" }}
-                    >
-                      {value}
-                    </span>
-                  ) : (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); setActiveCell({ lineIdx: li, charIdx: ci }); }}
-                      style={{ cursor: "text" }}
-                    >
-                      {"\u200B"}
-                    </span>
-                  )}
-                  {char && (
-                    <span
-                      onClick={() => setActiveCell({ lineIdx: li, charIdx: ci + 1 })}
-                      style={{ color: C.textMuted, cursor: "text", userSelect: "none" }}
-                    >
-                      {char === " " ? "\u00A0" : char}
-                    </span>
-                  )}
-                </span>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* =========================================================================
    Song form — the Chords app's Add/Edit Song page is the norm for Altar,
    with a Lyrics/Drums/Chords tab-select added under "Sections" (spec #7/#8).
    ========================================================================= */
@@ -3892,24 +3412,6 @@ const SECTION_TABS = [
   { id: "chart", label: "Chart" },
   { id: "drums", label: "Drums" },
 ];
-function AutoGrowTextarea({ value, onChange, style, ...rest }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
-  return (
-    <textarea
-      ref={ref}
-      value={value}
-      onChange={onChange}
-      style={{ ...style, overflow: "hidden", resize: "none" }}
-      {...rest}
-    />
-  );
-}
 const escapeHtml = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // Auto-growing textarea with a highlighted backdrop: bracketed [tags] are
@@ -4004,8 +3506,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     if (initial?.id) return getSongAccents(initial.id, (() => { const { beats, unit } = parseTimeSig(initial.timeSignature || "4/4"); return (beats === 6 && unit === 8) ? 4 : beats; })());
     return seed?.accents ?? defaultAccents(4);
   });
-  const [subdivision, setSubdivision] = useState(() => (initial?.id ? getSongSubdivision(initial.id) : (seed?.subdivision ?? 1)));
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [subdivision] = useState(() => (initial?.id ? getSongSubdivision(initial.id) : (seed?.subdivision ?? 1)));
   const [error, setError] = useState("");
   const [sectionTab, setSectionTab] = useState(() => mode === "drums" ? "drums" : mode === "chords" ? "chords" : "lyrics");
 
@@ -4017,50 +3518,6 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     setError("");
     if (/[\u0B80-\u0BFF]/.test(v)) {
       setLanguage("Tamil");
-    }
-  };
-
-  const handlePasteFromClipboard = async () => {
-    try {
-      const raw = await navigator.clipboard.readText();
-      if (!raw || !raw.trim()) { setError("Clipboard is empty"); return; }
-      const lines = raw.replace(/\r\n/g, "\n").split("\n");
-      const fieldMap = { title: "title", artist: "artist", tempo: "tempo", "time signature": "timeSignature", key: "key", description: "description" };
-      const fields = {};
-      const parsedLines = [];
-      let inSections = false;
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!inSections && trimmed.startsWith("/")) {
-          const body = trimmed.slice(1);
-          const colonIdx = body.indexOf(":");
-          if (colonIdx === -1) continue;
-          const name = body.slice(0, colonIdx).trim().toLowerCase();
-          const value = body.slice(colonIdx + 1).trim();
-          if (name === "sections") { inSections = true; continue; }
-          const key = fieldMap[name];
-          if (key && value) fields[key] = value;
-          continue;
-        }
-        if (!inSections) continue;
-        if (trimmed.startsWith("#")) parsedLines.push("-" + trimmed.slice(1).trim());
-        else if (trimmed) parsedLines.push(trimmed);
-      }
-      if (fields.title !== undefined) {
-        setTitle(fields.title);
-        if (/[\u0B80-\u0BFF]/.test(fields.title)) {
-          setLanguage("Tamil");
-        }
-      }
-      if (fields.artist !== undefined) setArtist(fields.artist);
-      if (fields.tempo !== undefined) { const digits = fields.tempo.replace(/[^\d]/g, ""); if (digits) setTempo(digits); }
-      if (fields.timeSignature !== undefined) { const m = fields.timeSignature.match(/^(\d+)\s*\/\s*(\d+)$/); if (m) setTimeSig({ beats: parseInt(m[1], 10), unit: parseInt(m[2], 10) }); }
-      if (fields.key !== undefined) { const pk = parseKeyPaste(fields.key); if (pk) { setKeyNatural(pk.natural); setKeyAccidental(pk.accidental); setKeyQuality(pk.quality); } }
-      if (fields.description !== undefined) setDescription(fields.description);
-      if (parsedLines.length) setLyricsText(parsedLines.join("\n"));
-      setError("");
-    } catch {
-      setError("Couldn't read clipboard");
     }
   };
 
@@ -5147,8 +4604,6 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
-  const rowBtnStyle = { display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600 };
-
   // Which display target the Font Size / Bold / Spacing controls below the
   // dropdown currently affect.
   const [displayTarget, setDisplayTarget] = useState("lyrics");
@@ -6002,7 +5457,6 @@ function AppInner() {
 
   const performSync = useCallback(async (force = false) => {
     // Keep the ref in sync so save functions can call the latest closure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     performSyncRef.current = performSync;
     if (!isSupabaseConfigured()) return;
     if (!navigator.onLine) {
@@ -6202,7 +5656,6 @@ function AppInner() {
 
 
   const rootRef = useRef(null);
-  const isLandscapeScreen = useIsLandscapeScreen();
 
   useEffect(() => {
     const el = rootRef.current;
@@ -6495,48 +5948,6 @@ function AppInner() {
     const q = song.keyQuality || "Major";
     setPianoQuality(q);
     setTab("practice");
-  };
-
-  const importSongsBatch = (rawSongs) => {
-    const working = [...songs];
-    rawSongs.forEach((raw) => {
-      const title = toTitleCase(raw.title || "Untitled");
-      const artist = toTitleCase(raw.artist || "");
-      const finalTitle = dedupeTitle(title, artist, working);
-      working.push({ ...raw, id: uid(), title: finalTitle, artist });
-    });
-    saveSongs(working);
-    flash(`Imported ${rawSongs.length} song${rawSongs.length === 1 ? "" : "s"}`);
-  };
-  const importSetlistPackage = (pkg) => {
-    const working = [...songs];
-    const newEntries = [];
-    (pkg.entries || []).forEach((e) => {
-      const raw = e.song;
-      if (!raw) return;
-      const title = toTitleCase(raw.title || "Untitled");
-      const artist = toTitleCase(raw.artist || "");
-      const existing = working.find((s) => s.title.toLowerCase() === title.toLowerCase() && (s.artist || "").toLowerCase() === artist.toLowerCase());
-      let songId;
-      if (existing) songId = existing.id;
-      else { const finalTitle = dedupeTitle(title, artist, working); const song = { ...raw, id: uid(), title: finalTitle, artist }; working.push(song); songId = song.id; }
-      newEntries.push({ songId, keyOverride: e.keyOverride ?? null, tempoOverride: e.tempoOverride ?? null });
-    });
-    saveSongs(working);
-    saveSetlists([...setlists, { id: uid(), name: pkg.name || "Imported Setlist", entries: newEntries }]);
-    flash(`Imported setlist "${pkg.name || "Imported Setlist"}"`);
-  };
-  const importFile = async (file) => {
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      if (parsed.type === "songs" && Array.isArray(parsed.songs)) importSongsBatch(parsed.songs);
-      else if (parsed.type === "setlist" && parsed.setlist) importSetlistPackage(parsed.setlist);
-      else if (Array.isArray(parsed.songs)) importSongsBatch(parsed.songs);
-      else flash("Import failed: unrecognized file");
-    } catch {
-      flash("Import failed: invalid file");
-    }
   };
 
   return (

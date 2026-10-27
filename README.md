@@ -28,14 +28,14 @@
                                                                                           │
                                                                            ┌──────────────┴──────────────┐
                                                                            │  Supabase Cloud Database    │
-                                                                           │  ├─ zong_global (Songs)     │
+                                                                           │  ├─ zong_songs / zong_spelling_chart │
                                                                            │  └─ zong_teams (Setlists)   │
                                                                            └─────────────────────────────┘
 ```
 
 - **Frontend**: React 19 + Vite (Vanilla CSS design system, zero external UI component frameworks for maximum performance and low bundle size).
 - **Icons**: `lucide-react`.
-- **Audio Engine**: Native browser Web Audio API (`AudioContext`, `BiquadFilterNode`, `StereoPannerNode`, `DynamicsCompressorNode`, `OscillatorNode`).
+- **Audio Engine**: PWA — browser Web Audio API. iOS app — native `AVAudioEngine` engines (`NativeMetronomeEngine`: look-ahead click scheduler like the PWA's; `NativePianoSynth`: sampled piano + pad chords), so sound ignores the silent switch and keeps running with the screen locked. A lock-screen Live Activity (`ZongLiveActivity`) shows tempo with −/+ and start/stop.
 - **Data Persistence**:
   - **IndexedDB**: Master offline copy of songs, setlists, and custom spelling chart.
   - **localStorage**: Client-only preferences (selected mode, font sizes, chord visibility toggles, metronome sound presets).
@@ -60,7 +60,7 @@ Zong/
 │   ├── App.jsx                    # Primary application monolithic file (UI, state, Audio, Tanglish)
 │   ├── main.jsx                   # React application entry point (registers Service Worker)
 │   ├── supabaseSync.js            # Supabase API client, optimistic syncing, and Realtime listeners
-│   ├── bandSync.js                # Legacy Google Apps Script sync client (superseded by Supabase)
+│   ├── nativeMetronome.js         # Bridge to the native iOS audio plugin (metronome, piano); no-op on the web
 │   └── styles.css                 # Global CSS resets, typography, dark mode tokens, animations
 │
 ├── public/
@@ -73,13 +73,13 @@ Zong/
 │   ├── icon-512.png               # High-res PWA icon (512x512)
 │   ├── icon-maskable-192.png      # Android adaptive maskable icon
 │   ├── icon-maskable-512.png      # Android adaptive maskable icon (512x512)
-│   └── icons/                     # Additional asset variants
+│   └── tones/                     # Piano samples + metronome clicks (shared by the PWA and the iOS app)
 │
 ├── supabase/
 │   └── schema.sql                 # SQL schema, RLS policies, seed scripts, and Realtime publications
 │
-├── apps-script/
-│   └── Code.gs                    # Legacy Google Apps Script backend code
+├── ios/                           # Capacitor iOS app: native metronome/piano engines, Live Activity
+│   └── App/{App,Shared,ZongLiveActivity}
 │
 └── scripts/
     └── render-icon.swift          # macOS Swift script for compositing icon layers
@@ -174,22 +174,19 @@ Musicians can override any word's transliteration globally. Tapping "+ Add word.
 File: [src/supabaseSync.js](file:///Users/benjaminhanigraf/Desktop/Zong/src/supabaseSync.js)
 
 ```
-Supabase Architecture:
-  Table: zong_global (Row id = 'main')
-    ├── revision: integer
-    ├── songs: jsonb (Global song library shared by all users)
-    └── spelling_chart: jsonb (Shared custom transliterations)
-
-  Table: zong_teams (Row team_key = '<team_code>')
-    ├── revision: integer
-    ├── shared_setlists: jsonb (Setlists shared within this team)
-    └── subscribers: jsonb (Array of active device IDs)
+Supabase Architecture (see supabase/schema.sql):
+  Table: zong_songs           (one row per song; primary key id)
+  Table: zong_spelling_chart  (one row per Tamil -> Tanglish override; primary key tamil)
+  Table: zong_teams           (one row per team code)
+    ├── revision: integer           (compare-and-swap counter)
+    ├── shared_setlists: jsonb      (setlists shared within this team)
+    └── subscribers: jsonb          (array of device IDs)
 ```
 
-1. **Optimistic Locking**:
-   - Each push sends the client's known `baseRevision`.
-   - The database only accepts writes if `revision == baseRevision`.
-   - On conflict, Zong automatically fetches remote changes, merges local non-duplicate items, and retries.
+Deletes are real `DELETE`s (no "deleted" flags). Beat accents and subdivision are never synced; they live on each device. Each sync pulls only rows changed since a stored cursor and lists the remaining ids (paged, 1000 per request) to learn which rows other devices removed. If the server table is unexpectedly empty while the device still holds songs, the device restores the server instead of deleting its own data.
+
+1. **Optimistic Locking (team rows)**:
+   - A team write only succeeds if `revision` is unchanged since it was read; otherwise it re-reads and retries.
 2. **WebSocket Realtime Subscriptions**:
    - `subscribeToChanges()` registers Postgres change listeners on `zong_songs`, `zong_spelling_chart` and `zong_teams`.
    - When any team member saves a song or reorders a setlist, all devices update instantly without polling.

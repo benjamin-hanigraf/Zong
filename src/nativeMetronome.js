@@ -27,7 +27,6 @@ if (native) {
 
 // Synchronous: Capacitor knows the platform at load time.
 export function isNativePlatform() { return native; }
-export async function initNativeMetronome() { return native; }
 
 // Registers a listener and returns a remover that is safe to call even before
 // the (async) registration has finished — otherwise listeners would leak and
@@ -48,7 +47,6 @@ export const nativeMetronome = {
   /** Applies new settings while playing (restarts the bar only if something changed). */
   update(settings) { return Plugin?.update(settings); },
   stop() { return Plugin?.stop(); },                       // resolves { playing }
-  setVolume({ volume }) { return Plugin?.setVolume({ volume }); },
   /** Resolves { playing, bpm } */
   async getState() { return (await Plugin?.getState()) ?? { playing: false }; },
   /** handler({ beatIndex }) */

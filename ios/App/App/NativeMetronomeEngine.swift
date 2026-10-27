@@ -41,7 +41,6 @@ final class NativeMetronomeEngine {
     private var subdivision: Int = 1
     private var accents: [String] = []   // "normal" | "accent" | "mute"
     private var title = "Metronome"      // shown on the lock-screen Live Activity
-    private var volume: Float = 1.0
     private var isPlaying = false
     private var resumeAfterInterruption = false
     private var lastCommand: MetronomeCommand?
@@ -51,7 +50,7 @@ final class NativeMetronomeEngine {
     // MARK: - Audio objects
     private let engine  = AVAudioEngine()
     private let clkNode = AVAudioPlayerNode()
-    private let mixNode = AVAudioMixerNode()   // volume control
+    private let mixNode = AVAudioMixerNode()
     private var format: AVAudioFormat?          // canonical click format (stereo float)
     private var accentClick: AVAudioPCMBuffer?  // m_hi.wav
     private var normalClick: AVAudioPCMBuffer?  // m_low.wav
@@ -124,13 +123,6 @@ final class NativeMetronomeEngine {
         }
     }
 
-    func setVolume(_ v: Float) {
-        q.async { [self] in
-            volume = max(0, min(1, v))
-            mixNode.outputVolume = volume
-        }
-    }
-
     func queryState(_ completion: @escaping (Bool, Int) -> Void) {
         q.async { [self] in completion(isPlaying, Int(bpm.rounded())) }
     }
@@ -196,7 +188,6 @@ final class NativeMetronomeEngine {
         // front so the first Play never has to re-wire a running engine.
         engine.connect(clkNode, to: mixNode, format: format)
         engine.connect(mixNode, to: engine.mainMixerNode, format: nil)
-        mixNode.outputVolume = volume
         startEngineIfNeeded()
     }
 
