@@ -1435,25 +1435,16 @@ function PianoIcon({ size = 18, height, color, strokeWidth }) {
     </svg>
   );
 }
-function MetronomeIcon({ size = 20, color, strokeWidth = 1.3 }) {
-  // Shape matches the uploaded reference: a rounded C/U outline body
-  // (inverted rounded-rectangle open at bottom corners) with a diagonal
-  // pendulum arm extending upper-right, capped with a filled circle.
-  const sw = Math.min(strokeWidth + 0.3, 2.1);
+function MetronomeIcon({ size = 20, color, strokeWidth = 2 }) {
+  // Outline from the supplied Metronome.svg, scaled into a 24-unit box like the
+  // lucide icons beside it so size and stroke weight match (stroke is in 24-unit space).
+  const k = 20 / 387.35;
   return (
     <svg width={size} height={size} style={{ display: "block" }} viewBox="0 0 24 24" fill="none">
-      {/* Body: rounded C shape — top arc + left side + bottom-left curve + right side + bottom-right curve */}
-      <path
-        d="M8 3.5 C8 3.5 8 3 12 3 C16 3 16 3.5 16 3.5 L16 3.5 C17.5 3.5 18.5 4.5 18.5 6 L18.5 18 C18.5 19.4 17.4 20.5 16 20.5 L8 20.5 C6.6 20.5 5.5 19.4 5.5 18 L5.5 6 C5.5 4.5 6.5 3.5 8 3.5 Z"
-        stroke={color}
-        strokeWidth={sw}
-        strokeLinejoin="round"
-        fill="none"
-      />
-      {/* Pendulum arm: from centre-bottom pivot diagonally to upper-right */}
-      <line x1="12" y1="18" x2="17.2" y2="8.5" stroke={color} strokeWidth={sw} strokeLinecap="round" />
-      {/* Pendulum bob: filled circle at tip */}
-      <circle cx="17.8" cy="7.4" r="1.6" fill={color} />
+      <g transform={`translate(12 12) scale(${k}) translate(-159.92 -193.675)`} stroke={color} strokeWidth={strokeWidth / k} strokeLinecap="round" strokeMiterlimit="10" fill="none">
+        <path d="M220.23,93.03l-11.87-36.49c-15.85-48.73-84.79-48.73-100.64,0L21.77,320.79c-7.48,22.98,9.65,46.57,33.82,46.57h204.91c24.17,0,41.3-23.59,33.82-46.57l-32.81-100.86" />
+        <line x1="157.59" y1="283.78" x2="299.84" y2="62.03" />
+      </g>
     </svg>
   );
 }

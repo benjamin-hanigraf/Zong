@@ -39,6 +39,10 @@ class ZongBridgeViewController: CAPBridgeViewController {
         sv.bounces = false
         sv.showsVerticalScrollIndicator = false
         sv.showsHorizontalScrollIndicator = false
+        // iOS 26 draws a soft edge effect/hairline under the status bar for scroll views.
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { sv.topEdgeEffect.isHidden = true }
+        #endif
         if webView.frame != view.bounds { webView.frame = view.bounds }
     }
 }

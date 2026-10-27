@@ -131,6 +131,7 @@ final class NativeMetronomeEngine {
     // MARK: - Bar buffer construction
     /// Builds one bar of audio as a single PCMBuffer with clicks at the right positions.
     private func buildBarBuffer(bpm: Double, beatsPerBar: Int, accents: [String]) -> AVAudioPCMBuffer? {
+        let sampleRate   = engine.outputNode.outputFormat(forBus: 0).sampleRate
         let beatDuration = 60.0 / bpm                             // seconds
         let barDuration  = beatDuration * Double(beatsPerBar)
         let barFrames    = AVAudioFrameCount(barDuration * sampleRate)
@@ -284,6 +285,14 @@ final class NativeMetronomeEngine {
         guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else { return }
         barBuffer = buf
 
+        // The player node must be connected with the same format as the buffer it
+        // plays, otherwise the clicks are silent (or the wrong pitch/speed).
+        if clkNode.outputFormat(forBus: 0) != buf.format {
+            clkNode.stop()
+            engine.disconnectNodeOutput(clkNode)
+            engine.connect(clkNode, to: mixNode, format: buf.format)
+        }
+        if !engine.isRunning { try? engine.start() }
         clkNode.play()
 
         barStartSampleTime = clkNode.playerTime(
