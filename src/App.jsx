@@ -1700,6 +1700,14 @@ function getSharedAudioContext() {
     } catch {
       _sharedAudioCtx = new AudioCtxCls({ latencyHint: "interactive" });
     }
+    // Safety net: whenever iOS interrupts the context and the app is on screen, bring it back.
+    const ctx = _sharedAudioCtx;
+    ctx.addEventListener("statechange", () => {
+      if (ctx.state === "interrupted" && document.visibilityState === "visible") ctx.resume().catch(() => { });
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && ctx.state === "interrupted") ctx.resume().catch(() => { });
+    });
   }
   return _sharedAudioCtx;
 }
@@ -1816,7 +1824,10 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
       comp.connect(ctx.destination);
       masterCompRef.current = comp;
     }
-    if (ctx.state === "suspended") ctx.resume().catch(() => { });
+    // iOS can leave the context "interrupted" (not just "suspended") after another audio
+    // session — e.g. the native metronome, a call, a notification — took the output.
+    // Resume from either state, otherwise the piano stays silent until iOS recovers by itself.
+    if (ctx.state !== "running") ctx.resume().catch(() => { });
     if (!videoUnlockedRef.current && silentVideoRef.current) {
       videoUnlockedRef.current = true;
       silentVideoRef.current.play().catch(() => { videoUnlockedRef.current = false; });
@@ -2212,6 +2223,22 @@ const beatStore = {
 };
 const setFlashBeat = (v) => beatStore.set(v);
 function useFlashBeat() { return useSyncExternalStore(beatStore.subscribe, beatStore.get); }
+// Same idea for "is the metronome playing": only the play/stop glyphs re-render on a toggle,
+// not the entire app, so the button reacts at once.
+const playingStore = {
+  value: false,
+  subs: new Set(),
+  set(v) { if (v === this.value) return; this.value = v; this.subs.forEach((f) => f()); },
+  subscribe: (f) => { playingStore.subs.add(f); return () => playingStore.subs.delete(f); },
+  get: () => playingStore.value,
+};
+function usePlaying() { return useSyncExternalStore(playingStore.subscribe, playingStore.get); }
+function PlayStopGlyph({ size, color, stopColor = color, playNudge = 0 }) {
+  const playing = usePlaying();
+  return playing
+    ? <Square size={size * 0.93} color={stopColor} fill={stopColor} />
+    : <Play size={size} color={color} fill={color} style={{ marginLeft: playNudge }} />;
+}
 function defaultAccents(beats) { return Array.from({ length: beats }, () => "normal"); }
 
 // ---------------------------------------------------------------------------
@@ -2242,9 +2269,7 @@ function useMetronomeEngine(settings) {
   const [subdivision, setSubdivisionState] = useState(() => {
     try { const s = localStorage.getItem("altar_metronome_subdivision"); return s ? Number(s) : 1; } catch { return 1; }
   });
-  const [playing, setPlayingState] = useState(false);
-  const playingRef = useRef(false);
-  const setPlaying = (v) => { playingRef.current = v; setPlayingState(v); };
+  const setPlaying = (v) => playingStore.set(v);
   const [loadedSong, setLoadedSong] = useState(null);
 
   useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
@@ -2511,10 +2536,12 @@ function useMetronomeEngine(settings) {
   // Any change to tempo / time signature / accents / subdivision while playing is
   // sent to the engine once (debounced), whatever caused it — knob, song load, etc.
   useEffect(() => {
-    if (!isNative || !playing) return;
-    const t = setTimeout(() => { nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e)); }, 60);
+    if (!isNative) return;
+    const t = setTimeout(() => {
+      if (playingStore.value) nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e));
+    }, 60);
     return () => clearTimeout(t);
-  }, [isNative, playing, bpm, timeSig, accents, subdivision, loadedSong]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const start = async () => {
     if (isNative) {
@@ -2577,7 +2604,7 @@ function useMetronomeEngine(settings) {
       try { ctx.suspend().catch(() => { }); } catch { }
     }
   };
-  const toggle = () => (playingRef.current ? stop() : start());
+  const toggle = () => (playingStore.value ? stop() : start());
 
   const tapTempo = () => {
     const now = performance.now();
@@ -2628,13 +2655,13 @@ function useMetronomeEngine(settings) {
 
   return {
     bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision,
-    playing, toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay,
+    toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay,
   };
 }
 
 const DEG_PER_BPM = 6;
 const KNOB_TOUCH_PAD = 28;
-function Knob({ value, min = 30, max = 300, onChange, size = 220, playing, onToggle, C }) {
+function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggle, C }) {
   const knobRef = useRef(null);
   const rectRef = useRef(null);
   const lastAngleRef = useRef(0);
@@ -2715,7 +2742,7 @@ function Knob({ value, min = 30, max = 300, onChange, size = 220, playing, onTog
             width: size * 0.34, height: size * 0.34, borderRadius: "50%", border: "none", background: "transparent", pointerEvents: "auto",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {playing ? <Square size={size * 0.13} color="#fff" fill="#fff" /> : <Play size={size * 0.14} color="#fff" fill="#fff" style={{ marginLeft: size * 0.015 }} />}
+            <PlayStopGlyph size={size * 0.14} color="#fff" playNudge={size * 0.015} />
           </button>
         </div>
       </div>
@@ -2844,7 +2871,7 @@ function useHoldRepeat(step, { onStart, onEnd } = {}) {
    per Altar spec — Settings now lives only in the bottom-nav Settings tab.
    ========================================================================= */
 function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision, onLongPressTitle, C }) {
-  const { bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision, playing, toggle, tapTempo, loadedSong } = engine;
+  const { bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision, toggle, tapTempo, loadedSong } = engine;
   const [editingBpm, setEditingBpm] = useState(false);
   const [bpmDraft, setBpmDraft] = useState("");
   const longPressTimerRef = useRef(null);
@@ -2896,7 +2923,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={accents} onChange={changeAccents} C={C} />
       </div>
 
-      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
+      <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} onToggle={toggle} C={C} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%", maxWidth: 320 }}>
         <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ width: "100%" }} C={C} />
@@ -3997,8 +4024,8 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   };
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
-      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
+    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+      <div style={{ padding: "calc(16px + env(safe-area-inset-top, 0px)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
@@ -4491,7 +4518,7 @@ function SongDetailScreen({
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C" }}>
           <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
           <button onPointerDown={(e) => { e.preventDefault(); engine.toggle(); }} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {engine.playing ? <Square size={26} color={C.accent} fill={C.accent} /> : <Play size={26} color={C.accent} fill={C.accent} style={{ marginLeft: 3 }} />}
+            <PlayStopGlyph size={26} color={C.accent} playNudge={3} />
           </button>
           <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>
         </div>
@@ -4953,7 +4980,6 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         overflowY: dragging ? "hidden" : "auto",
         touchAction: dragging ? "none" : "pan-y",
         boxSizing: "border-box",
-        paddingTop: "env(safe-area-inset-top, 0px)",
         paddingBottom: "max(40px, env(safe-area-inset-bottom, 0px))",
         transform: `translateX(${dragX}px)`,
         transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none"
@@ -4961,7 +4987,7 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
       {...handlers}
     >
       {/* Sticky Header matching SongForm */}
-      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
+      <div style={{ padding: "calc(16px + env(safe-area-inset-top, 0px)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button
           onClick={onBack}
           style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6, cursor: "pointer" }}
@@ -5765,7 +5791,7 @@ function AppInner() {
   // switches to Chords or Vocals so it doesn't keep clicking in the
   // background while they're reading lyrics or chords.
   useEffect(() => {
-    if (mode !== "drums" && engine.playing) engine.stop();
+    if (mode !== "drums" && playingStore.value) engine.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 

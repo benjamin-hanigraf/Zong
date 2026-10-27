@@ -9,7 +9,7 @@ import AppIntents
 // Compiled into BOTH the app and the Live Activity extension.
 
 /// Commands the lock-screen buttons send to the metronome engine.
-enum MetronomeCommand {
+enum MetronomeCommand: Equatable {
     case toggle, tempoUp, tempoDown
 }
 

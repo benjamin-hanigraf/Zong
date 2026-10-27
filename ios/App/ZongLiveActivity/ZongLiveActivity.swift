@@ -25,6 +25,7 @@ struct ZongLiveActivity: Widget {
                 Image(systemName: "metronome.fill").foregroundColor(zongAccent)
             } compactTrailing: {
                 Text("\(context.state.bpm)")
+                    .contentTransition(.identity)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(zongAccent)
@@ -43,11 +44,13 @@ private struct ZongControlBar: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(state.title)
+                    .contentTransition(.identity)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white.opacity(0.65))
                     .lineLimit(1)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("\(state.bpm)")
+                        .contentTransition(.identity)
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundColor(zongAccent)
@@ -74,6 +77,8 @@ private struct ZongControlBar: View {
             }
             .buttonStyle(.plain)
         }
+        // Changes (tempo, start/stop) must appear instantly: no cross-fades or number rolls.
+        .transaction { $0.animation = nil }
     }
 }
 
@@ -84,6 +89,7 @@ private struct ControlGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
+            .contentTransition(.identity)
             .font(.system(size: 15, weight: .bold))
             .foregroundColor(tint)
             .frame(width: 40, height: 40)

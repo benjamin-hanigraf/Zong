@@ -44,6 +44,8 @@ final class NativeMetronomeEngine {
     private var volume: Float = 1.0
     private var isPlaying = false
     private var resumeAfterInterruption = false
+    private var lastCommand: MetronomeCommand?
+    private var lastCommandTime: UInt64 = 0
     private var sessionActive = false    // avoids re-activating the audio session on every start
 
     // MARK: - Audio objects
@@ -105,6 +107,12 @@ final class NativeMetronomeEngine {
     /// Lock-screen / Live Activity buttons.
     func handle(_ command: MetronomeCommand) {
         q.async { [self] in
+            // When the Live Activity is used from a Mac (menu bar / iPhone Mirroring) one click
+            // can be delivered twice. Identical commands within 120 ms are the same click.
+            let now = DispatchTime.now().uptimeNanoseconds
+            if command == lastCommand, now - lastCommandTime < 120_000_000 { return }
+            lastCommand = command
+            lastCommandTime = now
             switch command {
             case .toggle:
                 if isPlaying { resumeAfterInterruption = false; halt() } else { startPlayback() }
