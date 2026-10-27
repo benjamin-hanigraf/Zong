@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
@@ -2200,6 +2200,18 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
 /* =========================================================================
    Metronome engine (drums mode + song-view bottom bar)
    ========================================================================= */
+// The lit beat changes several times a second. Keeping it in React state of <App>
+// re-rendered the whole app on every beat, which stalled taps (start/stop felt laggy).
+// A tiny external store lets only the beat dots re-render.
+const beatStore = {
+  value: -1,
+  subs: new Set(),
+  set(v) { if (v === this.value) return; this.value = v; this.subs.forEach((f) => f()); },
+  subscribe: (f) => { beatStore.subs.add(f); return () => beatStore.subs.delete(f); },
+  get: () => beatStore.value,
+};
+const setFlashBeat = (v) => beatStore.set(v);
+function useFlashBeat() { return useSyncExternalStore(beatStore.subscribe, beatStore.get); }
 function defaultAccents(beats) { return Array.from({ length: beats }, () => "normal"); }
 
 // ---------------------------------------------------------------------------
@@ -2233,7 +2245,6 @@ function useMetronomeEngine(settings) {
   const [playing, setPlayingState] = useState(false);
   const playingRef = useRef(false);
   const setPlaying = (v) => { playingRef.current = v; setPlayingState(v); };
-  const [flashBeat, setFlashBeat] = useState(-1);
   const [loadedSong, setLoadedSong] = useState(null);
 
   useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
@@ -2617,7 +2628,7 @@ function useMetronomeEngine(settings) {
 
   return {
     bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision,
-    playing, toggle, start, stop, flashBeat, tapTempo, loadedSong, loadSong, loadSongAndPlay,
+    playing, toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay,
   };
 }
 
@@ -2717,7 +2728,8 @@ function dotColor(state, lit, C) {
   if (state === "accent") return lit ? C.accent : C.accentDim;
   return lit ? "#fff" : C.surface3;
 }
-function BeatAccentControl({ count, flashBeat, accents, onChange, size = 9, openUpwardOnly, C }) {
+function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, C }) {
+  const flashBeat = useFlashBeat();
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [hAlign, setHAlign] = useState("center"); // "center" | "left" | "right" — keeps the popup on-screen horizontally
@@ -2832,7 +2844,7 @@ function useHoldRepeat(step, { onStart, onEnd } = {}) {
    per Altar spec — Settings now lives only in the bottom-nav Settings tab.
    ========================================================================= */
 function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision, onLongPressTitle, C }) {
-  const { bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision, playing, toggle, flashBeat, tapTempo, loadedSong } = engine;
+  const { bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision, playing, toggle, tapTempo, loadedSong } = engine;
   const [editingBpm, setEditingBpm] = useState(false);
   const [bpmDraft, setBpmDraft] = useState("");
   const longPressTimerRef = useRef(null);
@@ -2881,7 +2893,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", maxWidth: 320 }}>
-        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} flashBeat={flashBeat} accents={accents} onChange={changeAccents} C={C} />
+        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={accents} onChange={changeAccents} C={C} />
       </div>
 
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} playing={playing} onToggle={toggle} C={C} />
@@ -4408,7 +4420,7 @@ function SongDetailScreen({
             </button>
           </div>
           <div style={{ justifySelf: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} flashBeat={engine.flashBeat} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
+            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "end", position: "relative", zIndex: 1 }}>
             {hasTempoChanged && (

@@ -54,6 +54,8 @@ final class NativeMetronomeEngine {
     private var hiBuffer:  AVAudioPCMBuffer?   // m_hi.wav  (accent)
     private var lowBuffer: AVAudioPCMBuffer?   // m_low.wav (normal)
     private var connectedFormat: AVAudioFormat?
+    private var cachedBar: AVAudioPCMBuffer?
+    private var cachedKey = ""
     private var ticker: DispatchSourceTimer?
     private var lastBeat = -1
 
@@ -61,8 +63,9 @@ final class NativeMetronomeEngine {
     init() {
         q.async { [self] in
             activateSession()
-            setupEngine()
             loadSamples()
+            setupEngine()
+            prepareBar()
             observeSystemEvents()
         }
     }
@@ -86,7 +89,10 @@ final class NativeMetronomeEngine {
         q.async { [self] in
             setTitle(title)
             let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
-            if isPlaying && changed { startPlayback() } else { syncLiveActivity() }
+            if isPlaying && changed { startPlayback() } else {
+                if changed { prepareBar() }
+                syncLiveActivity()
+            }
         }
     }
 
@@ -108,7 +114,7 @@ final class NativeMetronomeEngine {
         let next = max(30, min(300, bpm + delta))
         guard next != bpm else { return }
         bpm = next
-        if isPlaying { startPlayback() } else { syncLiveActivity() }
+        if isPlaying { startPlayback() } else { prepareBar(); syncLiveActivity() }
         let tempo = Int(next.rounded())
         DispatchQueue.main.async { [weak self] in self?.onTempo?(tempo) }
     }
@@ -118,9 +124,12 @@ final class NativeMetronomeEngine {
         title = t.isEmpty ? "Metronome" : t
     }
 
+    /// Lock-screen updates run on their own queue: creating/updating a Live Activity can take
+    /// hundreds of ms and must never delay the click or the next button press.
     private func syncLiveActivity() {
+        let t = title, b = Int(bpm.rounded()), p = isPlaying
         if #available(iOS 16.2, *) {
-            MetronomeLiveActivity.shared.sync(title: title, bpm: Int(bpm.rounded()), playing: isPlaying)
+            MetronomeLiveActivity.shared.sync(title: t, bpm: b, playing: p)
         }
     }
 
@@ -169,6 +178,8 @@ final class NativeMetronomeEngine {
         do {
             // .playback ignores the hardware silent switch and keeps playing with the screen locked.
             try session.setCategory(.playback, mode: .default, options: [])
+            // ~5 ms hardware buffer instead of the default ~23 ms: clicks start/stop sooner.
+            try? session.setPreferredIOBufferDuration(0.005)
             try session.setActive(true)
             sessionActive = true
         } catch {
@@ -181,8 +192,12 @@ final class NativeMetronomeEngine {
     private func setupEngine() {
         engine.attach(clkNode)
         engine.attach(mixNode)
-        // clkNode → mixNode → mainMixerNode → outputNode
-        engine.connect(clkNode, to: mixNode, format: nil)
+        // clkNode → mixNode → mainMixerNode → outputNode.
+        // Connect the player with the format of the click buffers right away, so the
+        // first Play never has to re-wire a running engine (that caused a long delay).
+        let fmt = barFormat()
+        engine.connect(clkNode, to: mixNode, format: fmt)
+        connectedFormat = fmt
         engine.connect(mixNode, to: engine.mainMixerNode, format: nil)
         mixNode.outputVolume = volume
         startEngineIfNeeded()
@@ -230,13 +245,32 @@ final class NativeMetronomeEngine {
     // MARK: - Bar buffer
     /// Renders one bar (all beats and subdivisions) into a single stereo buffer.
     /// Frame positions use the buffer's own sample rate, so tempo is exact.
-    private func buildBarBuffer() -> AVAudioPCMBuffer? {
+    private func barFormat() -> AVAudioFormat? {
         var rate = hiBuffer?.format.sampleRate ?? lowBuffer?.format.sampleRate ?? 0
         if rate <= 0 {
             let out = engine.outputNode.outputFormat(forBus: 0).sampleRate
             rate = out > 0 ? out : 44100
         }
-        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return nil }
+        return AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)
+    }
+
+    /// The last rendered bar is kept, so pressing Play with unchanged settings does no
+    /// audio rendering at all — it just schedules the ready buffer.
+    private func currentBar() -> AVAudioPCMBuffer? {
+        let key = "\(bpm)|\(beatsPerBar)|\(subdivision)|\(accents.joined(separator: ","))"
+        if let cached = cachedBar, cachedKey == key { return cached }
+        guard let bar = buildBarBuffer() else { return nil }
+        cachedBar = bar
+        cachedKey = key
+        return bar
+    }
+
+    /// Renders the bar for the current settings ahead of time (while stopped).
+    private func prepareBar() { _ = currentBar() }
+
+    private func buildBarBuffer() -> AVAudioPCMBuffer? {
+        guard let fmt = barFormat() else { return nil }
+        let rate = fmt.sampleRate
 
         let beatFrames = 60.0 / bpm * rate
         let barFrames  = AVAudioFrameCount((beatFrames * Double(beatsPerBar)).rounded())
@@ -309,14 +343,17 @@ final class NativeMetronomeEngine {
         stopTicker()
         activateSession()   // no-op when already active; never runs on the main thread
 
-        guard let buf = buildBarBuffer() else {
+        guard let buf = currentBar() else {
             isPlaying = false
             publishState()
             return
         }
 
-        clkNode.stop()
-        clkNode.reset()
+        // Only a restart (tempo change while playing) needs the node cleared.
+        if isPlaying {
+            clkNode.stop()
+            clkNode.reset()
+        }
 
         // The player must be connected with the format of the buffer it plays.
         if connectedFormat != buf.format {
