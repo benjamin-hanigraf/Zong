@@ -4335,10 +4335,18 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
   );
 }
 
+function compareEnglishThenTamil(a, b) {
+  const ta = (t) => /[\u0B80-\u0BFF]/.test(t);
+  const titleA = stripAltTitle(a.title), titleB = stripAltTitle(b.title);
+  const tamilA = ta(titleA), tamilB = ta(titleB);
+  if (tamilA !== tamilB) return tamilA ? 1 : -1;
+  return titleA.localeCompare(titleB, tamilA ? "ta" : undefined, { sensitivity: "base", numeric: true });
+}
 function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, onRenameSetlist, isShared, onToggleShared, mode, tanglishMode, C }) {
   const [query, setQuery] = useState("");
   const [nameDraft, setNameDraft] = useState(setlistName ?? "");
-  const filtered = songs.filter((s) => songMatchesQuery(s, query));
+  // English titles first (A–Z), then Tamil titles (in Tamil alphabetical order).
+  const filtered = songs.filter((s) => songMatchesQuery(s, query)).sort(compareEnglishThenTamil);
   const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed && onRenameSetlist) onRenameSetlist(trimmed); else setNameDraft(setlistName ?? ""); };
   return (
     <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
