@@ -58,3 +58,13 @@ export const nativeMetronome = {
   /** handler({ bpm }) — tempo changed by the lock-screen +/- buttons */
   addTempoListener(handler) { return listen("tempo", handler); },
 };
+
+// Piano / pad chord voices are rendered by the native engine in the iOS app (Web Audio there
+// was muted by the phone's silent switch). Fire-and-forget: a key press must never wait.
+const quiet = () => {};
+export const nativePiano = {
+  noteOn(id, midi) { Plugin?.pianoNoteOn({ id, midi })?.catch(quiet); },
+  padOn(id, root, minor) { Plugin?.padOn({ id, root, minor })?.catch(quiet); },
+  noteOff(id) { Plugin?.pianoNoteOff({ id })?.catch(quiet); },
+  allOff() { Plugin?.pianoAllOff()?.catch(quiet); },
+};

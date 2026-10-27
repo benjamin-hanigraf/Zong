@@ -16,11 +16,17 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "update",   returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVolume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
+        // Piano / pad chord voices (rendered natively so they ignore the silent switch)
+        CAPPluginMethod(name: "pianoNoteOn",  returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "padOn",        returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pianoNoteOff", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pianoAllOff",  returnType: CAPPluginReturnPromise),
     ]
 
     private let engine = NativeMetronomeEngine.shared
 
     public override func load() {
+        _ = NativePianoSynth.shared   // load samples and start the piano engine at launch
         // Touching `engine` here creates it at launch, so audio is ready before the first tap.
         engine.onBeat = { [weak self] beatIndex in
             self?.notifyListeners("beat", data: ["beatIndex": beatIndex])
@@ -69,5 +75,25 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func getState(_ call: CAPPluginCall) {
         engine.queryState { playing, bpm in call.resolve(["playing": playing, "bpm": bpm]) }
+    }
+
+    @objc func pianoNoteOn(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.noteOn(id: call.getInt("id") ?? 0, midi: call.getInt("midi") ?? 60)
+        call.resolve()
+    }
+
+    @objc func padOn(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.padOn(id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 0, minor: call.getBool("minor") ?? false)
+        call.resolve()
+    }
+
+    @objc func pianoNoteOff(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.noteOff(id: call.getInt("id") ?? 0)
+        call.resolve()
+    }
+
+    @objc func pianoAllOff(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.allOff()
+        call.resolve()
     }
 }

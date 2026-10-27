@@ -24,6 +24,7 @@
 		7C1D5A000000000000000007 /* ZongLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1D5A000000000000000006 /* ZongLiveActivityBundle.swift */; };
 		7C1D5A000000000000000009 /* ZongLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1D5A000000000000000008 /* ZongLiveActivity.swift */; };
 		7C1D5A000000000000000018 /* ZongLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7C1D5A00000000000000000B /* ZongLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7C1D5A00000000000000001F /* NativePianoSynth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1D5A00000000000000001E /* NativePianoSynth.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +71,7 @@
 		7C1D5A000000000000000008 /* ZongLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZongLiveActivity.swift; sourceTree = "<group>"; };
 		7C1D5A00000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		7C1D5A00000000000000000B /* ZongLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ZongLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C1D5A00000000000000001E /* NativePianoSynth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePianoSynth.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +118,7 @@
 			children = (
 				1EBD899A3081D95100EFC9C0 /* NativeMetronomeEngine.swift */,
 				1EBD899B3081D95100EFC9C0 /* NativeMetronomePlugin.swift */,
+				7C1D5A00000000000000001E /* NativePianoSynth.swift */,
 				7C1D5A000000000000000004 /* MetronomeLiveActivity.swift */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -265,6 +268,7 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				7C1D5A000000000000000005 /* MetronomeLiveActivity.swift in Sources */,
+				7C1D5A00000000000000001F /* NativePianoSynth.swift in Sources */,
 				7C1D5A000000000000000002 /* ZongActivityShared.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

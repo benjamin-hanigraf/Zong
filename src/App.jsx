@@ -11,7 +11,7 @@ import {
   markSharedPending, markSharedDeleted, getPendingSharedIds, getDeletedSharedIds, getDirtySongIds,
   getDirtySpellingKeys, clearSharedQueues,
 } from "./supabaseSync";
-import { isNativePlatform, nativeMetronome } from "./nativeMetronome";
+import { isNativePlatform, nativeMetronome, nativePiano } from "./nativeMetronome";
 
 function getDeviceId() {
   if (typeof localStorage === "undefined") return "dev_default";
@@ -1718,6 +1718,7 @@ const PIANO_SAMPLE_DEFS = [
   { name: "C4", midi: 60 }, { name: "Ds4", midi: 63 }, { name: "Fs4", midi: 66 }, { name: "A4", midi: 69 },
 ];
 
+let _nativeNoteId = 0;   // unique id per native piano voice
 let _pianoBuffers = null; // { [name]: { buffer: AudioBuffer, midi: number } }
 let _metronomeBuffers = null; // { hi: AudioBuffer, low: AudioBuffer }
 let _audioLoadingPromise = null;
@@ -1836,6 +1837,8 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   };
 
   useEffect(() => {
+    // In the iOS app the native engine plays the piano: no Web Audio context is created at all.
+    if (isNativePlatform()) { setSamplesReady(true); return; }
     const ctx = ensureCtx();
     if (_pianoBuffers && Object.keys(_pianoBuffers).length > 0) {
       setSamplesReady(true);
@@ -1847,6 +1850,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   const midiFor = (semitone) => (octaveStartRef.current + 1) * 12 + semitone;
 
   const releaseVoice = (voice) => {
+    if (voice && voice.nativeId) { nativePiano.noteOff(voice.nativeId); return; }
     if (!voice || !voice.ctx) return;
     const { gainNode, source, ctx } = voice;
     const now = ctx.currentTime;
@@ -1859,6 +1863,11 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
   };
 
   const startNote = (semitone) => {
+    if (isNativePlatform()) {
+      const nativeId = ++_nativeNoteId;
+      nativePiano.noteOn(nativeId, midiFor(semitone));
+      return { nativeId, semitone };
+    }
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
@@ -1897,6 +1906,11 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
 
   // --- Warm pad chord voice for Vocals mode (High volume, clean harmonics) ---
   const startPadChord = (rootSemitone) => {
+    if (isNativePlatform()) {
+      const nativeId = ++_nativeNoteId;
+      nativePiano.padOn(nativeId, rootSemitone, chordQualityRef.current === "Minor");
+      return { nativeId };
+    }
     const ctx = ensureCtx();
     const now = ctx.currentTime;
     const dest = masterCompRef.current || ctx.destination;
@@ -1983,6 +1997,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
 
   const stopPadChord = (padVoice) => {
     if (!padVoice) return;
+    if (padVoice.nativeId) { nativePiano.noteOff(padVoice.nativeId); return; }
     const ctx = getSharedAudioContext();
     const now = ctx.currentTime;
     try {
@@ -2079,6 +2094,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         else if (entry.voice) releaseVoice(entry.voice);
       });
       activeRef.current.clear();
+      if (isNativePlatform()) { nativePiano.allOff(); return; }
       const ctx = getSharedAudioContext();
       if (ctx && ctx.state === "running") ctx.suspend().catch(() => { });
     };
