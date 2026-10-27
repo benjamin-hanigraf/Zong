@@ -191,7 +191,7 @@ Supabase Architecture:
    - The database only accepts writes if `revision == baseRevision`.
    - On conflict, Zong automatically fetches remote changes, merges local non-duplicate items, and retries.
 2. **WebSocket Realtime Subscriptions**:
-   - `subscribeToChanges()` registers Postgres change listeners on `zong_global` and `zong_teams`.
+   - `subscribeToChanges()` registers Postgres change listeners on `zong_songs`, `zong_spelling_chart` and `zong_teams`.
    - When any team member saves a song or reorders a setlist, all devices update instantly without polling.
 3. **Automatic Team Cleanup**:
    - Devices register their random UUID in `subscribers`.
@@ -237,7 +237,7 @@ npm run dev
 1. Log in to [Supabase Console](https://supabase.com).
 2. Open **SQL Editor** -> **New Query**.
 3. Paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**.
-4. In **Database -> Replication**, confirm that `supabase_realtime` has `zong_global` and `zong_teams` enabled.
+4. In **Database -> Replication**, confirm that `supabase_realtime` has `zong_songs`, `zong_spelling_chart` and `zong_teams` enabled.
 
 ### Production Build & Deployment
 ```bash

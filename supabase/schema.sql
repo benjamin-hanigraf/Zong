@@ -12,6 +12,8 @@
 -- It will:
 --   • Ensure all 3 tables exist (zong_songs, zong_spelling_chart, zong_teams).
 --   • Ensure all required columns exist (including `subscribers` on zong_teams).
+--   • Drop obsolete columns (accents, is_deleted) and purge old soft-deleted rows.
+--     Deletes are real DELETEs; accents/subdivision live only on-device.
 --   • Grant full permissions (SELECT, INSERT, UPDATE, DELETE) to anon & authenticated roles.
 --   • Create robust Row Level Security (RLS) policies with WITH CHECK (true).
 --   • Enable REPLICA IDENTITY FULL and Realtime push replication.
@@ -35,29 +37,22 @@ CREATE TABLE IF NOT EXISTS public.zong_songs (
   chords_text     TEXT DEFAULT '',
   chart_text      TEXT DEFAULT '',
   drums_text      TEXT DEFAULT '',
-  -- accents is kept for backward compatibility but is no longer read or written
-  -- by the client app. Beat accents are now stored per-device in localStorage.
-  accents         JSONB DEFAULT '[]'::jsonb,
   key_quality     TEXT DEFAULT 'Major',
   description     TEXT DEFAULT '',
-  is_deleted      BOOLEAN DEFAULT FALSE,
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
 -- Ensure all columns exist on zong_songs
-ALTER TABLE public.zong_songs ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.zong_songs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
 -- 1B. Spelling Chart table
 CREATE TABLE IF NOT EXISTS public.zong_spelling_chart (
   tamil           TEXT PRIMARY KEY,
   latin           TEXT NOT NULL,
-  is_deleted      BOOLEAN DEFAULT FALSE,
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
 -- Ensure all columns exist on zong_spelling_chart
-ALTER TABLE public.zong_spelling_chart ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.zong_spelling_chart ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
 -- 1C. Teams table (Shared setlists + device subscriber list)
@@ -74,6 +69,24 @@ ALTER TABLE public.zong_teams ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL
 ALTER TABLE public.zong_teams ADD COLUMN IF NOT EXISTS shared_setlists JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE public.zong_teams ADD COLUMN IF NOT EXISTS subscribers JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE public.zong_teams ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- -----------------------------------------------------------------------------
+-- 1D. Remove obsolete columns. Rows previously soft-deleted are purged first so
+--     they don't reappear as live data.
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'zong_songs' AND column_name = 'is_deleted') THEN
+    DELETE FROM public.zong_songs WHERE is_deleted;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'zong_spelling_chart' AND column_name = 'is_deleted') THEN
+    DELETE FROM public.zong_spelling_chart WHERE is_deleted;
+  END IF;
+END $$;
+
+ALTER TABLE public.zong_songs          DROP COLUMN IF EXISTS is_deleted;
+ALTER TABLE public.zong_songs          DROP COLUMN IF EXISTS accents;
+ALTER TABLE public.zong_spelling_chart DROP COLUMN IF EXISTS is_deleted;
 
 -- -----------------------------------------------------------------------------
 -- 2. Permissions & Grants
@@ -149,10 +162,11 @@ CREATE INDEX IF NOT EXISTS zong_spelling_updated_at_idx ON public.zong_spelling_
 -- 4. Realtime & Replica Identity
 -- -----------------------------------------------------------------------------
 
--- Set FULL replica identity so Realtime change payloads contain all columns on UPDATE and DELETE
-ALTER TABLE public.zong_songs          REPLICA IDENTITY FULL;
-ALTER TABLE public.zong_spelling_chart  REPLICA IDENTITY FULL;
-ALTER TABLE public.zong_teams           REPLICA IDENTITY FULL;
+-- Default replica identity: DELETE events carry only the primary key, which is all
+-- the client needs (no extra row data is transmitted).
+ALTER TABLE public.zong_songs          REPLICA IDENTITY DEFAULT;
+ALTER TABLE public.zong_spelling_chart  REPLICA IDENTITY DEFAULT;
+ALTER TABLE public.zong_teams           REPLICA IDENTITY DEFAULT;
 
 -- Add tables to the supabase_realtime publication if not already included
 DO $$
@@ -189,7 +203,7 @@ BEGIN
     INSERT INTO public.zong_songs (
       id, title, artist, key, tempo, time_signature, language, 
       lyrics_text, chords_text, chart_text, drums_text, 
-      accents, key_quality, description, is_deleted, updated_at
+      key_quality, description, updated_at
     )
     SELECT
       s->>'id',
@@ -203,10 +217,8 @@ BEGIN
       COALESCE(s->>'chordsText', ''),
       COALESCE(s->>'chartText', ''),
       COALESCE(s->>'drumsText', ''),
-      COALESCE(s->'accents', '["normal","normal","normal","normal"]'::jsonb),
       COALESCE(s->>'keyQuality', 'Major'),
       COALESCE(s->>'description', ''),
-      false,
       now()
     FROM public.zong_global, jsonb_array_elements(songs) AS s
     WHERE s->>'id' IS NOT NULL
@@ -221,24 +233,20 @@ BEGIN
       chords_text    = EXCLUDED.chords_text,
       chart_text     = EXCLUDED.chart_text,
       drums_text     = EXCLUDED.drums_text,
-      accents        = EXCLUDED.accents,
       key_quality    = EXCLUDED.key_quality,
       description    = EXCLUDED.description,
-      is_deleted     = false,
       updated_at     = now();
 
     -- Migrate spelling chart
-    INSERT INTO public.zong_spelling_chart (tamil, latin, is_deleted, updated_at)
+    INSERT INTO public.zong_spelling_chart (tamil, latin, updated_at)
     SELECT
       key,
       value#>>'{}',
-      false,
       now()
     FROM public.zong_global, jsonb_each(spelling_chart)
     WHERE key IS NOT NULL AND key != ''
     ON CONFLICT (tamil) DO UPDATE SET
       latin      = EXCLUDED.latin,
-      is_deleted = false,
       updated_at = now();
 
     -- Drop legacy zong_global table
