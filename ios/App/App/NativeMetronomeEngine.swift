@@ -66,10 +66,12 @@ final class NativeMetronomeEngine {
             // .playback ignores the hardware silent switch and continues
             // audio when the screen is locked.
             try session.setCategory(.playback, mode: .default, options: [])
-            try session.setActive(true)
         } catch {
             print("[NativeMetronome] Audio session setup error: \(error)")
         }
+
+        // Activating the session can block, so keep it off the main thread.
+        DispatchQueue.global(qos: .userInitiated).async { try? session.setActive(true) }
 
         NotificationCenter.default.addObserver(
             self,
@@ -383,7 +385,7 @@ final class NativeMetronomeEngine {
             let opts = AVAudioSession.InterruptionOptions(rawValue: optVal)
             if opts.contains(.shouldResume) && isInterrupted {
                 isInterrupted = false
-                try? AVAudioSession.sharedInstance().setActive(true)
+                DispatchQueue.global(qos: .userInitiated).async { try? AVAudioSession.sharedInstance().setActive(true) }
                 start(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents)
             }
         @unknown default: break

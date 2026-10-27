@@ -14,6 +14,12 @@ class ZongBridgeViewController: CAPBridgeViewController {
 
     override var preferredStatusBarStyle: UIStatusBarStyle { return .lightContent }
 
+    // Local (in-app) Capacitor plugins are not auto-discovered; without this the
+    // JS calls to NativeMetronome fail silently and the metronome makes no sound.
+    override func capacitorDidLoad() {
+        bridge?.registerPluginInstance(NativeMetronomePlugin())
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
