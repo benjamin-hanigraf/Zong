@@ -6,7 +6,7 @@ import ActivityKit
 /// (App target only. Must be started while the app is in the foreground — which is
 /// always the case when the user taps play in the app.)
 @available(iOS 16.2, *)
-final class MetronomeLiveActivity {
+final class MetronomeLiveActivity: @unchecked Sendable {   // all state is touched only on `queue`
     static let shared = MetronomeLiveActivity()
 
     private var activity: Activity<ZongActivityAttributes>?
