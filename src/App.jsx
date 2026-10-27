@@ -676,6 +676,41 @@ function capitalizeTanglishWords(text) {
 // Runs transliteration only when Tanglish mode is on and the text actually
 // contains Tamil script; otherwise passes the original text through
 // untouched (English/mixed text, or Tanglish mode off).
+// Tamil glyphs are drawn smaller than Latin ones at the same font-size. Measure, on this very
+// device and font, the Latin x-height against the Tamil base-letter height (baseline to mean
+// line) and publish the ratio as --ta-scale; <Tamil> uses it to size Tamil runs so both
+// scripts look equally big. Works with whatever Tamil font the platform provides.
+function measureTamilScale() {
+  try {
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.font = `400 200px ${FONT}`;
+    const latin = ctx.measureText("x").actualBoundingBoxAscent;
+    const heights = ["ம", "ர", "ன", "ல", "வ", "ப", "க", "ட", "த", "ச"]
+      .map((ch) => ctx.measureText(ch).actualBoundingBoxAscent)
+      .filter((h) => h > 0)
+      .sort((a, b) => a - b);
+    if (!latin || !heights.length) return 1;
+    const tamil = heights[Math.floor(heights.length / 2)];
+    return Math.max(0.9, Math.min(1.5, latin / tamil));
+  } catch { return 1; }
+}
+function applyTamilScale() {
+  const scale = measureTamilScale();
+  document.documentElement.style.setProperty("--ta-scale", scale.toFixed(3));
+}
+const TAMIL_RUN_RE = /([\u0B80-\u0BFF]+(?:[\s\u200c\u200d]+[\u0B80-\u0BFF]+)*)/;
+function Tamil({ children }) {
+  if (typeof children !== "string" || !/[\u0B80-\u0BFF]/.test(children)) return <>{children}</>;
+  return (
+    <>
+      {children.split(TAMIL_RUN_RE).map((part, i) => (
+        /[\u0B80-\u0BFF]/.test(part)
+          ? <span key={i} style={{ fontSize: "calc(1em * var(--ta-scale, 1))" }}>{part}</span>
+          : part
+      ))}
+    </>
+  );
+}
 function maybeTanglish(text, tanglishMode) {
   if (!tanglishMode || !text) return text;
   return TAMIL_RANGE_RE.test(text) ? capitalizeTanglishLines(transliterateTanglish(text)) : text;
@@ -2911,7 +2946,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
         style={{ textAlign: "center", minHeight: 44, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer", maxWidth: 260 }}>
         {loadedSong ? (
           <>
-            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}>{stripAltTitle(loadedSong.title)}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.45, whiteSpace: "normal", wordBreak: "break-word" }}><Tamil>{stripAltTitle(loadedSong.title)}</Tamil></div>
             <div style={{ fontSize: 13, color: C.textMuted, marginTop: 10 }}>{loadedSong.artist}</div>
           </>
         ) : (
@@ -3456,6 +3491,8 @@ function useEdgeSwipeBack(onBack, edgeZone = 24) {
 const SWIPE_MS = 300;
 const SWIPE_EASE = "cubic-bezier(0.22, 0.61, 0.36, 1)";
 function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
+  // cardRef = the song's scrolling content area (lyrics / chords / notes). Only that part slides;
+  // the header, badges and bottom bars stay where they are and just update their text.
   const startRef = useRef({ x: 0, y: 0 });
   const dirRef = useRef(null);
   const shownRef = useRef(0);       // current horizontal offset of the card
@@ -3513,16 +3550,18 @@ function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
     const W = window.innerWidth;
     const from = shownRef.current;
 
-    // Ghost copy of the outgoing page slides away.
+    // Ghost copy of the outgoing content slides away, pinned exactly over the content area.
+    const rect = el.getBoundingClientRect();   // includes the current drag offset
     const ghost = el.cloneNode(true);
     ghost.setAttribute("aria-hidden", "true");
-    ghost.style.pointerEvents = "none";
-    ghost.style.transform = "";
-    ghost.style.zIndex = "101";
+    Object.assign(ghost.style, {
+      position: "fixed", left: `${rect.left - from}px`, top: `${rect.top}px`,
+      width: `${rect.width}px`, height: `${rect.height}px`, margin: "0", flex: "none",
+      background: getComputedStyle(el.parentElement || document.body).backgroundColor,
+      pointerEvents: "none", transform: "", zIndex: "101", willChange: "transform",
+    });
     document.body.appendChild(ghost);
-    const srcScroll = el.querySelector(".scroll-list");
-    const dstScroll = ghost.querySelector(".scroll-list");
-    if (srcScroll && dstScroll) dstScroll.scrollTop = srcScroll.scrollTop;
+    ghost.scrollTop = el.scrollTop;
     ghostRef.current = ghost;
     const out = ghost.animate(
       [{ transform: `translate3d(${from}px,0,0)` }, { transform: `translate3d(${dir * W}px,0,0)` }],
@@ -4245,8 +4284,8 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
-        <div style={{ fontSize: 12.5, color: "#6A6A6E", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
+        <div style={{ fontSize: 12.5, color: "#6A6A6E", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</Tamil></div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -4349,7 +4388,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
               <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {checked && <Check size={14} color="#fff" />}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}>{maybeTanglish(stripAltTitle(s.title), tanglishMode)}</div><div style={{ fontSize: 12.5, color: C.textMuted }}>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15.5, fontWeight: 600 }}><Tamil>{maybeTanglish(stripAltTitle(s.title), tanglishMode)}</Tamil></div><div style={{ fontSize: 12.5, color: C.textMuted }}><Tamil>{maybeTanglish(s.artist, tanglishMode) || "Unknown"}</Tamil></div></div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>
                 {mode === "drums" ? (s.tempo !== "" && s.tempo != null ? `${s.tempo}` : "—") : keyLabel(s)}
               </div>
@@ -4403,8 +4442,7 @@ function SongDetailScreen({
   const incBpmHold = useHoldRepeat(() => stepBpm(1));
 
   const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
-  const cardRef = useRef(null);
-  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong, cardRef, song.id);
+  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong, scrollRef, song.id);
   const { dragX, leaving, dragging, handlers, transitioning } = isInSetlist
     ? { dragX: 0, leaving: false, dragging: false, handlers: setlistSwipe.handlers, transitioning: false }
     : { ...edgeBack, transitioning: false };
@@ -4436,7 +4474,7 @@ function SongDetailScreen({
     <>
     {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
-    <div ref={cardRef} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, willChange: isInSetlist ? "transform" : undefined, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
@@ -4445,8 +4483,8 @@ function SongDetailScreen({
           onMouseDown={startTitlePress} onMouseUp={cancelTitlePress} onMouseLeave={cancelTitlePress}
           style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", maxWidth: "calc(100% - 140px)", textAlign: "center", cursor: "pointer" }}
         >
-          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
-          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode)}</div>}
+          <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
+          {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode)}</Tamil></div>}
         </div>
         {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
@@ -4517,7 +4555,7 @@ function SongDetailScreen({
         </div>
       )}
 
-      <div ref={scrollRef} className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y" }}>
+      <div ref={scrollRef} className="scroll-list" style={{ flex: 1, overflowY: dragging ? "hidden" : "auto", overflowX: "hidden", padding: "16px 20px 40px", touchAction: dragging ? "none" : "pan-y", willChange: isInSetlist ? "transform" : undefined }}>
         {descOpen && song.description && (
           <div style={{ marginBottom: 18, padding: "11px 13px", background: C.surface2, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 8, fontSize: 13.5, color: C.textMuted, whiteSpace: "pre-wrap" }}>
             {maybeTanglish(song.description, tanglishMode)}
@@ -4592,8 +4630,8 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
   return (
     <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</div>
-        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</div>
+        <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
+        <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</Tamil></div>
       </div>
       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent, border: `1px solid ${C.accentDim}`, borderRadius: 6, padding: "3px 7px", flexShrink: 0 }}>{badgeText}</span>
     </div>
@@ -6243,6 +6281,12 @@ function AppInner() {
       window.visualViewport?.removeEventListener("scroll", pinScroll);
       window.visualViewport?.removeEventListener("resize", pinScroll);
     };
+  }, []);
+
+  // Match the Tamil font size to the Latin one on this device (see <Tamil>).
+  useEffect(() => {
+    applyTamilScale();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(applyTamilScale).catch(() => { });
   }, []);
 
   // Screen wake lock while the app is open (metronome/chart use, no auto-lock).
