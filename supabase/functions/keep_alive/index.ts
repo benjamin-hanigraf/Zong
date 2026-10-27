@@ -10,12 +10,11 @@ Deno.serve(async () => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")! || Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Simple light query to keep the database active
+    // Simple light query to keep the database active (zong_global no longer exists)
     const { data, error } = await supabase
-      .from("zong_global")
-      .select("id, revision, updated_at")
-      .eq("id", "main")
-      .single();
+      .from("zong_songs")
+      .select("id")
+      .limit(1);
 
     if (error) throw error;
 

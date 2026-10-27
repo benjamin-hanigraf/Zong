@@ -5,111 +5,160 @@ import MediaPlayer
 // ============================================================
 // NativeMetronomeEngine
 //
-// Scheduling strategy:
+// Design:
 //   • One AVAudioEngine + one AVAudioPlayerNode (the "click node").
-//   • buildBarBuffer() pre-renders one bar of audio into an AVAudioPCMBuffer:
-//       – loads m_hi.wav (accent) and m_low.wav (normal) from the bundle
-//       – places each click at the exact sample position for its beat
-//       – fills the remaining samples with silence
-//   • The buffer is looped with scheduleBuffer(.loops).
-//   • On tempo / time-sig / accent changes while playing: call
-//     rebuildAndSeamlesslyRestart() which computes the current playback
-//     position, builds the new buffer, and schedules it so the next bar
-//     boundary lines up perfectly.
-//   • Beat events are fired by a dedicated serial queue that wakes up at the
-//     precise audio-clock time of each beat using DispatchQueue + .asyncAfter.
+//   • One bar of audio (clicks at their exact sample positions, including
+//     subdivisions) is pre-rendered into a buffer and looped by the player
+//     node, so timing is sample-accurate and never depends on timers.
+//   • Beat flashes are derived from the audio clock itself (a lightweight
+//     ticker reads the player's sample position), so they can never drift
+//     away from the sound.
+//   • ALL mutable state is touched on one serial queue (`q`). Public methods
+//     can be called from any thread; blocking work (activating the audio
+//     session) never runs on the main thread.
+//   • The native side is the source of truth for "playing": every change
+//     (start, stop, audio interruption, lock-screen button) is published via
+//     `onState`, and JS mirrors it. Nothing can stop the sound without the UI
+//     finding out.
+//   • The engine recovers by itself from audio route / configuration changes
+//     and category changes made by the web view.
 // ============================================================
 
 final class NativeMetronomeEngine {
 
     // MARK: - Callbacks (set by the plugin)
     var onBeat: ((Int) -> Void)?
-    var onRemoteCommand: ((String) -> Void)?
+    var onState: ((Bool) -> Void)?
 
-    // MARK: - State
+    // MARK: - State (only touched on `q`)
+    private let q = DispatchQueue(label: "com.zong.metronome.audio", qos: .userInteractive)
     private var bpm: Double = 120
     private var beatsPerBar: Int = 4
+    private var subdivision: Int = 1
     private var accents: [String] = []   // "normal" | "accent" | "mute"
     private var volume: Float = 1.0
-    private(set) var isPlaying = false
+    private var isPlaying = false
+    private var resumeAfterInterruption = false
 
     // MARK: - Audio objects
     private let engine  = AVAudioEngine()
     private let clkNode = AVAudioPlayerNode()
     private let mixNode = AVAudioMixerNode()   // volume control
-
-    private var hiBuffer:  AVAudioPCMBuffer?  // m_hi.wav
-    private var lowBuffer: AVAudioPCMBuffer?  // m_low.wav
-    private var barBuffer: AVAudioPCMBuffer?  // pre-rendered bar
-    private var barFormat: AVAudioFormat?
-
-    // Track when the current bar started in audio-engine time,
-    // so we can offset beat events accurately.
-    private var barStartSampleTime: AVAudioFramePosition = 0
-    private var beatTimerWorkItems: [DispatchWorkItem] = []
-    private let beatQueue = DispatchQueue(label: "com.zong.metronome.beat", qos: .userInteractive)
-
-    private var isInterrupted = false
+    private var hiBuffer:  AVAudioPCMBuffer?   // m_hi.wav  (accent)
+    private var lowBuffer: AVAudioPCMBuffer?   // m_low.wav (normal)
+    private var connectedFormat: AVAudioFormat?
+    private var ticker: DispatchSourceTimer?
+    private var lastBeat = -1
 
     // MARK: - Init
     init() {
-        setupAudioSession()
-        setupEngine()
-        loadSamples()
-        setupRemoteCommands()
+        q.async { [self] in
+            activateSession()
+            setupEngine()
+            loadSamples()
+            setupRemoteCommands()
+            observeSystemEvents()
+        }
     }
 
-    // MARK: - AVAudioSession
-    private func setupAudioSession() {
+    // MARK: - Public API (thread-safe)
+
+    /// Starts playing. If already playing with identical settings this is a no-op
+    /// (prevents a double click when JS and the lock screen both ask to play).
+    func start(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int) {
+        q.async { [self] in
+            let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
+            if isPlaying && !changed { return }
+            startPlayback()
+        }
+    }
+
+    /// Updates settings; restarts the bar only if something actually changed and we are playing.
+    func update(bpm: Double, beatsPerBar: Int, accents: [String]?, subdivision: Int) {
+        q.async { [self] in
+            let changed = apply(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents, subdivision: subdivision)
+            if isPlaying && changed { startPlayback() }
+        }
+    }
+
+    func stop() {
+        q.async { [self] in
+            resumeAfterInterruption = false
+            halt()
+        }
+    }
+
+    func setVolume(_ v: Float) {
+        q.async { [self] in
+            volume = max(0, min(1, v))
+            mixNode.outputVolume = volume
+        }
+    }
+
+    func queryState(_ completion: @escaping (Bool) -> Void) {
+        q.async { [self] in completion(isPlaying) }
+    }
+
+    // MARK: - Settings
+    /// Returns true when any setting differs from the current one.
+    private func apply(bpm newBpm: Double, beatsPerBar newBeats: Int, accents newAccents: [String]?, subdivision newSub: Int) -> Bool {
+        let b   = max(30, min(300, newBpm))
+        let n   = max(1, newBeats)
+        let s   = max(1, min(4, newSub))
+        let acc = normalizedAccents(newAccents, beats: n)
+        let changed = b != bpm || n != beatsPerBar || s != subdivision || acc != accents
+        bpm = b; beatsPerBar = n; subdivision = s; accents = acc
+        return changed
+    }
+
+    private func normalizedAccents(_ incoming: [String]?, beats: Int) -> [String] {
+        var arr = incoming ?? []
+        while arr.count < beats { arr.append("normal") }
+        return Array(arr.prefix(beats))
+    }
+
+    // MARK: - Audio session
+    private func activateSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            // .playback ignores the hardware silent switch and continues
-            // audio when the screen is locked.
+            // .playback ignores the hardware silent switch and keeps playing with the screen locked.
             try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
         } catch {
-            print("[NativeMetronome] Audio session setup error: \(error)")
+            print("[NativeMetronome] Audio session error: \(error)")
         }
-
-        // Activating the session can block, so keep it off the main thread.
-        DispatchQueue.global(qos: .userInitiated).async { try? session.setActive(true) }
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleInterruption(_:)),
-            name: AVAudioSession.interruptionNotification,
-            object: session
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleRouteChange(_:)),
-            name: AVAudioSession.routeChangeNotification,
-            object: session
-        )
     }
 
-    // MARK: - AVAudioEngine
+    // MARK: - Engine
     private func setupEngine() {
         engine.attach(clkNode)
         engine.attach(mixNode)
-
         // clkNode → mixNode → mainMixerNode → outputNode
-        engine.connect(clkNode, to: mixNode,               format: nil)
+        engine.connect(clkNode, to: mixNode, format: nil)
         engine.connect(mixNode, to: engine.mainMixerNode, format: nil)
-
         mixNode.outputVolume = volume
+        startEngineIfNeeded()
+    }
 
+    @discardableResult
+    private func startEngineIfNeeded() -> Bool {
+        if engine.isRunning { return true }
+        engine.prepare()
         do {
             try engine.start()
+            return true
         } catch {
-            print("[NativeMetronome] Engine start error: \(error)")
+            print("[NativeMetronome] engine.start error: \(error)")
+            return false
         }
     }
 
-    // MARK: - Sample loading
+    // MARK: - Samples
     private func loadSamples() {
         // Capacitor copies the web assets into the bundle under public/audio/
         hiBuffer  = loadWav(named: "m_hi",  inSubdir: "public/audio")
         lowBuffer = loadWav(named: "m_low", inSubdir: "public/audio")
+        print("[NativeMetronome] samples loaded: hi=\(hiBuffer != nil) low=\(lowBuffer != nil)")
     }
 
     private func loadWav(named name: String, inSubdir subdir: String) -> AVAudioPCMBuffer? {
@@ -130,79 +179,73 @@ final class NativeMetronomeEngine {
         }
     }
 
-    // MARK: - Bar buffer construction
-    /// Builds one bar of audio as a single PCMBuffer with clicks at the right positions.
-    private func buildBarBuffer(bpm: Double, beatsPerBar: Int, accents: [String]) -> AVAudioPCMBuffer? {
-        // outputFormat can report 0 Hz before the audio session is fully active; fall back to 44.1 kHz.
-        let reportedRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
-        let sampleRate   = reportedRate > 0 ? reportedRate : 44100
-        let beatDuration = 60.0 / bpm                             // seconds
-        let barDuration  = beatDuration * Double(beatsPerBar)
-        let barFrames    = AVAudioFrameCount(barDuration * sampleRate)
-        guard barFrames > 0 else { print("[NativeMetronome] bar buffer has 0 frames (bpm \(bpm))"); return nil }
-
-        // Use the accent buffer's format as the canonical stereo format.
-        // If no WAVs loaded, fall back to a 2-channel float format.
-        let fmt: AVAudioFormat
-        if let ref = hiBuffer?.format ?? lowBuffer?.format {
-            fmt = ref
-        } else {
-            guard let f = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return nil }
-            fmt = f
+    // MARK: - Bar buffer
+    /// Renders one bar (all beats and subdivisions) into a single stereo buffer.
+    /// Frame positions use the buffer's own sample rate, so tempo is exact.
+    private func buildBarBuffer() -> AVAudioPCMBuffer? {
+        var rate = hiBuffer?.format.sampleRate ?? lowBuffer?.format.sampleRate ?? 0
+        if rate <= 0 {
+            let out = engine.outputNode.outputFormat(forBus: 0).sampleRate
+            rate = out > 0 ? out : 44100
         }
-        barFormat = fmt
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return nil }
 
-        guard let bar = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: barFrames) else { return nil }
+        let beatFrames = 60.0 / bpm * rate
+        let barFrames  = AVAudioFrameCount((beatFrames * Double(beatsPerBar)).rounded())
+        guard barFrames > 0,
+              let bar = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: barFrames),
+              let dst = bar.floatChannelData else {
+            print("[NativeMetronome] could not allocate bar buffer (bpm \(bpm), beats \(beatsPerBar))")
+            return nil
+        }
         bar.frameLength = barFrames
-
-        // Zero-fill silence
-        let channelCount = Int(fmt.channelCount)
-        if let data = bar.floatChannelData {
-            for ch in 0..<channelCount {
-                memset(data[ch], 0, Int(barFrames) * MemoryLayout<Float>.size)
-            }
+        for ch in 0..<Int(fmt.channelCount) {
+            memset(dst[ch], 0, Int(barFrames) * MemoryLayout<Float>.size)
         }
 
-        // Mix each click into the bar buffer at the correct offset
+        let subs = max(1, subdivision)
         for beat in 0..<beatsPerBar {
-            let accentState = beat < accents.count ? accents[beat] : "normal"
-            if accentState == "mute" { continue }
-            let isAccent   = accentState == "accent"
-            let clickBuf   = isAccent ? hiBuffer : lowBuffer
-            let gain: Float = isAccent ? 1.0 : 0.85
-
-            let beatOffset = AVAudioFrameCount(Double(beat) * beatDuration * sampleRate)
-
-            if let src = clickBuf, let srcData = src.floatChannelData, let dstData = bar.floatChannelData {
-                let copyCount = min(Int(src.frameLength), Int(barFrames) - Int(beatOffset))
-                if copyCount > 0 {
-                    let srcChannels = Int(src.format.channelCount)
-                    for ch in 0..<channelCount {
-                        let srcCh = min(ch, srcChannels - 1)
-                        vDSP_vsma(
-                            srcData[srcCh], 1,
-                            [gain],
-                            dstData[ch].advanced(by: Int(beatOffset)), 1,
-                            dstData[ch].advanced(by: Int(beatOffset)), 1,
-                            vDSP_Length(copyCount)
-                        )
-                    }
-                }
-            } else {
-                // Synthetic fallback click: short sine blip
-                synthesizeClick(into: bar, at: Int(beatOffset), isAccent: isAccent, sampleRate: sampleRate)
+            let state = beat < accents.count ? accents[beat] : "normal"
+            if state == "mute" { continue }
+            for k in 0..<subs {
+                let isAccent = (k == 0 && state == "accent")
+                let gain: Float = isAccent ? 1.0 : (k == 0 ? 0.85 : 0.7)
+                let offset = Int((Double(beat) * beatFrames + Double(k) * beatFrames / Double(subs)).rounded())
+                mixClick(isAccent ? hiBuffer : lowBuffer, into: bar, at: offset, gain: gain, isAccent: isAccent, rate: rate)
             }
         }
         return bar
     }
 
-    /// Synthetic sine-click fallback (used if WAV files fail to load).
+    private func mixClick(_ src: AVAudioPCMBuffer?, into bar: AVAudioPCMBuffer, at offset: Int, gain: Float, isAccent: Bool, rate: Double) {
+        let total = Int(bar.frameLength)
+        guard offset >= 0, offset < total, let dst = bar.floatChannelData else { return }
+        let channels = Int(bar.format.channelCount)
+        if let src = src, let srcData = src.floatChannelData, src.format.channelCount > 0 {
+            let count = min(Int(src.frameLength), total - offset)
+            guard count > 0 else { return }
+            let srcChannels = Int(src.format.channelCount)
+            for ch in 0..<channels {
+                vDSP_vsma(
+                    srcData[min(ch, srcChannels - 1)], 1,
+                    [gain],
+                    dst[ch] + offset, 1,
+                    dst[ch] + offset, 1,
+                    vDSP_Length(count)
+                )
+            }
+        } else {
+            synthesizeClick(into: bar, at: offset, isAccent: isAccent, sampleRate: rate)
+        }
+    }
+
+    /// Synthetic sine-click fallback (used if the WAV files fail to load).
     private func synthesizeClick(into buf: AVAudioPCMBuffer, at offset: Int, isAccent: Bool, sampleRate: Double) {
-        let freq: Double  = isAccent ? 1500 : 1000
-        let amp: Float    = isAccent ? 0.7  : 0.4
-        let dur           = Int(0.05 * sampleRate)
-        let end           = min(offset + dur, Int(buf.frameLength))
-        guard let ch = buf.floatChannelData else { return }
+        let freq: Double = isAccent ? 1500 : 1000
+        let amp: Float   = isAccent ? 0.7 : 0.4
+        let dur          = Int(0.05 * sampleRate)
+        let end          = min(offset + dur, Int(buf.frameLength))
+        guard dur > 0, offset < end, let ch = buf.floatChannelData else { return }
         for i in offset..<end {
             let t = Double(i - offset) / sampleRate
             let env = Float(1.0 - Double(i - offset) / Double(dur))
@@ -213,190 +256,149 @@ final class NativeMetronomeEngine {
         }
     }
 
-    // MARK: - Playback control
-    func start(bpm: Double, beatsPerBar: Int, accents: [String]?) {
-        // Guard: if already playing with same params, don't restart (prevents double-click
-        // when the remote command fires while JS also calls start).
-        let newBpm     = max(30, min(300, bpm))
-        let newBeats   = max(1, beatsPerBar)
-        let newAccents = normalizedAccents(accents, beats: newBeats)
-        if isPlaying && newBpm == self.bpm && newBeats == self.beatsPerBar {
-            return
-        }
-        self.bpm         = newBpm
-        self.beatsPerBar = newBeats
-        self.accents     = newAccents
-        startPlayback()
-    }
-
-    func stop() {
-        guard isPlaying else { return }
-        isPlaying = false
-        cancelBeatTimers()
-        // Reset the player node fully so no buffered audio leaks into the next start.
-        clkNode.stop()
-        clkNode.reset()
-        updateNowPlaying(playing: false)
-    }
-
-    func setTempo(bpm newBpm: Double) {
-        let clamped = max(30, min(300, newBpm))
-        guard clamped != bpm else { return }
-        bpm = clamped
-        if isPlaying { rebuildAndSeamlesslyRestart() }
-        updateNowPlaying(playing: isPlaying)
-    }
-
-    func setBeatsPerBar(_ beats: Int, accents newAccents: [String]?) {
-        let newBeats = max(1, beats)
-        accents = normalizedAccents(newAccents, beats: newBeats)
-        guard newBeats != beatsPerBar else {
-            if isPlaying { rebuildAndSeamlesslyRestart() }
-            return
-        }
-        beatsPerBar = newBeats
-        if isPlaying { rebuildAndSeamlesslyRestart() }
-    }
-
-    func setAccents(_ newAccents: [String]) {
-        accents = normalizedAccents(newAccents, beats: beatsPerBar)
-        if isPlaying { rebuildAndSeamlesslyRestart() }
-    }
-
-    func setVolume(_ v: Float) {
-        volume = max(0, min(1, v))
-        mixNode.outputVolume = volume
-    }
-
-    // MARK: - Internal playback
+    // MARK: - Playback
     private func startPlayback() {
-        // Stop and reset the node first to drain any previously-buffered audio.
-        // This is the primary guard against the double-click on resume.
-        clkNode.stop()
-        clkNode.reset()
-        cancelBeatTimers()
+        stopTicker()
+        activateSession()   // safe: we are not on the main thread
 
-        if !engine.isRunning {
-            do { try engine.start() } catch { print("[NativeMetronome] engine.start error: \(error)"); return }
-        }
-        scheduleBar()
-        isPlaying = true
-        updateNowPlaying(playing: true)
-    }
-
-    /// Schedule one looping bar, fire beat events via the audio clock.
-    private func scheduleBar() {
-        guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else {
-            print("[NativeMetronome] could not build bar buffer")
+        guard let buf = buildBarBuffer() else {
+            isPlaying = false
+            publishState()
             return
         }
-        barBuffer = buf
-        print("[NativeMetronome] playing: hi=\(hiBuffer != nil) low=\(lowBuffer != nil) frames=\(buf.frameLength) rate=\(buf.format.sampleRate) ch=\(buf.format.channelCount) engineRunning=\(engine.isRunning)")
 
-        // The player node must be connected with the same format as the buffer it
-        // plays, otherwise the clicks are silent (or the wrong pitch/speed).
-        if clkNode.outputFormat(forBus: 0) != buf.format {
-            clkNode.stop()
+        clkNode.stop()
+        clkNode.reset()
+
+        // The player must be connected with the format of the buffer it plays.
+        if connectedFormat != buf.format {
             engine.disconnectNodeOutput(clkNode)
             engine.connect(clkNode, to: mixNode, format: buf.format)
+            connectedFormat = buf.format
         }
-        if !engine.isRunning { try? engine.start() }
+        guard startEngineIfNeeded() else {
+            isPlaying = false
+            publishState()
+            return
+        }
+
+        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionHandler: nil)
         clkNode.play()
 
-        barStartSampleTime = clkNode.playerTime(
-            forNodeTime: engine.outputNode.lastRenderTime ?? AVAudioTime(hostTime: mach_absolute_time())
-        )?.sampleTime ?? 0
-
-        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionCallbackType: .dataConsumed) { _ in }
-
-        scheduleBeatTimers()
+        isPlaying = true
+        startTicker(barFrames: Int(buf.frameLength), beats: beatsPerBar)
+        publishState()
+        updateNowPlaying()
+        print("[NativeMetronome] playing: bpm=\(bpm) beats=\(beatsPerBar) sub=\(subdivision) hi=\(hiBuffer != nil) low=\(lowBuffer != nil) rate=\(buf.format.sampleRate)")
     }
 
-    private func scheduleBeatTimers() {
-        cancelBeatTimers()
-        let beatDuration = 60.0 / bpm            // seconds per beat
-
-        for beat in 0..<beatsPerBar {
-            let accentState = beat < accents.count ? accents[beat] : "normal"
-            if accentState == "mute" { continue }
-            let delay = beatDuration * Double(beat)
-
-            // Rough host-time of this beat. We fire the UI callback 10ms before
-            // the actual audio click so the UI flash lands on the beat visually.
-            let fireSecs = delay - 0.01
-            let deadline = DispatchTime.now() + max(0, fireSecs)
-
-            let beatIdx = beat
-            let item = DispatchWorkItem { [weak self] in
-                self?.onBeat?(beatIdx)
-            }
-            beatTimerWorkItems.append(item)
-            beatQueue.asyncAfter(deadline: deadline, execute: item)
-        }
-
-        // Re-schedule beat timers for subsequent bars
-        let barDuration = beatDuration * Double(beatsPerBar)
-        let barItem = DispatchWorkItem { [weak self] in
-            guard let self = self, self.isPlaying else { return }
-            self.scheduleBeatTimers()
-        }
-        beatTimerWorkItems.append(barItem)
-        beatQueue.asyncAfter(deadline: .now() + barDuration, execute: barItem)
-    }
-
-    private func cancelBeatTimers() {
-        beatTimerWorkItems.forEach { $0.cancel() }
-        beatTimerWorkItems.removeAll()
-    }
-
-    /// Rebuild bar buffer and seamlessly hand off playback without a gap.
-    private func rebuildAndSeamlesslyRestart() {
-        guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else { return }
-        barBuffer = buf
+    /// Stops sound and notifies JS.
+    private func halt() {
+        let wasPlaying = isPlaying
+        isPlaying = false
+        stopTicker()
         clkNode.stop()
         clkNode.reset()
-        cancelBeatTimers()
-        clkNode.play()
-        clkNode.scheduleBuffer(buf, at: nil, options: .loops, completionCallbackType: .dataConsumed) { _ in }
-        scheduleBeatTimers()
+        if wasPlaying { publishState() }
+        updateNowPlaying()
     }
 
-    // MARK: - Accent helper
-    private func normalizedAccents(_ incoming: [String]?, beats: Int) -> [String] {
-        var arr = incoming ?? Array(repeating: "normal", count: beats)
-        while arr.count < beats { arr.append("normal") }
-        return Array(arr.prefix(beats))
+    // MARK: - Beat ticker (driven by the audio clock)
+    private func startTicker(barFrames: Int, beats: Int) {
+        stopTicker()
+        lastBeat = -1
+        guard barFrames > 0, beats > 0 else { return }
+        let beatFrames = Double(barFrames) / Double(beats)
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: q)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.isPlaying,
+                  let nodeTime = self.clkNode.lastRenderTime,
+                  let playerTime = self.clkNode.playerTime(forNodeTime: nodeTime) else { return }
+            let sample = Int(playerTime.sampleTime)
+            guard sample >= 0 else { return }
+            let beat = min(beats - 1, Int(Double(sample % barFrames) / beatFrames))
+            if beat != self.lastBeat {
+                self.lastBeat = beat
+                self.onBeat?(beat)
+            }
+        }
+        ticker = timer
+        timer.resume()
     }
 
-    // MARK: - Interruption handling
-    @objc private func handleInterruption(_ note: Notification) {
+    private func stopTicker() {
+        ticker?.cancel()
+        ticker = nil
+    }
+
+    private func publishState() {
+        let playing = isPlaying
+        DispatchQueue.main.async { [weak self] in self?.onState?(playing) }
+    }
+
+    // MARK: - System events
+    private func observeSystemEvents() {
+        let nc = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+
+        nc.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: nil) { [weak self] note in
+            self?.q.async { self?.handleInterruption(note) }
+        }
+        nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: nil) { [weak self] note in
+            self?.q.async { self?.handleRouteChange(note) }
+        }
+        // Output device / sample-rate changes stop the engine; rebuild and keep playing.
+        nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            self?.q.async {
+                guard let self = self, self.isPlaying else { return }
+                print("[NativeMetronome] engine configuration changed — restarting")
+                self.startPlayback()
+            }
+        }
+        nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: nil) { [weak self] _ in
+            self?.q.async {
+                guard let self = self, self.isPlaying else { return }
+                print("[NativeMetronome] media services reset — restarting")
+                self.connectedFormat = nil
+                self.startPlayback()
+            }
+        }
+    }
+
+    private func handleInterruption(_ note: Notification) {
         guard let info = note.userInfo,
               let typeVal = info[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeVal) else { return }
-
         switch type {
         case .began:
             if isPlaying {
-                isInterrupted = true
-                stop()
+                resumeAfterInterruption = true
+                halt()   // publishes state so the UI never shows "playing" while silent
             }
         case .ended:
-            guard let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let optVal = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let opts = AVAudioSession.InterruptionOptions(rawValue: optVal)
-            if opts.contains(.shouldResume) && isInterrupted {
-                isInterrupted = false
-                DispatchQueue.global(qos: .userInitiated).async { try? AVAudioSession.sharedInstance().setActive(true) }
-                start(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents)
+            if resumeAfterInterruption && opts.contains(.shouldResume) {
+                resumeAfterInterruption = false
+                startPlayback()
             }
-        @unknown default: break
+        @unknown default:
+            break
         }
     }
 
-    @objc private func handleRouteChange(_ note: Notification) {
-        // On route changes (e.g. headphones unplugged) ensure the engine is still running.
+    private func handleRouteChange(_ note: Notification) {
         guard isPlaying else { return }
+        let reasonVal = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+        let reason = AVAudioSession.RouteChangeReason(rawValue: reasonVal)
+        // The web view (piano / web audio) can switch the shared session to another
+        // category; that would mute the click on the silent switch. Put it back.
+        if reason == .categoryChange && AVAudioSession.sharedInstance().category != .playback {
+            activateSession()
+        }
         if !engine.isRunning {
-            try? engine.start()
+            startPlayback()
         }
     }
 
@@ -407,39 +409,31 @@ final class NativeMetronomeEngine {
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            self.start(bpm: self.bpm, beatsPerBar: self.beatsPerBar, accents: self.accents)
-            self.onRemoteCommand?("play")
+            self.q.async { if !self.isPlaying { self.startPlayback() } }
             return .success
         }
-
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            self.stop()
-            self.onRemoteCommand?("pause")
+            self.q.async { self.resumeAfterInterruption = false; self.halt() }
             return .success
         }
-
         center.togglePlayPauseCommand.isEnabled = true
         center.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            if self.isPlaying {
-                self.stop()
-                self.onRemoteCommand?("pause")
-            } else {
-                self.start(bpm: self.bpm, beatsPerBar: self.beatsPerBar, accents: self.accents)
-                self.onRemoteCommand?("play")
+            self.q.async {
+                if self.isPlaying { self.resumeAfterInterruption = false; self.halt() } else { self.startPlayback() }
             }
             return .success
         }
     }
 
-    private func updateNowPlaying(playing: Bool) {
+    private func updateNowPlaying() {
         let info: [String: Any] = [
-            MPMediaItemPropertyTitle:           "Zong",
-            MPMediaItemPropertyArtist:          "\(Int(bpm)) BPM",
+            MPMediaItemPropertyTitle:            "Zong",
+            MPMediaItemPropertyArtist:           "\(Int(bpm)) BPM",
             MPNowPlayingInfoPropertyIsLiveStream: false,
-            MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }

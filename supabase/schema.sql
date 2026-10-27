@@ -99,6 +99,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_songs          TO anon
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_spelling_chart  TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_teams           TO anon, authenticated;
 
+-- Supabase no longer auto-grants Data API access on new public tables (from Oct 30),
+-- so grant explicitly, including service_role (used by the keep_alive Edge Function).
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_songs          TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_spelling_chart  TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.zong_teams           TO service_role;
+
 -- -----------------------------------------------------------------------------
 -- 3. Row Level Security (RLS)
 -- -----------------------------------------------------------------------------

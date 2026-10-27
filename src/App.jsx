@@ -11,7 +11,7 @@ import {
   markSharedPending, markSharedDeleted, getPendingSharedIds, getDeletedSharedIds, getDirtySongIds,
   getDirtySpellingKeys, clearSharedQueues,
 } from "./supabaseSync";
-import { initNativeMetronome, isNativePlatform, nativeMetronome } from "./nativeMetronome";
+import { isNativePlatform, nativeMetronome } from "./nativeMetronome";
 
 function getDeviceId() {
   if (typeof localStorage === "undefined") return "dev_default";
@@ -1643,6 +1643,9 @@ const SILENT_VIDEO_SRC = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28y
 let __sharedSilentVideoEl = null;
 let __audioUnlocked = false;
 function unlockAudioPlayback() {
+  // The native app owns the audio session (AVAudioSession .playback); this
+  // PWA-only workaround would only fight it.
+  if (isNativePlatform()) return;
   if (__audioUnlocked) return;
   __audioUnlocked = true;
   try {
@@ -2180,7 +2183,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
 
   return (
     <div style={{ height: "100%" }}>
-      <video
+      {!isNativePlatform() && <video
         ref={silentVideoRef}
         src={SILENT_VIDEO_SRC}
         loop
@@ -2188,7 +2191,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
         muted={false}
         volume={0.01}
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
-      />
+      />}
       <LandscapeLock>{pianoBody}</LandscapeLock>
     </div>
   );
@@ -2206,10 +2209,8 @@ function defaultAccents(beats) { return Array.from({ length: beats }, () => "nor
 // The returned object is identical in both cases so all callers are unchanged.
 // ---------------------------------------------------------------------------
 function useMetronomeEngine(settings) {
-  // Track native availability (resolved async on mount).
-  const [_isNative, _setIsNative] = useState(false);
-  useEffect(() => { initNativeMetronome().then(ok => _setIsNative(ok)); }, []);
-  const isNative = _isNative;
+  // Known synchronously at load time (never flips after mount).
+  const isNative = isNativePlatform();
   const [bpm, setBpmState] = useState(() => {
     try { const s = localStorage.getItem("altar_metronome_bpm"); return s ? Number(s) : 120; } catch { return 120; }
   });
@@ -2229,7 +2230,9 @@ function useMetronomeEngine(settings) {
   const [subdivision, setSubdivisionState] = useState(() => {
     try { const s = localStorage.getItem("altar_metronome_subdivision"); return s ? Number(s) : 1; } catch { return 1; }
   });
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlayingState] = useState(false);
+  const playingRef = useRef(false);
+  const setPlaying = (v) => { playingRef.current = v; setPlayingState(v); };
   const [flashBeat, setFlashBeat] = useState(-1);
   const [loadedSong, setLoadedSong] = useState(null);
 
@@ -2305,25 +2308,15 @@ function useMetronomeEngine(settings) {
     setBpmState(clamped);
     if (!keepSong) setLoadedSong(null);
     bpmRef.current = clamped;
-    // On native, propagate tempo to the Swift engine in real-time.
-    if (isNative && playing) {
-      nativeMetronome.setTempo({ bpm: clamped }).catch(() => { });
-    }
   };
   const setTimeSig = (ts) => {
     setTimeSigState(ts);
     const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats;
     const newAccents = defaultAccents(effBeats);
     setAccentsState(newAccents);
-    if (isNative && playing) {
-      nativeMetronome.setBeatsPerBar({ beatsPerBar: effBeats, accents: newAccents }).catch(() => { });
-    }
   };
   const setAccents = (arr) => {
     setAccentsState(arr);
-    if (isNative && playing) {
-      nativeMetronome.setAccents({ accents: arr }).catch(() => { });
-    }
   };
   const setSubdivision = (n) => {
     setSubdivisionState(n);
@@ -2451,36 +2444,50 @@ function useMetronomeEngine(settings) {
     }
   };
 
-  // ── Native-plugin beat subscription ─────────────────────────────────────
-  // When running on native iOS the Swift engine fires "beat" events on the
-  // audio clock; we listen and mirror them into the React flashBeat state.
+  // ── Native engine mirroring ─────────────────────────────────────────────
+  // The Swift engine is the source of truth for "playing" and for the beat
+  // position (both come from the audio clock). Subscribe once, not per render.
   useEffect(() => {
     if (!isNative) return;
-    const remove = nativeMetronome.addBeatListener(({ beatIndex }) => {
-      setFlashBeat(beatIndex);
+    const removeBeat = nativeMetronome.addBeatListener(({ beatIndex }) => setFlashBeat(beatIndex));
+    const removeState = nativeMetronome.addStateListener(({ playing: p }) => {
+      setPlaying(p);
+      if (!p) setFlashBeat(-1);
     });
-    return remove;
+    // Re-sync when the app returns to the foreground (e.g. after a call or Siri).
+    const resync = () => {
+      if (document.visibilityState !== "visible") return;
+      nativeMetronome.getState().then((p) => { setPlaying(p); if (!p) setFlashBeat(-1); }).catch(() => { });
+    };
+    document.addEventListener("visibilitychange", resync);
+    resync();
+    return () => { removeBeat(); removeState(); document.removeEventListener("visibilitychange", resync); };
   }, [isNative]);
 
-  // Remote-command events from the lock screen (play/pause hardware button).
+  const nativeSettings = () => ({
+    bpm: bpmRef.current,
+    beatsPerBar: timeSigRef.current.beats,
+    accents: accentsRef.current,
+    subdivision: subdivisionRef.current,
+  });
+  // Any change to tempo / time signature / accents / subdivision while playing is
+  // sent to the engine once (debounced), whatever caused it — knob, song load, etc.
   useEffect(() => {
-    if (!isNative) return;
-    const remove = nativeMetronome.addRemoteCommandListener(({ command }) => {
-      if (command === "play" && !playing) setPlaying(true);
-      if (command === "pause" && playing) { setPlaying(false); setFlashBeat(-1); }
-    });
-    return remove;
-  }, [isNative, playing]);
+    if (!isNative || !playing) return;
+    const t = setTimeout(() => { nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e)); }, 60);
+    return () => clearTimeout(t);
+  }, [isNative, playing, bpm, timeSig, accents, subdivision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const start = async () => {
     if (isNative) {
-      const effBeats = timeSigRef.current.beats;
-      await nativeMetronome.start({
-        bpm: bpmRef.current,
-        beatsPerBar: effBeats,
-        accents: accentsRef.current,
-      }).catch(() => { });
-      setPlaying(true);
+      setPlaying(true); // optimistic; the engine confirms via its "state" event
+      try {
+        await nativeMetronome.start(nativeSettings());
+      } catch (e) {
+        console.error("[Zong metronome] start failed", e);
+        setPlaying(false);
+        setFlashBeat(-1);
+      }
       return;
     }
     unlockAudioPlayback();
@@ -2514,7 +2521,7 @@ function useMetronomeEngine(settings) {
   };
   const stop = () => {
     if (isNative) {
-      nativeMetronome.stop().catch(() => { });
+      nativeMetronome.stop().catch((e) => console.error("[Zong metronome] stop failed", e));
       setPlaying(false);
       setFlashBeat(-1);
       return;
@@ -2538,7 +2545,7 @@ function useMetronomeEngine(settings) {
       try { ctx.suspend().catch(() => { }); } catch { }
     }
   };
-  const toggle = () => (playing ? stop() : start());
+  const toggle = () => (playingRef.current ? stop() : start());
 
   const tapTempo = () => {
     const now = performance.now();

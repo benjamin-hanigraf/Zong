@@ -1,105 +1,52 @@
 /**
  * nativeMetronome.js
  *
- * Thin adapter layer between the React metronome engine and the native
- * NativeMetronome Capacitor plugin (iOS only).
+ * Thin adapter between the React metronome and the native NativeMetronome
+ * Capacitor plugin (iOS app only). On the web/PWA `isNativePlatform()` is false
+ * and the Web Audio engine in App.jsx is used instead.
  *
- * Usage:
- *   import { isNative, nativeMetronome } from './nativeMetronome';
- *
- *   if (isNative) {
- *     // use nativeMetronome.*
- *   } else {
- *     // use the existing Web Audio useMetronomeEngine hook as before
- *   }
- *
- * The nativeMetronome object intentionally mirrors the method surface of
- * useMetronomeEngine so callers can be switched with minimal changes.
+ * The native side is the source of truth for whether the metronome is playing:
+ * it publishes "state" events (start, stop, audio interruption, lock-screen
+ * buttons) and "beat" events driven by the audio clock.
  */
+import { Capacitor, registerPlugin } from "@capacitor/core";
 
-// ── Capacitor detection ────────────────────────────────────────────────────
-// We import lazily so the web bundle never breaks if @capacitor/core is absent
-// (Vite tree-shakes it away in PWA mode).
-let _Capacitor = null;
-let _NativeMetronome = null;
+const native = Capacitor.isNativePlatform();
+const Plugin = native ? registerPlugin("NativeMetronome") : null;
 
-async function ensurePlugins() {
-  if (_Capacitor) return;
-  try {
-    const cap = await import('@capacitor/core');
-    _Capacitor = cap.Capacitor;
-    if (_Capacitor.isNativePlatform()) {
-      const { registerPlugin } = cap;
-      _NativeMetronome = registerPlugin('NativeMetronome');
-    }
-  } catch {
-    // Running in a browser without Capacitor — no-op.
-  }
+if (native) {
+  // Keep WebKit's own audio (piano) on the "playback" category so it never
+  // switches the shared session to one the silent switch can mute.
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch { /* unsupported */ }
 }
 
-// Synchronous after the first call to ensurePlugins().
-export function isNativePlatform() {
-  return Boolean(_Capacitor?.isNativePlatform?.());
+// Synchronous: Capacitor knows the platform at load time.
+export function isNativePlatform() { return native; }
+export async function initNativeMetronome() { return native; }
+
+// Registers a listener and returns a remover that is safe to call even before
+// the (async) registration has finished — otherwise listeners would leak and
+// fire several times.
+function listen(event, handler) {
+  if (!Plugin) return () => {};
+  let removed = false;
+  let handle = null;
+  Plugin.addListener(event, handler).then((h) => {
+    if (removed) h.remove(); else handle = h;
+  });
+  return () => { removed = true; if (handle) { handle.remove(); handle = null; } };
 }
 
-// Call once early in app bootstrap.
-export async function initNativeMetronome() {
-  await ensurePlugins();
-  return isNativePlatform();
-}
-
-// ── Wrapper ────────────────────────────────────────────────────────────────
 export const nativeMetronome = {
-  /**
-   * Start the metronome.
-   * @param {object} opts - { bpm, beatsPerBar, accents }
-   *   accents: string[] of "normal"|"accent"|"mute", length == beatsPerBar
-   */
-  start({ bpm, beatsPerBar, accents }) {
-    return _NativeMetronome?.start({ bpm, beatsPerBar, accents: accents ?? [] });
-  },
-
-  stop() {
-    return _NativeMetronome?.stop();
-  },
-
-  setTempo({ bpm }) {
-    return _NativeMetronome?.setTempo({ bpm });
-  },
-
-  setBeatsPerBar({ beatsPerBar, accents }) {
-    return _NativeMetronome?.setBeatsPerBar({ beatsPerBar, accents: accents ?? [] });
-  },
-
-  setAccents({ accents }) {
-    return _NativeMetronome?.setAccents({ accents });
-  },
-
-  setVolume({ volume }) {
-    return _NativeMetronome?.setVolume({ volume });
-  },
-
-  /**
-   * Listen for beat events fired by native audio clock.
-   * @param {function} handler - called with { beatIndex: number }
-   * @returns {function} removeListener
-   */
-  addBeatListener(handler) {
-    if (!_NativeMetronome) return () => {};
-    let handle = null;
-    _NativeMetronome.addListener('beat', handler).then(h => { handle = h; });
-    return () => { handle?.remove(); };
-  },
-
-  /**
-   * Listen for remote-command events (lock-screen play/pause).
-   * @param {function} handler - called with { command: "play"|"pause" }
-   * @returns {function} removeListener
-   */
-  addRemoteCommandListener(handler) {
-    if (!_NativeMetronome) return () => {};
-    let handle = null;
-    _NativeMetronome.addListener('remoteCommand', handler).then(h => { handle = h; });
-    return () => { handle?.remove(); };
-  },
+  /** { bpm, beatsPerBar, accents, subdivision } */
+  start(settings) { return Plugin?.start(settings); },
+  /** Applies new settings while playing (restarts the bar only if something changed). */
+  update(settings) { return Plugin?.update(settings); },
+  stop() { return Plugin?.stop(); },
+  setVolume({ volume }) { return Plugin?.setVolume({ volume }); },
+  async getState() { return (await Plugin?.getState())?.playing ?? false; },
+  /** handler({ beatIndex }) */
+  addBeatListener(handler) { return listen("beat", handler); },
+  /** handler({ playing }) */
+  addStateListener(handler) { return listen("state", handler); },
 };
