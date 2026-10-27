@@ -688,13 +688,16 @@ function maybeTanglishTitle(text, tanglishMode) {
 // Strip bracketed [Alt Title] groups from a title for display.
 // The raw title field (e.g. "Way Maker [Camino Hacedor]") keeps the alt title
 // for editing and search, but every display surface calls this so the alt is hidden.
+// Alt titles are written in square or round brackets; a bare number like "(2)" is
+// the duplicate-song counter, not an alt title, so it stays visible.
+const ALT_TITLE_RE = /\s*(?:\[[^\]]*\]|\((?!\s*\d+\s*\))[^)]*\))/g;
 function stripAltTitle(title) {
-  return String(title || "").replace(/\s*\[[^\]]*\]/g, "").trim();
+  return String(title || "").replace(ALT_TITLE_RE, "").trim();
 }
 // Extract all bracketed groups from a title as separate alt-title strings.
 function getAltTitles(title) {
   const matches = [];
-  String(title || "").replace(/\[([^\]]*)\]/g, (_, inner) => { if (inner.trim()) matches.push(inner.trim()); });
+  String(title || "").replace(/\[([^\]]*)\]|\((?!\s*\d+\s*\))([^)]*)\)/g, (_, sq, rd) => { const inner = (sq ?? rd ?? "").trim(); if (inner) matches.push(inner); });
   return matches;
 }
 // Tanglish (Latin transliteration of Tamil) is harder to read letter-by-
@@ -3910,7 +3913,10 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
       lyricsText, chordsText: normalizedChordsText, chartText, drumsText,
     });
   };
-  const canSave = title.trim().length > 0;
+  // Save only lights up once something differs from the values the form opened with.
+  const formSnapshot = JSON.stringify([title, artist, tempo, timeSig, keyNatural, keyAccidental, keyQuality, language, description, lyricsText, chordsText, chartText, drumsText, accents, subdivision]);
+  const openedSnapshot = useRef(formSnapshot);
+  const canSave = title.trim().length > 0 && formSnapshot !== openedSnapshot.current;
   const SECTION_TAB_VALUES = { lyrics: [lyricsText, setLyricsText], chords: [chordsText, setChordsText], chart: [chartText, setChartText], drums: [drumsText, setDrumsText] };
   const [activeSectionValue, setActiveSectionValue] = SECTION_TAB_VALUES[sectionTab];
   const SECTION_TAB_PLACEHOLDERS = {
@@ -5882,6 +5888,7 @@ function AppInner() {
 
       if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
     } catch (error) {
+      console.error("[Zong sync]", error);
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
       // Re-throw for manual sync so the UI can show a specific toast.
       if (force) throw error;
