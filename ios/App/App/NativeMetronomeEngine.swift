@@ -131,11 +131,13 @@ final class NativeMetronomeEngine {
     // MARK: - Bar buffer construction
     /// Builds one bar of audio as a single PCMBuffer with clicks at the right positions.
     private func buildBarBuffer(bpm: Double, beatsPerBar: Int, accents: [String]) -> AVAudioPCMBuffer? {
-        let sampleRate   = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        // outputFormat can report 0 Hz before the audio session is fully active; fall back to 44.1 kHz.
+        let reportedRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        let sampleRate   = reportedRate > 0 ? reportedRate : 44100
         let beatDuration = 60.0 / bpm                             // seconds
         let barDuration  = beatDuration * Double(beatsPerBar)
         let barFrames    = AVAudioFrameCount(barDuration * sampleRate)
-        guard barFrames > 0 else { return nil }
+        guard barFrames > 0 else { print("[NativeMetronome] bar buffer has 0 frames (bpm \(bpm))"); return nil }
 
         // Use the accent buffer's format as the canonical stereo format.
         // If no WAVs loaded, fall back to a 2-channel float format.
@@ -282,8 +284,12 @@ final class NativeMetronomeEngine {
 
     /// Schedule one looping bar, fire beat events via the audio clock.
     private func scheduleBar() {
-        guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else { return }
+        guard let buf = buildBarBuffer(bpm: bpm, beatsPerBar: beatsPerBar, accents: accents) else {
+            print("[NativeMetronome] could not build bar buffer")
+            return
+        }
         barBuffer = buf
+        print("[NativeMetronome] playing: hi=\(hiBuffer != nil) low=\(lowBuffer != nil) frames=\(buf.frameLength) rate=\(buf.format.sampleRate) ch=\(buf.format.channelCount) engineRunning=\(engine.isRunning)")
 
         // The player node must be connected with the same format as the buffer it
         // plays, otherwise the clicks are silent (or the wrong pitch/speed).
@@ -307,9 +313,6 @@ final class NativeMetronomeEngine {
     private func scheduleBeatTimers() {
         cancelBeatTimers()
         let beatDuration = 60.0 / bpm            // seconds per beat
-
-        // Beat callbacks are scheduled relative to now; bail out if the engine isn't rendering yet.
-        guard engine.outputNode.lastRenderTime != nil else { return }
 
         for beat in 0..<beatsPerBar {
             let accentState = beat < accents.count ? accents[beat] : "normal"

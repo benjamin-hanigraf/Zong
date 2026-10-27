@@ -6418,7 +6418,7 @@ function AppInner() {
               } catch (err) {
                 const msg = err?.message;
                 if (msg === "offline") flash("No internet access");
-                else flash("Syncing error");
+                else flash(`Sync error: ${String(msg || "unknown").slice(0, 90)}`);
               }
             }}
             bandKey={bandKey}
