@@ -3766,6 +3766,8 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
   const keyboardInset = useKeyboardInset();
   // Track last scroll time so SongRow can suppress long-press if user just scrolled
   const lastScrollTimeRef = useRef(0);
+  // Total under the title follows the language filter (All / English / Tamil), not the search box.
+  const languageSongCount = langFilter === "All" ? songs.length : songs.filter((s) => s.language === langFilter).length;
   const filtered = songs
     .filter((s) => songMatchesQuery(s, query))
     .filter((s) => langFilter === "All" || s.language === langFilter)
@@ -3775,7 +3777,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{songs.length} songs</div></div>
+          <div><div style={{ fontSize: 26, fontWeight: 700 }}>Songs</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{languageSongCount} songs</div></div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
               {langFilter === "All" ? "All" : (langFilter === "Tamil" ? (tanglishMode ? "Tamil" : "தமிழ்") : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter))}
