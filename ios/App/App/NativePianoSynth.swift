@@ -444,7 +444,7 @@ final class NativePianoSynth {
 
     private func activateSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [])
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setPreferredIOBufferDuration(0.005)
         try? session.setActive(true)
     }

@@ -168,8 +168,10 @@ final class NativeMetronomeEngine {
         if sessionActive && !force { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            // .playback ignores the hardware silent switch and keeps playing with the screen locked.
-            try session.setCategory(.playback, mode: .default, options: [])
+            // .playback ignores the hardware silent switch and keeps playing with the screen locked;
+            // .mixWithOthers lets it play together with other apps' audio (YouTube, Music…) instead of
+            // stopping them, and keeps this app from being interrupted by them.
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             // ~5 ms hardware buffer instead of the default ~23 ms: clicks start/stop sooner.
             try? session.setPreferredIOBufferDuration(0.005)
             try session.setActive(true)
