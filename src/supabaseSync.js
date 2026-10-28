@@ -201,6 +201,17 @@ async function listIds(table, column) {
   return rows.map((r) => r[column]);
 }
 
+// Fetches specific rows by key (in chunks, to keep the request URL short).
+async function fetchByKeys(table, columns, keyColumn, keys) {
+  const rows = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    const { data, error } = await client().from(table).select(columns).in(keyColumn, keys.slice(i, i + 100));
+    if (error) throw new Error(`${table} read failed: ${error.message}`);
+    rows.push(...(data || []));
+  }
+  return rows;
+}
+
 async function pushSongs(songs) {
   const snapshotTs = Date.now();
 
@@ -424,6 +435,25 @@ export async function syncLibrary({ teamKey, deviceId, songs, spellingChart, sha
     const { error } = await client().from("zong_songs").upsert(songs.map(songToRow), { onConflict: "id" });
     if (error) throw new Error(`Song restore failed: ${error.message}`);
   }
+
+  // Self-healing: anything that exists on the server but not on this device (local storage
+  // cleared or overwritten, an interrupted first sync, a stale cursor…) is fetched now, whatever
+  // the incremental cursor says — the cursor only ever skips rows this device already has.
+  const localSongIds = new Set((songs || []).map((s) => s.id));
+  const pulledSongIds = new Set(songPull.songs.map((s) => s.id));
+  const pendingDeletes = new Set(deletedSongs.ids());
+  const missingSongIds = songIds.filter((id) => !localSongIds.has(id) && !pulledSongIds.has(id) && !pendingDeletes.has(id));
+  if (missingSongIds.length) {
+    const rows = await fetchByKeys("zong_songs", SONG_COLUMNS, "id", missingSongIds);
+    songPull.songs.push(...rows.map(rowToSong));
+  }
+  const localSpelling = spellingChart || {};
+  const missingSpellKeys = spellKeys.filter((k) => !(k in localSpelling) && !(k in spellPull.upserts));
+  if (missingSpellKeys.length) {
+    const rows = await fetchByKeys("zong_spelling_chart", "tamil, latin", "tamil", missingSpellKeys);
+    rows.forEach((r) => { spellPull.upserts[r.tamil] = r.latin; });
+  }
+
   const knownSpelling = readKnownSpelling();
   const deletedSpelling_ = remoteSpellKeys.size === 0 ? [] : [...knownSpelling].filter((k) => !remoteSpellKeys.has(k));
   writeKnownSpelling(remoteSpellKeys);

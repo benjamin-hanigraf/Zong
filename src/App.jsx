@@ -66,36 +66,43 @@ async function idbSet(key, value) {
 }
 function useIndexedDbState(key, seed) {
   const [value, setValue] = useState(seed);
+  const [ready, setReady] = useState(false);
   const loadedRef = useRef(false);
-  const queuedRef = useRef([]);   // updates requested before the stored value was read
+  const writableRef = useRef(false);   // true only once the stored value was read successfully
+  const queuedRef = useRef([]);        // updates requested before the stored value was read
   useEffect(() => {
     let cancelled = false;
-    // If storage never answers (blocked / private mode), carry on in memory rather than hang.
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(undefined), 4000));
-    Promise.race([idbGet(key).catch(() => undefined), timeout]).then((stored) => {
-      if (cancelled) return;
+    let settled = false;
+    const finish = (stored, ok) => {
+      if (cancelled || settled) return;
+      settled = true;
       let base = stored !== undefined ? stored : seed;
       loadedRef.current = true;
+      writableRef.current = ok;
       // Apply anything requested while loading ON TOP of the stored data, so an early
       // update (e.g. a sync result) can never overwrite what was saved on this device.
       const queued = queuedRef.current;
       queuedRef.current = [];
       queued.forEach((next) => { base = typeof next === "function" ? next(base) : next; });
       setValue(base);
-      if (stored === undefined || queued.length) idbSet(key, base).catch(() => { });
-    });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+      setReady(true);
+      if (ok && (stored === undefined || queued.length)) idbSet(key, base).catch(() => { });
+    };
+    idbGet(key).then((stored) => finish(stored, true), () => finish(undefined, false));
+    // If storage never answers, carry on in memory — but never write in that case, so the
+    // data already stored on the device cannot be overwritten by an incomplete copy.
+    const timeout = setTimeout(() => finish(undefined, false), 15000);
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const persist = useCallback((next) => {
     if (!loadedRef.current) { queuedRef.current.push(next); return; }
     setValue((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      idbSet(key, resolved).catch(() => { });
+      if (writableRef.current) idbSet(key, resolved).catch(() => { });
       return resolved;
     });
   }, [key]);
-  return [value, persist];
+  return [value, persist, ready];
 }
 function useLocalStorageState(key, seed) {
   const [value, setValue] = useState(() => {
@@ -5305,7 +5312,7 @@ function AppInner() {
     meta.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover");
   }, []);
 
-  const [songs, setSongs] = useIndexedDbState("songs", []);
+  const [songs, setSongs, songsReady] = useIndexedDbState("songs", []);
   const [setlists, persistSetlists] = useIndexedDbState("setlists", []);
   const [fontSize, setFontSize] = useLocalStorageState("altar:font-size", 16);
   const [chordFontSize, setChordFontSize] = useLocalStorageState("altar:chord-font-size", 16);
@@ -5318,7 +5325,7 @@ function AppInner() {
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
   const [tanglishMode, setTanglishMode] = useLocalStorageState("altar:tanglish", false);
-  const [spellingChart, setSpellingChart] = useIndexedDbState("tanglish-spelling-chart", TANGLISH_EXCEPTIONS);
+  const [spellingChart, setSpellingChart, spellingReady] = useIndexedDbState("tanglish-spelling-chart", TANGLISH_EXCEPTIONS);
   const [spellingChartOpen, setSpellingChartOpen] = useState(false);
   // Keep the runtime transliteration dictionary in sync with persisted edits.
   useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
@@ -5330,6 +5337,9 @@ function AppInner() {
   // A brand-new setlist lives only here until the user presses Done with ≥1 song.
   const [draftSetlist, setDraftSetlist] = useState(null);
   const syncing = useRef(false);
+  // A sync must never start from an empty, not-yet-loaded copy of the library.
+  const storesReadyRef = useRef(false);
+  storesReadyRef.current = songsReady && spellingReady;
 
   // Stable refs that always hold the latest state values.
   // performSync reads from these instead of capturing values via closure,
@@ -5462,6 +5472,7 @@ function AppInner() {
     // Keep the ref in sync so save functions can call the latest closure.
     performSyncRef.current = performSync;
     if (!isSupabaseConfigured()) return;
+    if (!storesReadyRef.current) return;   // runs again as soon as local data is loaded
     if (!navigator.onLine) {
       if (force) throw new Error("offline");
       return;
@@ -5610,6 +5621,11 @@ function AppInner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
+
+  // Local data finished loading: run the sync that was skipped while it was loading.
+  useEffect(() => {
+    if (songsReady && spellingReady) performSyncRef.current?.();
+  }, [songsReady, spellingReady]);
 
   // Called when the user commits a setlist edit (Done / leaving the stage).
   // Shared setlists are queued for upload; un-sharing removes them from the team.
