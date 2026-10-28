@@ -449,9 +449,10 @@ function transliterateTamilWordWithOffsets(word, prevWordEndedWithSach = false) 
         } else if (isSaWordFinal) {
           base = "ch";
         } else if (isYaPulli) {
-          // ய் before another ய is a real "y" (ஐய்யா -> aiyyaa); at a word end (or before any
-          // other consonant) it is the "i" offglide.
-          base = word[i + 2] === YA ? "y" : "i";
+          // ய் is the "i" offglide ("iy" when another ய follows: செய்யும் -> seiyyum), but never
+          // doubles an "i" that is already there: மைய்யா -> maiyyaa, not maiiyyaa.
+          const afterI = out.endsWith("i");
+          base = afterI ? "y" : (word[i + 2] === YA ? "iy" : "i");
         } else {
           base = TANGLISH_CONSONANTS[ch] || "";
         }
