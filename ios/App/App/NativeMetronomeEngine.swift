@@ -39,7 +39,7 @@ final class NativeMetronomeEngine {
     private var bpm: Double = 120
     private var beatsPerBar: Int = 4
     private var subdivision: Int = 1
-    private var accents: [String] = []   // "normal" | "accent" | "mute"
+    private var accents: [String] = []   // "normal" | "accent" | "mute" | "silent" (mute mode: no click, beat still reported)
     private var title = "Metronome"      // shown on the lock-screen Live Activity
     private var isPlaying = false
     private var resumeAfterInterruption = false
@@ -375,7 +375,10 @@ final class NativeMetronomeEngine {
         let state = beat < accents.count ? accents[beat] : "normal"
         let frame = Int64(nextFrame.rounded())
 
-        if state != "mute" {
+        if state == "silent" {
+            // Mute mode: no sound at all, but the beat is still reported so the dots keep flashing.
+            if nextSub == 0 { upcomingBeats.append((frame: frame, beat: beat)) }
+        } else if state != "mute" {
             let buffer: AVAudioPCMBuffer?
             if nextSub == 0 { buffer = (state == "accent") ? accentClick : normalClick } else { buffer = subClick }
             if let buffer = buffer {

@@ -104,3 +104,8 @@ textarea {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
+
+/* A highlighted piano label (song key) stays readable while its key is pressed. */
+[data-pressed="1"] > .piano-hl {
+  color: rgba(0, 0, 0, 0.6) !important;
+}

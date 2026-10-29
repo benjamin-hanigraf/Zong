@@ -244,7 +244,7 @@ function transposeKey(key, semitoneDelta) {
 // Transposes one chord symbol, e.g. "C#m7/G#" -> shift by +2 -> "D#m7/A#".
 // Only the root letters move; everything else (quality suffix) is kept as-is.
 const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
-function isChordSymbol(word) {
+function isSingleChordSymbol(word) {
   // Allow optional leading 'b' for flat-prefix notation (bA = Ab, bE = Eb)
   let s = String(word || "").trim();
   if (!s) return false;
@@ -750,7 +750,8 @@ const isNewDrumsText = (t) => String(t || "").startsWith(DRUMS_FORMAT_MARK);
 
 // "Kick [Way maker] Snare [miracle]" -> "[Kick]Way maker [Snare]miracle" (the tagged form ChordText draws).
 function drumsLineToTagged(line) {
-  if (!line.includes("[")) return line;
+  // A line with no brackets is notes only (kept bright): section heads ("-Verse") and blank lines stay as they are.
+  if (!line.includes("[")) return line.trim() && !line.trimStart().startsWith("-") ? `[${line.trim()}]` : line;
   const parts = line.split(/\[([^\]]*)\]/);   // note, lyric, note, lyric, …, note
   let out = "";
   for (let i = 0; i < parts.length; i += 2) {
@@ -933,14 +934,26 @@ const NUMBER_TOKEN_RE = /^([b#]?)([1-7])((?:(?!\/)[^\s])*)(?:\/([b#]?)([1-7]))?$
 // Plain numbers above 13 are text (bar counts, verse numbers) — except the degree + 7th/9th
 // shorthands: 37 = 3 with a 7th, 49 = 4 with a 9th.
 const isPlainNumberText = (t) => /^[0-9]+$/.test(t) && parseInt(t, 10) > 13 && !/^[1-7][79]$/.test(t);
-function isValidNashvilleToken(trimmed) {
+function isSingleNashvilleToken(trimmed) {
   if (isPlainNumberText(trimmed)) return false;
   return NUMBER_TOKEN_RE.test(trimmed);
 }
+// Hyphen-joined progressions ("1-2-3", "C-F/A-C") are several chords: returns the parts when
+// every part satisfies `isOne`, otherwise null (an ordinary word such as "re-enter" stays text).
+function splitChordSequence(token, isOne) {
+  const s = String(token || "").trim();
+  if (!s.includes("-")) return null;
+  const parts = s.split("-");
+  return parts.length >= 2 && parts.every((p) => p && isOne(p)) ? parts : null;
+}
+const isValidNashvilleToken = (t) => isSingleNashvilleToken(t) || !!splitChordSequence(t, isSingleNashvilleToken);
+const isChordSymbol = (t) => isSingleChordSymbol(t) || !!splitChordSequence(t, isSingleChordSymbol);
 function tokenToChord(token, key, quality) {
   if (!token) return token;
   const trimmed = token.trim();
   if (!trimmed) return token;
+  const seq = splitChordSequence(trimmed, isSingleNashvilleToken);
+  if (seq) return seq.map((part) => tokenToChord(part, key, quality)).join("-");
   // A bracket containing only digits (no letters/accidentals) that's above
   // 13 isn't a Nashville degree token at all (degrees only run 1-7) — treat
   // it as literal text (e.g. a bar count, a note number) rather than trying
@@ -998,6 +1011,8 @@ function chordToNumberToken(symbol, key, quality) {
   if (!symbol) return symbol;
   const trimmed = symbol.trim();
   if (!trimmed) return symbol;
+  const seq = splitChordSequence(trimmed, isSingleChordSymbol);
+  if (seq) return seq.map((part) => chordToNumberToken(part, key, quality)).join("-");
   // Already a Nashville number — nothing to convert.
   if (NUMBER_TOKEN_RE.test(trimmed)) return symbol;
   const scaleOffsets = quality === "Minor" ? MINOR_SCALE_OFFSETS : MAJOR_SCALE_OFFSETS;
@@ -1641,7 +1656,7 @@ function findNearestPianoSample(midi) {
   return best;
 }
 
-function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
+function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlightSemitone = null }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const masterCompRef = useRef(null);
@@ -1876,6 +1891,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
     if (!keyEl) return;
     const isBlack = keyEl.dataset.black === "1";
     keyEl.style.background = pressed ? (isBlack ? BLACK_PRESSED : WHITE_PRESSED) : (isBlack ? BLACK_KEY_BG : WHITE_KEY_BG);
+    keyEl.dataset.pressed = pressed ? "1" : "0";   // lets the highlighted label stay readable on the accent-coloured pressed key
   };
   // Keep a stable ref to paintKey so that the pointermove useEffect (which
   // only re-runs when isVocals changes) always calls the latest version and
@@ -1980,7 +1996,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
             flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
             display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 12, boxSizing: "border-box",
           }}>
-            <span style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: "rgba(0,0,0,0.42)" }}>{k.name}</span>
+            <span className={k.semitone === highlightSemitone ? "piano-hl" : undefined} style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: k.semitone === highlightSemitone ? C.accent : "rgba(0,0,0,0.42)" }}>{k.name}</span>
           </div>
         ))}
       </div>
@@ -1995,7 +2011,7 @@ function PianoScreen({ C, mode, loadedQuality, onQualityChange }) {
               background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
               display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
             }}>
-              <span style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: "rgba(255,255,255,0.70)" }}>{k.name}</span>
+              <span className={k.semitone === highlightSemitone ? "piano-hl" : undefined} style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: k.semitone === highlightSemitone ? C.accent : "rgba(255,255,255,0.70)" }}>{k.name}</span>
             </div>
           );
         })}
@@ -2143,6 +2159,11 @@ function useMetronomeEngine(settings) {
   });
   const setPlaying = (v) => playingStore.set(v);
   const [loadedSong, setLoadedSong] = useState(null);
+  // Mute mode (long-press the beat dots): every beat goes silent but still flashes. A temporary override —
+  // the saved accent pattern is untouched and comes straight back; not remembered across app launches.
+  const [muted, setMutedState] = useState(false);
+  const mutedRef = useRef(false);
+  const toggleMuted = () => { mutedRef.current = !mutedRef.current; setMutedState(mutedRef.current); };
 
   useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
   useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch { } }, [timeSig]);
@@ -2326,8 +2347,8 @@ function useMetronomeEngine(settings) {
 
   const scheduleClick = (beatNum, time) => {
     const ctx = audioCtxRef.current;
-    const state = accentsRef.current[beatNum] || "normal";
-    playClick(state, time);
+    const state = mutedRef.current ? "silent" : (accentsRef.current[beatNum] || "normal");
+    if (state !== "silent") playClick(state, time);
     if (state === "mute") return;
     const delayMs = Math.max(0, (time - ctx.currentTime) * 1000);
     setTimeout(() => setFlashBeat(beatNum), delayMs);
@@ -2338,14 +2359,14 @@ function useMetronomeEngine(settings) {
     if (!ctx) return;
     while (nextNoteTimeRef.current < ctx.currentTime + 0.1) {
       const beatIndex = beatRef.current;
-      const beatState = accentsRef.current[beatIndex] || "normal";
+      const beatState = mutedRef.current ? "silent" : (accentsRef.current[beatIndex] || "normal");
       const sub = subdivisionRef.current;
       const beatDur = 60 / bpmRef.current;
       const subDur = beatDur / sub;
       for (let k = 0; k < sub; k++) {
         const t = nextNoteTimeRef.current + k * subDur;
         if (k === 0) scheduleClick(beatIndex, t);
-        else if (beatState !== "mute") playClick("normal", t);
+        else if (beatState !== "mute" && beatState !== "silent") playClick("normal", t);
       }
       nextNoteTimeRef.current += beatDur;
       beatRef.current = (beatIndex + 1) % timeSigRef.current.beats;
@@ -2401,7 +2422,7 @@ function useMetronomeEngine(settings) {
   const nativeSettings = () => ({
     bpm: bpmRef.current,
     beatsPerBar: timeSigRef.current.beats,
-    accents: accentsRef.current,
+    accents: mutedRef.current ? accentsRef.current.map(() => "silent") : accentsRef.current,
     subdivision: subdivisionRef.current,
     title: loadedSongRef.current ? stripAltTitle(loadedSongRef.current.title) : "Metronome",
   });
@@ -2413,7 +2434,7 @@ function useMetronomeEngine(settings) {
       if (playingStore.value) nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e));
     }, 60);
     return () => clearTimeout(t);
-  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong]);
+  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong, muted]);
 
   const start = async () => {
     if (isNative) {
@@ -2527,7 +2548,7 @@ function useMetronomeEngine(settings) {
 
   return {
     bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision,
-    toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay,
+    toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay, muted, toggleMuted,
   };
 }
 
@@ -2627,7 +2648,7 @@ function dotColor(state, lit, C) {
   if (state === "accent") return lit ? C.accent : C.accentDim;
   return lit ? "#fff" : C.surface3;
 }
-function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, C }) {
+function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, muted = false, onToggleMuted, C }) {
   const flashBeat = useFlashBeat();
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -2643,7 +2664,15 @@ function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly,
     nextPattern[i] = next;
     onChange(nextPattern);
   };
+  // Long-press toggles mute mode; a normal tap opens the pattern editor (disabled while muted).
+  const pressTimer = useRef(null);
+  const longPressed = useRef(false);
+  const pressOrigin = useRef({ x: 0, y: 0 });
+  const clearPress = () => { clearTimeout(pressTimer.current); pressTimer.current = null; };
+  useEffect(() => clearPress, []);
   const handleOpen = () => {
+    if (longPressed.current) { longPressed.current = false; return; }
+    if (muted) return;
     if (openUpwardOnly) {
       setOpenUpward(true);
     } else if (btnRef.current) {
@@ -2660,10 +2689,29 @@ function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly,
   };
   const hAlignStyle = hAlign === "left" ? { left: 0 } : hAlign === "right" ? { right: 0 } : { left: "50%", transform: "translateX(-50%)" };
   return (
-    <div style={{ position: "relative" }} ref={btnRef}>
-      <button onClick={handleOpen} style={{ display: "flex", gap: 8, justifyContent: "center", background: "none", border: "none", padding: 6, cursor: "pointer" }}>
+    <div style={{ position: "relative", zIndex: 2 }} ref={btnRef}>
+      <button
+        onClick={handleOpen}
+        onPointerDown={(e) => {
+          if (!onToggleMuted) return;
+          longPressed.current = false;
+          pressOrigin.current = { x: e.clientX, y: e.clientY };
+          clearPress();
+          pressTimer.current = setTimeout(() => {
+            pressTimer.current = null;
+            longPressed.current = true;
+            onToggleMuted();
+            try { navigator.vibrate?.(15); } catch { }
+          }, 500);
+        }}
+        onPointerMove={(e) => { if (pressTimer.current && Math.hypot(e.clientX - pressOrigin.current.x, e.clientY - pressOrigin.current.y) > 10) clearPress(); }}
+        onPointerUp={clearPress}
+        onPointerLeave={clearPress}
+        onPointerCancel={clearPress}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ display: "flex", gap: 8, justifyContent: "center", background: "none", border: "none", padding: 6, cursor: "pointer", WebkitTouchCallout: "none", userSelect: "none" }}>
         {pattern.map((state, i) => (
-          <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: dotColor(state, flashBeat === i, C), border: state === "mute" ? `1.5px solid ${C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
+          <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: muted ? (flashBeat === i ? "#fff" : "transparent") : dotColor(state, flashBeat === i, C), border: muted || state === "mute" ? `1.5px solid ${muted && flashBeat === i ? "#fff" : C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
         ))}
       </button>
       {open && (
@@ -2789,7 +2837,7 @@ function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdivision,
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", maxWidth: 320 }}>
-        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={accents} onChange={changeAccents} C={C} />
+        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={accents} onChange={changeAccents} muted={engine.muted} onToggleMuted={engine.toggleMuted} C={C} />
       </div>
 
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} onToggle={toggle} C={C} />
@@ -2879,6 +2927,25 @@ function LyricsText({ text, textAlign = "left", fontSize = 22, lineHeightMult = 
 function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
+  const rootRef = useRef(null);
+  // A note label wider than the lyric under it can run past the right edge and get cut off. After each
+  // layout, slide any such label left just far enough to fit (it stays above its lyric).
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root || uiFrame.rotated) return undefined;
+    const fit = () => {
+      const tags = root.querySelectorAll("[data-tag]");
+      tags.forEach((t) => { t.style.transform = ""; });
+      const limit = root.getBoundingClientRect().right;
+      tags.forEach((t) => {
+        const over = t.getBoundingClientRect().right - limit;
+        if (over > 0.5) t.style.transform = `translateX(${-Math.ceil(over)}px)`;
+      });
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  });
   const lines = String(text || "").split("\n").map((l) => l.replace(/^\s+/, ""));
   const hasAnyContent = String(text || "").trim().length > 0;
   const tagSize = Math.max(9, tagFontSize != null ? tagFontSize : fontSize * 0.62);
@@ -2914,7 +2981,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
   }
 
   return (
-    <div style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: dimTags ? "break-word" : "keep-all", overflowWrap: dimTags ? "break-word" : "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+    <div ref={rootRef} style={{ fontFamily: MONO, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", wordBreak: dimTags ? "break-word" : "keep-all", overflowWrap: dimTags ? "break-word" : "normal", letterSpacing, hyphens: "none", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
       {lines.map((line, li) => {
         let tokens = tokenizeTaggedLine(line);
         if (tokens.length === 0) tokens.push({ ch: null, tag: null });
@@ -3014,7 +3081,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
                   }}
                 />
               ) : tok.tag ? (
-                <span style={{
+                <span data-tag={editable ? undefined : "1"} style={{
                   position: "absolute", top: 0, left: 0, whiteSpace: "nowrap",
                   fontSize: tagSize, fontWeight: noteWeightBold ? 800 : 600,
                   lineHeight: 1,
@@ -3067,7 +3134,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
                       style={{
                         display: "inline-block",
                         verticalAlign: "bottom",
-                        margin: "0 0.35em",
+                        margin: gi === 0 ? "0 0.35em 0 0" : "0 0.35em",
                         textAlign: "center",
                         lineHeight: 1,
                         paddingTop: rowPad,
@@ -3075,6 +3142,7 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
                       }}
                     >
                       <span
+                        data-tag="1"
                         style={{
                           position: "absolute",
                           top: 0,
@@ -4169,7 +4237,7 @@ function SongDetailScreen({
             </button>
           </div>
           <div style={{ justifySelf: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} accents={engine.accents} onChange={engine.setAccents} size={7} C={C} />
+            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} accents={engine.accents} onChange={engine.setAccents} size={7} muted={engine.muted} C={C} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "end", position: "relative", zIndex: 1 }}>
             {hasTempoChanged && (
@@ -5531,6 +5599,8 @@ function AppInner() {
   const [stageIndex, setStageIndex] = useState(null);
   const [stageAutoOpenPicker, setStageAutoOpenPicker] = useState(false);
   const [pianoQuality, setPianoQuality] = useState("Major");
+  // Root of the song last swiped into the piano (semitone 0-11): its key label is tinted while the piano screen is open.
+  const [pianoHighlight, setPianoHighlight] = useState(null);
   const [toastMsg, setToastMsg] = useState("");
 
   // A stable ref that always holds the latest performSync so that save functions
@@ -5954,6 +6024,7 @@ function AppInner() {
   const prevSetlistSongId = viewingSetlist && viewingSetlistIndex > 0 ? viewingSetlist.entries[viewingSetlistIndex - 1].songId : null;
   const nextSetlistSongId = viewingSetlist && viewingSetlistIndex >= 0 && viewingSetlistIndex < viewingSetlist.entries.length - 1 ? viewingSetlist.entries[viewingSetlistIndex + 1].songId : null;
 
+  useEffect(() => { if (tab !== "practice") setPianoHighlight(null); }, [tab]);
   const handleTabChange = (next) => { setTab(next); setStageIndex(null); setViewing(null); };
 
   const handleSaveSong = (data) => {
@@ -6099,6 +6170,7 @@ function AppInner() {
   const handleLoadSongToPiano = (song) => {
     const q = song.keyQuality || "Major";
     setPianoQuality(q);
+    setPianoHighlight(KEY_TO_SEMITONE[song.key] ?? null);
     setTab("practice");
   };
 
@@ -6121,7 +6193,7 @@ function AppInner() {
             <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
           </div>
           <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%", position: "relative" }}>
-            <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} />
+            <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} highlightSemitone={tab === "practice" ? pianoHighlight : null} />
           </div>
         </div>
         <div style={{ display: tab === "songs" ? "block" : "none", height: "100%", position: "relative" }}>
