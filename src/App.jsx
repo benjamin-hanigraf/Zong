@@ -4612,12 +4612,36 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   );
 }
 
+// Simple display settings. One slider (10 steps) sets the lyrics size; notes and section headers follow
+// in fixed ratios. The three spacing presets set line spacing and note gap together. The individual
+// controls still exist under "Advanced" and write the same underlying values.
+const TEXT_SIZE_STEPS = [14, 16, 18, 20, 22, 24, 26, 28, 32, 36];
+const NOTES_SIZE_RATIO = 0.9;
+const HEADER_SIZE_RATIO = 0.75;
+const SPACING_PRESETS = [
+  { id: "tight", label: "Tight", line: 1.2, note: 0.15 },
+  { id: "normal", label: "Normal", line: 1.4, note: 0.30 },
+  { id: "airy", label: "Airy", line: 1.7, note: 0.60 },
+];
+const nearestTextSizeStep = (size) => TEXT_SIZE_STEPS.reduce(
+  (best, v, i) => (Math.abs(v - size) < Math.abs(TEXT_SIZE_STEPS[best] - size) ? i : best), 0);
+
 function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, C }) {
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
   // Which display target the Font Size / Bold / Spacing controls below the
   // dropdown currently affect.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const sizeStep = nearestTextSizeStep(fontSize);
+  const applyTextSize = (step) => {
+    const size = TEXT_SIZE_STEPS[step];
+    setFontSize(size);
+    setChordFontSize(Math.min(100, Math.max(8, Math.round(size * NOTES_SIZE_RATIO))));
+    setSectionFontSize(Math.min(30, Math.max(9, Math.round(size * HEADER_SIZE_RATIO))));
+  };
+  const activeSpacing = SPACING_PRESETS.find((p) => Math.abs(p.line - lineSpacing) <= 0.1)?.id ?? null;
+  const applySpacing = (preset) => { setLineSpacing(preset.line); setNoteSpacing(preset.note); };
   const [displayTarget, setDisplayTarget] = useState("lyrics");
   const ALL_DISPLAY_TARGETS = [
     { id: "lyrics", label: "Song Lyrics" },
@@ -4701,30 +4725,31 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
 
           <SectionLabel>DISPLAY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
-            <Field label="APPLY TO">
-              <GenericDropdown value={effectiveDisplayTarget} options={DISPLAY_TARGETS} onChange={setEffectiveDisplayTarget} C={C} />
-            </Field>
-            <Field label="FONT SIZE">
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...targetSizeHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSize}px</div>
-                  <button {...targetSizeHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-                </div>
-                {targetSetBold && (
-                  <button onClick={() => targetSetBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${targetBold ? C.accent : C.border}`, background: targetBold ? C.accentSoft : C.surface3, color: targetBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
-                )}
+            <Field label="TEXT SIZE">
+              <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 12, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 14px" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
+                <input type="range" className="zong-range" aria-label="Text size" min={0} max={TEXT_SIZE_STEPS.length - 1} step={1} value={sizeStep}
+                  onChange={(e) => applyTextSize(Number(e.target.value))}
+                  style={{ flex: 1, minWidth: 0, "--fill": `${(sizeStep / (TEXT_SIZE_STEPS.length - 1)) * 100}%` }} />
+                <span style={{ fontSize: 22, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
               </div>
             </Field>
-            {targetSpacingHold && (
-              <Field label="SPACING">
-                <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...targetSpacingHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSpacing.toFixed(2)}</div>
-                  <button {...targetSpacingHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-                </div>
-              </Field>
-            )}
+            <Field label="SPACING">
+              <div style={{ display: "flex", gap: 8 }}>
+                {SPACING_PRESETS.map((preset) => {
+                  const active = activeSpacing === preset.id;
+                  return (
+                    <button key={preset.id} onClick={() => applySpacing(preset)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, fontFamily: FONT, fontSize: 14, fontWeight: 700 }}>
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Bold lyrics</div>
+              <IosSwitch checked={lyricsBold} onChange={setLyricsBold} C={C} />
+            </div>
             <Field label="TEXT ALIGNMENT">
               <div style={{ display: "flex", gap: 8 }}>
                 {alignOptions.map(({ id, Icon }) => {
@@ -4765,6 +4790,40 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 )}
               </div>
             </Field>
+            <div style={{ borderTop: `1px solid ${C.border}`, margin: "0 -16px -16px" }}>
+              <button onClick={() => setAdvancedOpen((o) => !o)} aria-expanded={advancedOpen} style={{ width: "100%", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text, boxSizing: "border-box" }}>
+                <span>Advanced</span>
+                <ChevronDown size={16} color={C.textMuted} style={{ transform: advancedOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
+              </button>
+              {advancedOpen && (
+                <div style={{ padding: "2px 16px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
+            <Field label="APPLY TO">
+              <GenericDropdown value={effectiveDisplayTarget} options={DISPLAY_TARGETS} onChange={setEffectiveDisplayTarget} C={C} />
+            </Field>
+            <Field label="FONT SIZE">
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                  <button {...targetSizeHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSize}px</div>
+                  <button {...targetSizeHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                </div>
+                {targetSetBold && (
+                  <button onClick={() => targetSetBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${targetBold ? C.accent : C.border}`, background: targetBold ? C.accentSoft : C.surface3, color: targetBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
+                )}
+              </div>
+            </Field>
+            {targetSpacingHold && (
+              <Field label="SPACING">
+                <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
+                  <button {...targetSpacingHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSpacing.toFixed(2)}</div>
+                  <button {...targetSpacingHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                </div>
+              </Field>
+            )}
+                </div>
+              )}
+            </div>
           </div>
 
           {mode === "drums" ? (
