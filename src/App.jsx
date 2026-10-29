@@ -725,14 +725,73 @@ function songMatchesQuery(song, query) {
    chords/chart/drums text position a chord/note label above the following
    character (parsed by ChordText's existing tokenizer).
    ========================================================================= */
+/* -------------------------------------------------------------------------
+   Drums text format. You write the drum notes as plain text and the lyrics inside square
+   brackets; each note applies to the bracketed lyric chunk that follows it:
+       Kick [Way maker] Snare [miracle worker]
+   and the song view shows Kick above "Way maker" and Snare above "miracle worker" (notes embedded
+   into the lyrics, as in the chart). A line with no brackets is a plain notes-only line.
+   Stored drums text starts with an invisible marker so the new format is never confused with the
+   old one ([note]lyrics, notes inside the brackets), which is converted automatically.
+   ------------------------------------------------------------------------- */
+const DRUMS_FORMAT_MARK = "\u2063";
+const isNewDrumsText = (t) => String(t || "").startsWith(DRUMS_FORMAT_MARK);
+
+// "Kick [Way maker] Snare [miracle]" -> "[Kick]Way maker [Snare]miracle" (the tagged form ChordText draws).
+function drumsLineToTagged(line) {
+  if (!line.includes("[")) return line;
+  const parts = line.split(/\[([^\]]*)\]/);   // note, lyric, note, lyric, …, note
+  let out = "";
+  for (let i = 0; i < parts.length; i += 2) {
+    const note = parts[i];
+    const lyric = parts[i + 1];
+    const trimmed = note.trim();
+    const gap = /\s/.test(note);   // whitespace between lyric chunks: a word break
+    if (lyric === undefined) {      // trailing text after the last lyric chunk: a note with no lyric
+      if (trimmed) out += (out && gap ? " " : "") + `[${trimmed}]`;
+      break;
+    }
+    if (out && gap) out += " ";
+    if (trimmed) out += `[${trimmed}]`;
+    out += lyric;
+  }
+  return out;
+}
+// Old format "[Kick]Way maker [Snare]miracle" -> "Kick [Way maker] Snare [miracle]" (exact round trip).
+function drumsLineOldToNew(line) {
+  if (!/\[[^\]]*\]/.test(line)) return line;
+  const runs = [];
+  tokenizeTaggedLine(line).forEach((t) => {
+    if (t.tag != null || runs.length === 0) runs.push({ note: t.tag ?? "", text: "" });
+    if (t.ch != null) runs[runs.length - 1].text += t.ch;
+  });
+  let out = "";
+  let prevTrailingSpace = false;
+  runs.forEach((r, i) => {
+    const chunk = r.text.trim();
+    const gap = i > 0 && (prevTrailingSpace || /^\s/.test(r.text));
+    const sep = gap ? " " : "";
+    if (i > 0) out += sep;
+    if (r.note) out += r.note + (i === 0 ? " " : sep);
+    if (chunk) out += `[${chunk}]`;
+    prevTrailingSpace = /\s$/.test(r.text);
+  });
+  return out.trimEnd();
+}
+const convertOldDrumsText = (text) => DRUMS_FORMAT_MARK + String(text || "").split("\n").map(drumsLineOldToNew).join("\n");
+const drumsToEditor = (stored) => (isNewDrumsText(stored) ? String(stored).slice(DRUMS_FORMAT_MARK.length) : convertOldDrumsText(stored).slice(DRUMS_FORMAT_MARK.length));
+const drumsFromEditor = (text) => (String(text || "").trim() ? DRUMS_FORMAT_MARK + text : "");
+const drumsToTagged = (stored) => String(stored || "").slice(DRUMS_FORMAT_MARK.length).split("\n").map(drumsLineToTagged).join("\n");
+
 function migrateSongShape(song) {
   if (!song) return song;
+  const drums = song.drumsText ?? "";
   return {
     ...song,
     lyricsText: song.lyricsText ?? "",
     chordsText: song.chordsText ?? "",
     chartText: song.chartText ?? "",
-    drumsText: song.drumsText ?? "",
+    drumsText: drums && !isNewDrumsText(drums) ? convertOldDrumsText(drums) : drums,
   };
 }
 function parseTextIntoBlocks(text, stripTrailingBlanks = false) {
@@ -3489,7 +3548,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const [lyricsText, setLyricsText] = useState(migratedInitial?.lyricsText ?? "");
   const [chordsText, setChordsText] = useState(migratedInitial?.chordsText ?? "");
   const [chartText, setChartText] = useState(migratedInitial?.chartText ?? "");
-  const [drumsText, setDrumsText] = useState(migratedInitial?.drumsText ?? "");
+  const [drumsText, setDrumsText] = useState(drumsToEditor(migratedInitial?.drumsText ?? ""));
   const [accents, setAccents] = useState(() => {
     if (initial?.id) return getSongAccents(initial.id, (() => { const { beats, unit } = parseTimeSig(initial.timeSignature || "4/4"); return (beats === 6 && unit === 8) ? 4 : beats; })());
     return seed?.accents ?? defaultAccents(4);
@@ -3542,7 +3601,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: savedKey, keyQuality, language, description, accents, subdivision,
-      lyricsText, chordsText: normalizedChordsText, chartText, drumsText,
+      lyricsText, chordsText: normalizedChordsText, chartText, drumsText: drumsFromEditor(drumsText),
     });
   };
   // Save only lights up once something differs from the values the form opened with.
@@ -3555,7 +3614,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     lyrics: "-Verse\nFirst line\nSecond line\n-Chorus\n…",
     chords: "-Verse\n1 4 5\n-Chorus\n…",
     chart: "-Verse\n[C]First line [G]of lyrics\n-Chorus\n…",
-    drums: "-Verse\n[Kick]First line of lyrics\n-Chorus\n…",
+    drums: "-Verse\nKick [First line of lyrics]\nSnare [Second line]\n-Chorus\n…",
   };
 
   return (
@@ -3919,7 +3978,7 @@ function SongDetailScreen({
   const lyricsToggleStyle = (on) => ({ height: 28, minWidth: 56, padding: "0 8px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
 
   const isVocals = mode === "vocals";
-  const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? ms.drumsText : (chordsView === "chords" ? ms.chordsText : ms.chartText);
+  const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? drumsToTagged(ms.drumsText) : (chordsView === "chords" ? ms.chordsText : ms.chartText);
 
   const hasKeyChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && viewKey !== (syncedKeyOverride ?? song.key));
   const currentBpm = engine ? Math.round(engine.bpm) : (contextTempo ?? song.tempo);
@@ -4045,14 +4104,11 @@ function SongDetailScreen({
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
-          const isDrums = mode === "drums";
           return parseTextIntoBlocks(displayText, true).map((block, idx) => (
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
-              ) : isDrums ? (
-                <ChordText text={block.lines.join("\n")} editable={false} showLyrics dimTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing} padWordForTag={true} letterSpacing={letterSpacing} />
               ) : (
                 <ChordText text={block.lines.join("\n")} editable={false} dim showLyrics brightTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} flattenTags={mode === "chords" && !nashvilleMode} C={C} tagGapMult={noteSpacing} hyphenateOverlaps={mode === "chords"} padWordForTag={true} letterSpacing={letterSpacing} />
               )}
@@ -5602,6 +5658,14 @@ function AppInner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
+
+  // Drums notes written in the old format ([note]lyrics) are rewritten once in the new one
+  // (note [lyrics]); the format mark makes this safe to repeat and keeps synced devices consistent.
+  useEffect(() => {
+    if (!songsReady) return;
+    if (!songsRef.current.some((s) => s.drumsText && !isNewDrumsText(s.drumsText))) return;
+    saveSongs((prev) => prev.map((s) => (s.drumsText && !isNewDrumsText(s.drumsText) ? { ...s, drumsText: convertOldDrumsText(s.drumsText) } : s)));
+  }, [songsReady, songs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local data finished loading: run the sync that was skipped while it was loading.
   useEffect(() => {
