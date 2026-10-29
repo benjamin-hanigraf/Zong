@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useSyncExter
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
-  ListMusic, Layers, Minus, AlignLeft, AlignCenter, AlignRight, Check, X,
+  ListMusic, Layers, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import {
@@ -860,8 +860,11 @@ const MINOR_KEY_DEGREE_QUALITIES = ["m", "dim", "", "m", "m", "", ""];
 // is intentionally excluded — that already means "minor" everywhere else.
 const MAJOR_OVERRIDE_SUFFIXES = new Set(["M", "Maj", "maj", "major", "Major"]);
 const NUMBER_TOKEN_RE = /^([b#]?)([1-7])((?:(?!\/)[^\s])*)(?:\/([b#]?)([1-7]))?$/;
+// Plain numbers above 13 are text (bar counts, verse numbers) — except the degree + 7th/9th
+// shorthands: 37 = 3 with a 7th, 49 = 4 with a 9th.
+const isPlainNumberText = (t) => /^[0-9]+$/.test(t) && parseInt(t, 10) > 13 && !/^[1-7][79]$/.test(t);
 function isValidNashvilleToken(trimmed) {
-  if (/^[0-9]+$/.test(trimmed) && parseInt(trimmed, 10) > 13) return false;
+  if (isPlainNumberText(trimmed)) return false;
   return NUMBER_TOKEN_RE.test(trimmed);
 }
 function tokenToChord(token, key, quality) {
@@ -872,7 +875,7 @@ function tokenToChord(token, key, quality) {
   // 13 isn't a Nashville degree token at all (degrees only run 1-7) — treat
   // it as literal text (e.g. a bar count, a note number) rather than trying
   // to parse "14" as degree 1 with a "4" suffix.
-  if (/^[0-9]+$/.test(trimmed) && parseInt(trimmed, 10) > 13) return token;
+  if (isPlainNumberText(trimmed)) return token;
   const semitoneRoot = KEY_TO_SEMITONE[key] ?? 0;
   const useFlats = FLAT_KEYS.has(key);
   const scaleOffsets = quality === "Minor" ? MINOR_SCALE_OFFSETS : MAJOR_SCALE_OFFSETS;
@@ -901,7 +904,10 @@ function tokenToChord(token, key, quality) {
   // "6M", "6maj", "6major", etc. force a plain major triad on a degree that
   // would otherwise default to minor/diminished (e.g. vi -> VI, vii° -> VII).
   const isMajorOverride = qualitySuffix && MAJOR_OVERRIDE_SUFFIXES.has(qualitySuffix);
-  const finalSuffix = isMajorOverride ? "" : (qualitySuffix || defaultSuffix);
+  // A bare 7th/9th extension (37, 67, 49 …) keeps the degree's own quality: 3 + 7th is the minor
+  // seventh (Bm7 in G), while a major degree gives the dominant form (49 -> C9).
+  const isExtensionOnly = qualitySuffix === "7" || qualitySuffix === "9";
+  const finalSuffix = isMajorOverride ? "" : (isExtensionOnly && !acc && defaultSuffix ? defaultSuffix + qualitySuffix : (qualitySuffix || defaultSuffix));
   let chord = spellNote(rootSemitone, rootUseFlats) + finalSuffix;
   if (bassDegreeStr) {
     const bassDegree = parseInt(bassDegreeStr, 10);
@@ -1114,57 +1120,6 @@ function NaturalDropdown({ value, onChange, C }) {
                   color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent", cursor: "pointer",
                 }}>
                   {label}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function GenericDropdown({ value, options, onChange, C }) {
-  const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
-  const btnRef = useRef(null);
-  const DROPDOWN_HEIGHT = 220;
-  const handleToggle = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < DROPDOWN_HEIGHT && rect.top > spaceBelow);
-    }
-    setOpen((o) => !o);
-  };
-  const activeOption = options.find((o) => o.id === value);
-  return (
-    <div style={{ position: "relative" }}>
-      <button type="button" ref={btnRef} onClick={handleToggle} style={{
-        width: "100%", boxSizing: "border-box", height: 44, padding: "0 14px", borderRadius: 10,
-        border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
-        fontFamily: FONT, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
-        <span>{activeOption ? activeOption.label : ""}</span>
-        <ChevronDown size={16} color={C.textMuted} />
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
-          <div style={{
-            position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
-            left: 0, right: 0, zIndex: 150,
-            background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
-            overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
-          }}>
-            {options.map((opt) => {
-              const active = opt.id === value;
-              return (
-                <div key={opt.id} onClick={() => { onChange(opt.id); setOpen(false); }} style={{
-                  padding: "13px 14px", fontFamily: FONT, fontSize: 14.5, fontWeight: 400,
-                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
-                }}>
-                  {opt.label}
                 </div>
               );
             })}
@@ -2998,7 +2953,9 @@ function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyr
               const minWidthCh = shouldPadForTag ? Math.max(g.items.length, tagDrivenWidth) : g.items.length;
               return (
                 <span key={gi} style={{ display: "inline-block", whiteSpace: "normal", minWidth: showTags ? `${minWidthCh}ch` : undefined, maxWidth: "100%", wordBreak: "break-word" }}>
-                  <span style={{ display: "inline-block", whiteSpace: "nowrap" }}>
+                  {/* A word stays on one line when it fits; a word wider than the line breaks inside
+                      instead of running off the right edge. */}
+                  <span style={{ display: "inline-block", whiteSpace: "normal" }}>
                     {g.items.map(renderChar)}
                   </span>
                 </span>
@@ -4619,10 +4576,20 @@ const TEXT_SIZE_STEPS = [14, 16, 18, 20, 22, 24, 26, 28, 32, 36];
 const NOTES_SIZE_RATIO = 0.9;
 const HEADER_SIZE_RATIO = 0.75;
 const SPACING_PRESETS = [
-  { id: "tight", label: "Tight", line: 1.2, note: 0.15 },
-  { id: "normal", label: "Normal", line: 1.4, note: 0.30 },
-  { id: "airy", label: "Airy", line: 1.7, note: 0.60 },
+  { id: "tight", label: "Tight", line: 1.2, note: 0.15, iconGap: 4 },
+  { id: "normal", label: "Normal", line: 1.4, note: 0.30, iconGap: 6.5 },
+  { id: "airy", label: "Airy", line: 1.7, note: 0.60, iconGap: 9 },
 ];
+// Three text lines with the preset's line gap, drawn in the button's colour.
+function SpacingIcon({ gap, size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <line x1="5" y1={12 - gap} x2="19" y2={12 - gap} />
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <line x1="5" y1={12 + gap} x2="19" y2={12 + gap} />
+    </svg>
+  );
+}
 const nearestTextSizeStep = (size) => TEXT_SIZE_STEPS.reduce(
   (best, v, i) => (Math.abs(v - size) < Math.abs(TEXT_SIZE_STEPS[best] - size) ? i : best), 0);
 
@@ -4630,9 +4597,6 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
-  // Which display target the Font Size / Bold / Spacing controls below the
-  // dropdown currently affect.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const sizeStep = nearestTextSizeStep(fontSize);
   const applyTextSize = (step) => {
     const size = TEXT_SIZE_STEPS[step];
@@ -4642,48 +4606,12 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
   };
   const activeSpacing = SPACING_PRESETS.find((p) => Math.abs(p.line - lineSpacing) <= 0.1)?.id ?? null;
   const applySpacing = (preset) => { setLineSpacing(preset.line); setNoteSpacing(preset.note); };
-  const [displayTarget, setDisplayTarget] = useState("lyrics");
-  const ALL_DISPLAY_TARGETS = [
-    { id: "lyrics", label: "Song Lyrics" },
-    { id: "chords", label: "Chords / Notes" },
-    { id: "headers", label: "Section Headers" },
-  ];
-  const DISPLAY_TARGETS = mode === "vocals"
-    ? ALL_DISPLAY_TARGETS.filter((t) => t.id !== "chords")
-    : ALL_DISPLAY_TARGETS;
-  // If the selected target isn't available in this mode, reset to lyrics
-  const effectiveDisplayTarget = DISPLAY_TARGETS.some((t) => t.id === displayTarget) ? displayTarget : "lyrics";
-  const setEffectiveDisplayTarget = (v) => setDisplayTarget(v);
 
   const cycleTone = (dir) => {
     const next = (toneIndex + dir + CLICK_TONES.length) % CLICK_TONES.length;
     setToneIndex(next);
     setClickSettings({ ...clickSettings, clickTone: CLICK_TONES[next].id });
   };
-  const decLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.max(14, f - 1)));
-  const incLyricsSizeHold = useHoldRepeat(() => setFontSize((f) => Math.min(100, f + 1)));
-  const decNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.max(8, f - 1)));
-  const incNotesSizeHold = useHoldRepeat(() => setChordFontSize((f) => Math.min(100, f + 1)));
-  const decSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.max(9, f - 1)));
-  const incSectionSizeHold = useHoldRepeat(() => setSectionFontSize((f) => Math.min(30, f + 1)));
-  const decLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.max(1.1, Math.round((f - 0.15) * 100) / 100)));
-  const incLineSpacingHold = useHoldRepeat(() => setLineSpacing((f) => Math.min(3, Math.round((f + 0.15) * 100) / 100)));
-  const decNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.max(0.1, Math.round((f - 0.05) * 100) / 100)));
-  const incNoteSpacingHold = useHoldRepeat(() => setNoteSpacing((f) => Math.min(2.5, Math.round((f + 0.05) * 100) / 100)));
-
-  // Font Size / Bold / Spacing all delegate to whichever target is picked
-  // in the dropdown above them.
-  const targetSize = effectiveDisplayTarget === "lyrics" ? fontSize : effectiveDisplayTarget === "chords" ? chordFontSize : sectionFontSize;
-  const targetSizeHold = effectiveDisplayTarget === "lyrics" ? { dec: decLyricsSizeHold, inc: incLyricsSizeHold }
-    : effectiveDisplayTarget === "chords" ? { dec: decNotesSizeHold, inc: incNotesSizeHold }
-      : { dec: decSectionSizeHold, inc: incSectionSizeHold };
-  const targetBold = effectiveDisplayTarget === "lyrics" ? lyricsBold : effectiveDisplayTarget === "chords" ? notesBold : null;
-  const targetSetBold = effectiveDisplayTarget === "lyrics" ? setLyricsBold : effectiveDisplayTarget === "chords" ? setNotesBold : null;
-  const targetSpacing = effectiveDisplayTarget === "lyrics" ? lineSpacing : effectiveDisplayTarget === "chords" ? noteSpacing : null;
-  const targetSpacingHold = effectiveDisplayTarget === "lyrics" ? { dec: decLineSpacingHold, inc: incLineSpacingHold }
-    : effectiveDisplayTarget === "chords" ? { dec: decNoteSpacingHold, inc: incNoteSpacingHold }
-      : null;
-
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
@@ -4726,30 +4654,33 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           <SectionLabel>DISPLAY</SectionLabel>
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
             <Field label="TEXT SIZE">
-              <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 12, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 14px" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
-                <input type="range" className="zong-range" aria-label="Text size" min={0} max={TEXT_SIZE_STEPS.length - 1} step={1} value={sizeStep}
-                  onChange={(e) => applyTextSize(Number(e.target.value))}
-                  style={{ flex: 1, minWidth: 0, "--fill": `${(sizeStep / (TEXT_SIZE_STEPS.length - 1)) * 100}%` }} />
-                <span style={{ fontSize: 22, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 12, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 14px" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
+                  <input type="range" className="zong-range" aria-label="Text size" min={0} max={TEXT_SIZE_STEPS.length - 1} step={1} value={sizeStep}
+                    onChange={(e) => applyTextSize(Number(e.target.value))}
+                    style={{ flex: 1, minWidth: 0, "--fill": `${(sizeStep / (TEXT_SIZE_STEPS.length - 1)) * 100}%` }} />
+                  <span style={{ fontSize: 22, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontFamily: FONT, fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1 }}>B</span>
+                  <IosSwitch checked={lyricsBold && notesBold} onChange={(on) => { setLyricsBold(on); setNotesBold(on); }} C={C} />
+                </div>
               </div>
             </Field>
-            <Field label="SPACING">
+            <Field label="LINE SPACING">
               <div style={{ display: "flex", gap: 8 }}>
                 {SPACING_PRESETS.map((preset) => {
                   const active = activeSpacing === preset.id;
                   return (
-                    <button key={preset.id} onClick={() => applySpacing(preset)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, fontFamily: FONT, fontSize: 14, fontWeight: 700 }}>
+                    <button key={preset.id} onClick={() => applySpacing(preset)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      <SpacingIcon gap={preset.iconGap} />
                       {preset.label}
                     </button>
                   );
                 })}
               </div>
             </Field>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Bold lyrics</div>
-              <IosSwitch checked={lyricsBold} onChange={setLyricsBold} C={C} />
-            </div>
             <Field label="TEXT ALIGNMENT">
               <div style={{ display: "flex", gap: 8 }}>
                 {alignOptions.map(({ id, Icon }) => {
@@ -4790,40 +4721,6 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 )}
               </div>
             </Field>
-            <div style={{ borderTop: `1px solid ${C.border}`, margin: "0 -16px -16px" }}>
-              <button onClick={() => setAdvancedOpen((o) => !o)} aria-expanded={advancedOpen} style={{ width: "100%", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text, boxSizing: "border-box" }}>
-                <span>Advanced</span>
-                <ChevronDown size={16} color={C.textMuted} style={{ transform: advancedOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
-              </button>
-              {advancedOpen && (
-                <div style={{ padding: "2px 16px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
-            <Field label="APPLY TO">
-              <GenericDropdown value={effectiveDisplayTarget} options={DISPLAY_TARGETS} onChange={setEffectiveDisplayTarget} C={C} />
-            </Field>
-            <Field label="FONT SIZE">
-              <div style={{ display: "flex", gap: 8 }}>
-                <div style={{ flex: 1, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...targetSizeHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSize}px</div>
-                  <button {...targetSizeHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-                </div>
-                {targetSetBold && (
-                  <button onClick={() => targetSetBold((b) => !b)} style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${targetBold ? C.accent : C.border}`, background: targetBold ? C.accentSoft : C.surface3, color: targetBold ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
-                )}
-              </div>
-            </Field>
-            {targetSpacingHold && (
-              <Field label="SPACING">
-                <div style={{ height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 4px" }}>
-                  <button {...targetSpacingHold.dec} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{targetSpacing.toFixed(2)}</div>
-                  <button {...targetSpacingHold.inc} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
-                </div>
-              </Field>
-            )}
-                </div>
-              )}
-            </div>
           </div>
 
           {mode === "drums" ? (
