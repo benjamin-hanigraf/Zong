@@ -2707,6 +2707,21 @@ function insertOverlapHyphens(tokens, tagSize, fontSize, flattenTags) {
   return out;
 }
 
+// Vocals mode shows plain lyrics (no chord tags), so it does not need ChordText's monospaced
+// one-character grid. Plain text in the system font reads better, wraps naturally and keeps
+// Tamil letters together. Lines keep ChordText's spacing so the layout matches the other modes.
+function LyricsText({ text, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, bold = false, letterSpacing }) {
+  const lines = String(text || "").split("\n").map((l) => l.replace(/\[[^\]]*\]/g, "").replace(/^\s+/, ""));
+  return (
+    <div style={{ fontFamily: FONT, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", overflowWrap: "break-word", letterSpacing, fontWeight: bold ? 700 : 400, maxWidth: "100%", boxSizing: "border-box" }}>
+      {lines.map((line, i) => (
+        <div key={i} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)) }}>
+          {line ? <Tamil>{line}</Tamil> : "\u00A0"}
+        </div>
+      ))}
+    </div>
+  );
+}
 function ChordText({ text, onChange, editable, dim, brightTags, dimTags, showLyrics = true, showTags = true, textAlign = "left", fontSize = 22, lineHeightMult = 1.75, tagFontSize, accent, C, emptyHint, bold, lyricsBold, notesBold, flattenTags = false, tagGapMult = 1, hyphenateOverlaps = false, padWordForTag = true, letterSpacing = "normal" }) {
   const [editorFor, setEditorFor] = useState(null); // { line, index } | null
   const [draft, setDraft] = useState("");
@@ -4028,7 +4043,7 @@ function SongDetailScreen({
             <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
               {isVocals ? (
-                <ChordText text={block.lines.join("\n")} editable={false} showLyrics showTags={false} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} C={C} letterSpacing={letterSpacing} />
+                <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
               ) : isDrums ? (
                 <ChordText text={block.lines.join("\n")} editable={false} showLyrics dimTags textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing} accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing} padWordForTag={true} letterSpacing={letterSpacing} />
               ) : (
@@ -4569,10 +4584,9 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   );
 }
 
-// Simple display settings. One slider (10 steps) sets the lyrics size; notes and section headers follow
-// in fixed ratios. The three spacing presets set line spacing and note gap together. The individual
-// controls still exist under "Advanced" and write the same underlying values.
-const TEXT_SIZE_STEPS = [14, 16, 18, 20, 22, 24, 26, 28, 32, 36];
+// Display settings. One slider (10 steps, 10–100 px) sets the lyrics size; notes and section headers
+// follow in fixed ratios. The three spacing presets set line spacing and note gap together.
+const TEXT_SIZE_STEPS = [10, 12, 14, 16, 20, 26, 34, 46, 64, 100];
 const NOTES_SIZE_RATIO = 0.9;
 const HEADER_SIZE_RATIO = 0.75;
 const SPACING_PRESETS = [
@@ -4662,10 +4676,13 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                     style={{ flex: 1, minWidth: 0, "--fill": `${(sizeStep / (TEXT_SIZE_STEPS.length - 1)) * 100}%` }} />
                   <span style={{ fontSize: 22, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                  <span style={{ fontFamily: FONT, fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1 }}>B</span>
-                  <IosSwitch checked={lyricsBold && notesBold} onChange={(on) => { setLyricsBold(on); setNotesBold(on); }} C={C} />
-                </div>
+                {(() => {
+                  const boldOn = lyricsBold && notesBold;
+                  return (
+                    <button onClick={() => { setLyricsBold(!boldOn); setNotesBold(!boldOn); }} aria-label="Bold" aria-pressed={boldOn}
+                      style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0, border: `1px solid ${boldOn ? C.accent : C.border}`, background: boldOn ? C.accentSoft : C.surface3, color: boldOn ? C.accent : C.text, fontFamily: FONT, fontSize: 16, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>B</button>
+                  );
+                })()}
               </div>
             </Field>
             <Field label="LINE SPACING">
@@ -4697,11 +4714,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
                 <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
                 {mode === "vocals" ? (
-                  <ChordText
+                  <LyricsText
                     text={"Way maker, miracle worker,\npromise keeper, light in the darkness"}
-                    editable={false} showLyrics showTags={false}
-                    textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing}
-                    accent={C.accent} lyricsBold={lyricsBold} C={C}
+                    textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold}
                   />
                 ) : mode === "drums" ? (
                   <ChordText
