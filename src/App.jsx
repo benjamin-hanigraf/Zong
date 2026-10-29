@@ -2664,7 +2664,7 @@ function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly,
     nextPattern[i] = next;
     onChange(nextPattern);
   };
-  // Long-press toggles mute mode; a normal tap opens the pattern editor (disabled while muted).
+  // Long-press toggles mute mode; a normal tap opens the pattern editor (also while muted).
   const pressTimer = useRef(null);
   const longPressed = useRef(false);
   const pressOrigin = useRef({ x: 0, y: 0 });
@@ -2672,7 +2672,6 @@ function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly,
   useEffect(() => clearPress, []);
   const handleOpen = () => {
     if (longPressed.current) { longPressed.current = false; return; }
-    if (muted) return;
     if (openUpwardOnly) {
       setOpenUpward(true);
     } else if (btnRef.current) {
