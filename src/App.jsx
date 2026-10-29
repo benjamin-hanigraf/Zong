@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useSyncExter
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
-  ListMusic, Layers, AlignLeft, AlignCenter, AlignRight, Check, X,
+  ListMusic, Layers, Minus, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import {
@@ -3400,7 +3400,7 @@ const escapeHtml = (s) => String(s ?? "")
 // tinted in the given accent colour as the user types. When
 // restrictToNashville is set, only tokens matching the Nashville-number
 // pattern are tinted — anything else in brackets stays plain text colour.
-function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, drumMode, C }) {
+function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, drumMode, chartMode, C }) {
   const taRef = useRef(null);
   const backdropRef = useRef(null);
   useEffect(() => {
@@ -3435,6 +3435,12 @@ function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeho
       // Colour [tag] groups grey; rest stays C.text (bright)
       return escapeHtml(line).replace(/\[([^\]]*)\]/g,
         (_, inner) => `<span style="color:#6A6A6E">[${inner}]</span>`);
+    }
+    if (chartMode) {
+      // Chart: the [chord] tags stay bright; the lyrics around them are grey.
+      return line.split(/(\[[^\]]*\])/).map((part) => (
+        !part ? "" : part.startsWith("[") && part.endsWith("]") ? escapeHtml(part) : `<span style="color:#6A6A6E">${escapeHtml(part)}</span>`
+      )).join("");
     }
     return escapeHtml(line);
   }).join("\n") + (raw.endsWith("\n") ? "&nbsp;" : "");
@@ -3619,6 +3625,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             accent={C.accent}
             restrictToNashville={sectionTab === "chords"}
             drumMode={sectionTab === "drums"}
+            chartMode={sectionTab === "chart"}
             C={C}
             wrapperStyle={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, minHeight: 140 }}
             textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.4, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
@@ -4584,9 +4591,10 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
   );
 }
 
-// Display settings. One slider (10 steps, 10–100 px) sets the lyrics size; notes and section headers
+// Display settings. One − / + control (10–100 px) sets the lyrics size; notes and section headers
 // follow in fixed ratios. The three spacing presets set line spacing and note gap together.
-const TEXT_SIZE_STEPS = [10, 12, 14, 16, 20, 26, 34, 46, 64, 100];
+const MIN_TEXT_SIZE = 10;
+const MAX_TEXT_SIZE = 100;
 const NOTES_SIZE_RATIO = 0.9;
 const HEADER_SIZE_RATIO = 0.75;
 const SPACING_PRESETS = [
@@ -4604,20 +4612,22 @@ function SpacingIcon({ gap, size = 18 }) {
     </svg>
   );
 }
-const nearestTextSizeStep = (size) => TEXT_SIZE_STEPS.reduce(
-  (best, v, i) => (Math.abs(v - size) < Math.abs(TEXT_SIZE_STEPS[best] - size) ? i : best), 0);
 
 function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, C }) {
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
-  const sizeStep = nearestTextSizeStep(fontSize);
-  const applyTextSize = (step) => {
-    const size = TEXT_SIZE_STEPS[step];
-    setFontSize(size);
-    setChordFontSize(Math.min(100, Math.max(8, Math.round(size * NOTES_SIZE_RATIO))));
-    setSectionFontSize(Math.min(30, Math.max(9, Math.round(size * HEADER_SIZE_RATIO))));
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+  const applyTextSize = (size) => {
+    const v = Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, size));
+    fontSizeRef.current = v;
+    setFontSize(v);
+    setChordFontSize(Math.min(100, Math.max(8, Math.round(v * NOTES_SIZE_RATIO))));
+    setSectionFontSize(Math.min(30, Math.max(9, Math.round(v * HEADER_SIZE_RATIO))));
   };
+  const decSizeHold = useHoldRepeat(() => applyTextSize(fontSizeRef.current - 1));
+  const incSizeHold = useHoldRepeat(() => applyTextSize(fontSizeRef.current + 1));
   const activeSpacing = SPACING_PRESETS.find((p) => Math.abs(p.line - lineSpacing) <= 0.1)?.id ?? null;
   const applySpacing = (preset) => { setLineSpacing(preset.line); setNoteSpacing(preset.note); };
 
@@ -4669,12 +4679,10 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
           <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
             <Field label="TEXT SIZE">
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 12, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 14px" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
-                  <input type="range" className="zong-range" aria-label="Text size" min={0} max={TEXT_SIZE_STEPS.length - 1} step={1} value={sizeStep}
-                    onChange={(e) => applyTextSize(Number(e.target.value))}
-                    style={{ flex: 1, minWidth: 0, "--fill": `${(sizeStep / (TEXT_SIZE_STEPS.length - 1)) * 100}%` }} />
-                  <span style={{ fontSize: 22, fontWeight: 700, color: C.textMuted, lineHeight: 1 }}>A</span>
+                <div style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "stretch", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+                  <button {...decSizeHold} aria-label="Smaller text" style={{ flex: "0 0 56px", border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>{fontSize}px</div>
+                  <button {...incSizeHold} aria-label="Larger text" style={{ flex: "0 0 56px", border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
                 {(() => {
                   const boldOn = lyricsBold && notesBold;
