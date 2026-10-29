@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useSyncExternalStore } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
@@ -365,23 +365,34 @@ const TANGLISH_DIGITS = {
   "\u0BE6": "0", "\u0BE7": "1", "\u0BE8": "2", "\u0BE9": "3", "\u0BEA": "4",
   "\u0BEB": "5", "\u0BEC": "6", "\u0BED": "7", "\u0BEE": "8", "\u0BEF": "9",
 };
-// Common worship-song words whose everyday spelling doesn't follow the
-// positional rule above (mostly word-initial voicing). Extend freely.
+// Common worship-song words whose everyday spelling doesn't follow the positional rule above
+// (mostly word-initial voicing). Extend freely.
+// Entries that were dropped from the built-in list because the transliteration rules already give the
+// same spelling; copies saved on a device are cleaned up once (only if the user did not change them).
+const REMOVED_SEED_WORDS = {
+  "கர்த்தர்": "Karthar",
+  "பரிசுத்த": "Parisutha",
+  "ஆவியானவர்": "Aaviyaanavar",
+  "கிருபை": "Kirubai",
+  "கிருபையால்": "Kirubaiyaal",
+  "வல்லமை": "Vallamai",
+  "ஆராதனை": "Aaraadhanai",
+  "ஆராதிக்கிறோம்": "Aaraadhikkirom",
+  "நன்றி": "Nandri",
+  "மகிழ்ச்சி": "Magizhchi",
+  "சமாதானம்": "Samaadhaanam",
+  "நித்தியம்": "Nithiyam",
+  "பாடுவோம்": "Paaduvom",
+  "பாராட்டு": "Paaraattu",
+};
 const TANGLISH_EXCEPTIONS = {
   "தேவன்": "Devan", "தேவனே": "Devaney", "தேவா": "Deva", "தேவனுடைய": "Devanudaiya",
   "தேவனை": "Devanai", "தேவனிடம்": "Devanidam", "தேவனுக்கு": "Devanukku", "தேவி": "Devi",
   "இயேசு": "Yesu", "இயேசுவே": "Yesuve", "இயேசுவின்": "Yesuvin", "கிறிஸ்து": "Kiristhu",
-  "கர்த்தர்": "Karthar", "கர்த்தாவே": "Karthave", "கர்த்தரே": "Karthare",
-  "பரிசுத்த": "Parisutha", "ஆவியானவர்": "Aaviyaanavar",
-  "பயம்": "Bayam", "பயமே": "Bayame", "பயந்து": "Bayandhu",
-  "தயவு": "Dhayavu", "தயவாய்": "Dhayavaai", "தயவுடன்": "Dhayavudan",
-  "கிருபை": "Kirubai", "கிருபையால்": "Kirubaiyaal", "கிருபையே": "Kirubaiye",
-  "ஸ்தோத்திரம்": "Sthothiram", "ஸ்தோத்திரிப்போம்": "Sthothirippom",
-  "மகிமை": "Mahimai", "மகிமையே": "Mahimaiye", "வல்லமை": "Vallamai",
-  "துதி": "Thuthi", "துதிப்பாய்": "Thuthippaai", "துதிப்போம்": "Thuthippom",
-  "ஆராதனை": "Aaraadhanai", "ஆராதிக்கிறோம்": "Aaraadhikkirom",
-  "நன்றி": "Nandri", "மகிழ்ச்சி": "Magizhchi", "சமாதானம்": "Samaadhaanam",
-  "நித்தியம்": "Nithiyam", "பாடுவோம்": "Paaduvom", "பாராட்டு": "Paaraattu",
+  "கர்த்தாவே": "Karthave", "கர்த்தரே": "Karthare", "பயம்": "Bayam", "பயமே": "Bayame",
+  "பயந்து": "Bayandhu", "தயவு": "Dhayavu", "தயவாய்": "Dhayavaai", "தயவுடன்": "Dhayavudan",
+  "கிருபையே": "Kirubaiye", "ஸ்தோத்திரம்": "Sthothiram", "ஸ்தோத்திரிப்போம்": "Sthothirippom", "மகிமை": "Mahimai",
+  "மகிமையே": "Mahimaiye", "துதி": "Thuthi", "துதிப்பாய்": "Thuthippaai", "துதிப்போம்": "Thuthippom",
   "கௌரவம்": "Gouravam",
 };
 // Runtime-mutable copy — replaced by the persisted user dictionary at startup
@@ -1306,6 +1317,84 @@ function detectDevice() {
 }
 const DEVICE_CLASS = detectDevice();
 
+/* =========================================================================
+   Phone orientation lock.
+   iOS Safari / home-screen PWAs cannot lock the screen to portrait. When the phone is turned
+   sideways the OS makes the viewport landscape, so on phones we turn the whole page back by 90°
+   (the <body> is rotated and given the swapped width/height), which keeps the UI upright relative
+   to the phone body — a rotation lock. Everything that depends on the page frame follows it:
+     • sizes come from the body (never `100dvh` / `window.innerHeight`, which still describe the
+       sideways viewport) — use uiWidth() / uiHeight();
+     • the notch / home-indicator insets rotate with the page, exposed as --safe-top/-bottom/-left/-right.
+   The native iOS app is locked to portrait by the OS, so none of this ever triggers there.
+   ========================================================================= */
+const uiFrame = { rotated: false, width: 0, height: 0 };
+const uiWidth = () => (uiFrame.rotated ? uiFrame.width : window.innerWidth);
+
+function startPhoneOrientationLock() {
+  if (typeof document === "undefined") return () => { };
+  window.screen?.orientation?.lock?.("portrait")?.catch?.(() => { });   // works on Android / installed PWAs
+  const root = document.documentElement;
+  const body = document.body;
+  const SAFE_VARS = ["--safe-top", "--safe-bottom", "--safe-left", "--safe-right"];
+  // Hidden probe whose padding is the real (screen-frame) safe-area inset, so the values can be read in px.
+  const probe = document.createElement("div");
+  probe.setAttribute("aria-hidden", "true");
+  probe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)";
+  body.appendChild(probe);
+
+  const reset = () => {
+    ["top", "left", "right", "bottom", "width", "height", "transform", "transformOrigin"].forEach((prop) => { body.style[prop] = ""; });
+    SAFE_VARS.forEach((v) => root.style.removeProperty(v));
+    uiFrame.rotated = false;
+  };
+  const apply = () => {
+    const iw = window.innerWidth;
+    const ih = window.innerHeight;
+    if (iw <= ih) { reset(); return; }
+    const angle = window.screen?.orientation?.angle ?? (typeof window.orientation === "number" ? window.orientation : 90);
+    const clockwise = angle === 270 || angle === -90;     // device turned clockwise: counter-rotate the other way
+    const rot = clockwise ? 90 : -90;
+    Object.assign(body.style, {
+      top: "50%", left: "50%", right: "auto", bottom: "auto",
+      width: `${ih}px`, height: `${iw}px`,
+      transformOrigin: "center center",
+      transform: `translate(-50%, -50%) rotate(${rot}deg)`,
+    });
+    const cs = getComputedStyle(probe);
+    const inset = { top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0, bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0 };
+    // Which screen edge each edge of the (rotated) portrait page now sits on.
+    const m = clockwise
+      ? { top: inset.right, bottom: inset.left, left: inset.top, right: inset.bottom }
+      : { top: inset.left, bottom: inset.right, left: inset.bottom, right: inset.top };
+    Object.entries(m).forEach(([edge, px]) => root.style.setProperty(`--safe-${edge}`, `${px}px`));
+    uiFrame.rotated = true;
+    uiFrame.width = ih;      // the page's own width  = the viewport's short side
+    uiFrame.height = iw;     // the page's own height = the viewport's long side
+  };
+  // The OS updates innerWidth/innerHeight a moment after the rotation events, so re-check shortly after too.
+  let timers = [];
+  const schedule = () => {
+    apply();
+    timers.forEach(clearTimeout);
+    timers = [setTimeout(apply, 120), setTimeout(apply, 400)];
+  };
+  apply();
+  window.addEventListener("resize", schedule);
+  window.addEventListener("orientationchange", schedule);
+  window.screen?.orientation?.addEventListener?.("change", schedule);
+  window.visualViewport?.addEventListener("resize", apply);
+  return () => {
+    window.removeEventListener("resize", schedule);
+    window.removeEventListener("orientationchange", schedule);
+    window.screen?.orientation?.removeEventListener?.("change", schedule);
+    window.visualViewport?.removeEventListener("resize", apply);
+    timers.forEach(clearTimeout);
+    probe.remove();
+    reset();
+  };
+}
+
 function useIsLandscapeScreen() {
   // The piano rotates to face the wider edge. On phones the UI is always held
   // portrait (even if the OS reports a landscape viewport, we counter-rotate
@@ -1333,17 +1422,23 @@ function useKeyboardInset() {
   const [inset, setInset] = useState(0);
   useEffect(() => {
     const vv = window.visualViewport;
-    if (!vv) return;
+    if (!vv) return undefined;
+    let frame = 0;
     const update = () => {
-      const kb = window.innerHeight - vv.height - vv.offsetTop;
-      setInset(kb > 60 ? Math.round(kb) : 0);
+      frame = 0;
+      // A sideways (counter-rotated) phone page cannot map the keyboard onto its own bottom edge.
+      const kb = uiFrame.rotated ? 0 : window.innerHeight - vv.height - vv.offsetTop;
+      const next = kb > 60 ? Math.round(kb) : 0;
+      setInset((prev) => (Math.abs(prev - next) < 2 ? prev : next));   // ignore sub-pixel jitter while typing/scrolling
     };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+    vv.addEventListener("resize", schedule);
+    vv.addEventListener("scroll", schedule);
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      if (frame) cancelAnimationFrame(frame);
+      vv.removeEventListener("resize", schedule);
+      vv.removeEventListener("scroll", schedule);
     };
   }, []);
   return inset;
@@ -3204,13 +3299,15 @@ function useEdgeSwipeBack(onBack, edgeZone = 24) {
   const end = () => {
     if (!touchStartRef.current) return;
     touchStartRef.current = null;
-    if (dragX > 30) { setLeaving(true); setDragX(window.innerWidth); setTimeout(onBack, 200); }
+    if (dragX > 30) { setLeaving(true); setDragX(uiWidth()); setTimeout(onBack, 200); }
     else setDragX(0);
   };
-  const handleTouchStart = (e) => start(e.touches[0].clientX, e.touches[0].clientY);
+  // Touches that begin inside a text field belong to the field (caret, selection, magnifier) — never a back-swipe.
+  const inTextField = (e) => !!e.target?.closest?.("textarea, input, [contenteditable]");
+  const handleTouchStart = (e) => { if (inTextField(e)) { touchStartRef.current = null; return; } start(e.touches[0].clientX, e.touches[0].clientY); };
   const handleTouchMove = (e) => move(e.touches[0].clientX, e.touches[0].clientY);
   const handleTouchEnd = () => end();
-  const handleMouseDown = (e) => { mouseActiveRef.current = true; start(e.clientX, e.clientY); };
+  const handleMouseDown = (e) => { if (inTextField(e)) return; mouseActiveRef.current = true; start(e.clientX, e.clientY); };
   useEffect(() => {
     const onMouseMove = (e) => { if (mouseActiveRef.current) move(e.clientX, e.clientY); };
     const onMouseUp = () => { if (mouseActiveRef.current) { mouseActiveRef.current = false; end(); } };
@@ -3287,7 +3384,7 @@ function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
     const go = () => (dir < 0 ? onNext() : onPrev());
     if (!el || !el.animate) { setX(0); go(); return; }
     busyRef.current = true;
-    const W = window.innerWidth;
+    const W = uiWidth();
     const from = shownRef.current;
 
     // Ghost copy of the outgoing content slides away, pinned exactly over the content area.
@@ -3352,7 +3449,7 @@ function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
     if (!wasHorizontal) return;
     const dx = shownRef.current;
     const v = velRef.current.v;
-    const threshold = Math.min(120, window.innerWidth * 0.25);
+    const threshold = Math.min(120, uiWidth() * 0.25);
     const flick = Math.abs(v) > 0.5 && Math.abs(dx) > 24;
     const far = Math.abs(dx) > threshold;
     if (dx > 0 && onPrev && (far || (flick && v > 0))) commit(1);
@@ -3455,75 +3552,96 @@ const SECTION_TABS = [
 ];
 const escapeHtml = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-// Auto-growing textarea with a highlighted backdrop: bracketed [tags] are
-// tinted in the given accent colour as the user types. When
-// restrictToNashville is set, only tokens matching the Nashville-number
-// pattern are tinted — anything else in brackets stays plain text colour.
-function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, restrictToNashville, drumMode, chartMode, C }) {
+// Where the caret sits inside a textarea, measured on an off-screen copy of it (the only
+// reliable way: textareas expose no caret geometry). Returns { top, height } in the textarea's own box.
+function measureCaret(ta) {
+  const cs = getComputedStyle(ta);
+  const mirror = document.createElement("div");
+  ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "textAlign", "whiteSpace", "wordBreak", "overflowWrap", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "boxSizing"].forEach((k) => { mirror.style[k] = cs[k]; });
+  mirror.style.cssText += ";position:absolute;visibility:hidden;top:0;left:-9999px;border:0;";
+  mirror.style.width = `${ta.clientWidth}px`;
+  const upto = ta.value.slice(0, ta.selectionEnd);
+  mirror.textContent = upto;
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+  const top = marker.offsetTop;
+  const height = marker.offsetHeight || parseFloat(cs.lineHeight) || 20;
+  mirror.remove();
+  return { top, height };
+}
+// Scrolls the nearest scrolling ancestor just enough that the caret line is visible — below the
+// sticky header and above the on-screen keyboard. Never touches the textarea's own scroll.
+function ensureCaretVisible(ta) {
+  const scroller = ta.closest(".scroll-list");
+  if (!scroller || document.activeElement !== ta) return;
+  const { top, height } = measureCaret(ta);
+  const caretTop = ta.getBoundingClientRect().top + top;
+  const caretBottom = caretTop + height;
+  const sRect = scroller.getBoundingClientRect();
+  const header = scroller.querySelector("[data-sticky-header]");
+  const topLimit = sRect.top + (header ? header.offsetHeight : 0) + 8;
+  const vv = window.visualViewport;
+  const bottomLimit = Math.min(sRect.bottom, vv && !uiFrame.rotated ? vv.offsetTop + vv.height : sRect.bottom) - 24;
+  if (caretBottom > bottomLimit) scroller.scrollTop += caretBottom - bottomLimit;
+  else if (caretTop < topLimit) scroller.scrollTop -= topLimit - caretTop;
+}
+
+// Text box with a highlighted backdrop: bracketed [tags] are tinted in the given accent colour
+// as the user types, "-" lines are tinted as section heads, etc.
+//
+// How it is built (this is what keeps typing, Enter, selection and scrubbing stable on every platform):
+//   • the backdrop is a normal in-flow block, so the browser itself sizes the box to the text —
+//     no JavaScript height measuring, no collapse-to-auto flicker, no scroll jumps;
+//   • the real <textarea> is stretched over it (absolute, same metrics, transparent text, visible caret),
+//     so it never has anything of its own to scroll (any stray scroll is reset);
+//   • after every edit the caret line is scrolled into view in the page, not in the box.
+function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeholder, wrapperStyle, textStyle, accent, drumMode, chartMode, C }) {
   const taRef = useRef(null);
-  const backdropRef = useRef(null);
-  useEffect(() => {
-    const el = taRef.current;
-    if (!el) return;
-    // Preserve the scroll position of the *parent* scroll container so that
-    // resetting height to "auto" (which temporarily collapses the element)
-    // does not cause the page to jump.
-    const scroller = el.closest(".scroll-list") || el.parentElement;
-    const savedScrollTop = scroller ? scroller.scrollTop : 0;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-    if (scroller && scroller.scrollTop !== savedScrollTop) {
-      scroller.scrollTop = savedScrollTop;
-    }
-  }, [value]);
-  const handleScroll = () => {
-    if (backdropRef.current && taRef.current) {
-      backdropRef.current.scrollTop = taRef.current.scrollTop;
-      backdropRef.current.scrollLeft = taRef.current.scrollLeft;
-    }
-  };
   const raw = String(value || "");
-  // Lines beginning with "-" are section heads: tint the whole line in the
-  // accent colour as soon as the hyphen is typed.
-  // In drumMode, [bracketed] content is the lyrics (grey); rest is bright white.
-  const html = raw.split("\n").map((line) => {
-    if (line.trimStart().startsWith("-")) {
-      return `<span style="color:${accent}">${escapeHtml(line)}</span>`;
-    }
-    if (drumMode) {
-      // Colour [tag] groups grey; rest stays C.text (bright)
-      return escapeHtml(line).replace(/\[([^\]]*)\]/g,
-        (_, inner) => `<span style="color:#6A6A6E">[${inner}]</span>`);
-    }
+  // Lines beginning with "-" are section heads. In drumMode, [bracketed] content is the lyrics (grey);
+  // in chartMode the [chord] tags stay bright and the lyrics around them are grey.
+  const html = useMemo(() => raw.split("\n").map((line) => {
+    if (line.trimStart().startsWith("-")) return `<span style="color:${accent}">${escapeHtml(line)}</span>`;
+    if (drumMode) return escapeHtml(line).replace(/\[([^\]]*)\]/g, (_, inner) => `<span style="color:#6A6A6E">[${inner}]</span>`);
     if (chartMode) {
-      // Chart: the [chord] tags stay bright; the lyrics around them are grey.
       return line.split(/(\[[^\]]*\])/).map((part) => (
         !part ? "" : part.startsWith("[") && part.endsWith("]") ? escapeHtml(part) : `<span style="color:#6A6A6E">${escapeHtml(part)}</span>`
       )).join("");
     }
     return escapeHtml(line);
-  }).join("\n") + (raw.endsWith("\n") ? "&nbsp;" : "");
+  }).join("\n") + (raw === "" || raw.endsWith("\n") ? "&#8203;" : ""), [raw, accent, drumMode, chartMode]);
   const baseTextStyle = { ...textStyle, margin: 0, border: "none", background: "transparent", boxSizing: "border-box", width: "100%", letterSpacing: "normal", fontKerning: "none", fontVariantLigatures: "none", fontFeatureSettings: '"kern" 0, "liga" 0, "calt" 0' };
+  const followCaret = () => { const el = taRef.current; if (el) requestAnimationFrame(() => ensureCaretVisible(el)); };
   return (
     <div style={{ position: "relative", width: "100%", boxSizing: "border-box", ...wrapperStyle }}>
       <div
-        ref={backdropRef}
         aria-hidden="true"
-        style={{ ...baseTextStyle, position: "absolute", inset: 0, height: "100%", color: C.text, overflow: "hidden", pointerEvents: "none" }}
-        dangerouslySetInnerHTML={{ __html: html || "" }}
+        style={{ ...baseTextStyle, position: "relative", color: C.text, pointerEvents: "none", minHeight: "inherit" }}
+        dangerouslySetInnerHTML={{ __html: html }}
       />
       {!raw && placeholder ? (
-        <div style={{ ...baseTextStyle, position: "absolute", inset: 0, height: "100%", color: C.textFaint, overflow: "hidden", pointerEvents: "none" }}>{placeholder}</div>
+        <div style={{ ...baseTextStyle, position: "absolute", top: 0, left: 0, right: 0, color: C.textFaint, pointerEvents: "none" }}>{placeholder}</div>
       ) : null}
       <textarea
         ref={taRef}
         className="no-ring"
         value={raw}
-        onChange={onChange}
+        rows={1}
+        autoCorrect="off"
+        autoCapitalize="off"
+        autoComplete="off"
+        spellCheck={false}
+        data-gramm="false"
+        data-gramm_editor="false"
+        data-enable-grammarly="false"
+        onChange={(e) => { onChange(e); followCaret(); }}
+        onKeyUp={(e) => { if (e.key.startsWith("Arrow") || e.key === "Enter" || e.key === "Backspace") followCaret(); }}
         onBlur={onBlur}
-        onFocus={onFocus}
-        onScroll={handleScroll}
-        style={{ ...baseTextStyle, position: "relative", display: "block", color: "transparent", caretColor: C.text, resize: "none", overflow: "hidden", outline: "none", boxShadow: "none" }}
+        onFocus={(e) => { onFocus?.(e); setTimeout(followCaret, 320); }}
+        onScroll={(e) => { if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0; }}
+        style={{ ...baseTextStyle, position: "absolute", top: 0, left: 0, width: "100%", height: "100%", display: "block", color: "transparent", caretColor: C.text, resize: "none", overflow: "hidden", outline: "none", boxShadow: "none" }}
       />
     </div>
   );
@@ -3618,8 +3736,8 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   };
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
-      <div style={{ padding: "calc(16px + env(safe-area-inset-top, 0px)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
+    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+      <div data-sticky-header style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
@@ -3678,11 +3796,9 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           <HighlightedAutoGrowTextarea
             value={activeSectionValue}
             onChange={(e) => setActiveSectionValue(e.target.value)}
-            onFocus={scrollFieldIntoView}
             onBlur={() => { if (sectionTab === "chords") setChordsText((t) => autoBracketNumbers(t)); }}
             placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
             accent={C.accent}
-            restrictToNashville={sectionTab === "chords"}
             drumMode={sectionTab === "drums"}
             chartMode={sectionTab === "chart"}
             C={C}
@@ -3856,7 +3972,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
   const filtered = songs.filter((s) => songMatchesQuery(s, query)).sort(compareEnglishThenTamil);
   const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed && onRenameSetlist) onRenameSetlist(trimmed); else setNameDraft(setlistName ?? ""); };
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box" }}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box" }}>
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}` }}>
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -3989,7 +4105,7 @@ function SongDetailScreen({
     <>
     {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
+    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
@@ -4118,7 +4234,7 @@ function SongDetailScreen({
       </div>
 
       {showBottomBar && (
-        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + env(safe-area-inset-bottom, 0px)))", background: "#0B0B0C" }}>
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + var(--safe-bottom)))", background: "#0B0B0C" }}>
           <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
           <button onPointerDown={(e) => { e.preventDefault(); engine.toggle(); }} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <PlayStopGlyph size={26} color={C.accent} playNudge={3} />
@@ -4239,10 +4355,10 @@ function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateSetlist,
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
 
-  const bottomInset = "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))";
+  const bottomInset = "calc(55px + max(36px, 8px + var(--safe-bottom)))";
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "env(safe-area-inset-top, 0px)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 16px 12px", display: "flex", alignItems: "center", gap: 6 }}>
         <button onClick={onBack} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
         {editingName ? (
@@ -4583,14 +4699,14 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
         overflowY: dragging ? "hidden" : "auto",
         touchAction: dragging ? "none" : "pan-y",
         boxSizing: "border-box",
-        paddingBottom: "max(40px, env(safe-area-inset-bottom, 0px))",
+        paddingBottom: "max(40px, var(--safe-bottom))",
         transform: `translateX(${dragX}px)`,
         transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none"
       }}
       {...handlers}
     >
       {/* Sticky Header matching SongForm */}
-      <div style={{ padding: "calc(16px + env(safe-area-inset-top, 0px)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
+      <div style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button
           onClick={onBack}
           style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6, cursor: "pointer" }}
@@ -4736,9 +4852,9 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
             <Field label="TEXT SIZE">
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "stretch", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
-                  <button {...decSizeHold} aria-label="Smaller text" style={{ flex: "0 0 56px", border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>{fontSize}px</div>
-                  <button {...incSizeHold} aria-label="Larger text" style={{ flex: "0 0 56px", border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
+                  <button {...decSizeHold} aria-label="Smaller text" style={{ flex: "1 1 0", minWidth: 0, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} color={C.text} /></button>
+                  <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}` }}>{fontSize}px</div>
+                  <button {...incSizeHold} aria-label="Larger text" style={{ flex: "1 1 0", minWidth: 0, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} color={C.text} /></button>
                 </div>
                 {(() => {
                   const boldOn = lyricsBold && notesBold;
@@ -4754,9 +4870,8 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 {SPACING_PRESETS.map((preset) => {
                   const active = activeSpacing === preset.id;
                   return (
-                    <button key={preset.id} onClick={() => applySpacing(preset)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                      <SpacingIcon gap={preset.iconGap} />
-                      {preset.label}
+                    <button key={preset.id} onClick={() => applySpacing(preset)} aria-label={`${preset.label} line spacing`} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      <SpacingIcon gap={preset.iconGap} size={22} />
                     </button>
                   );
                 })}
@@ -4861,7 +4976,7 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
 function Toast({ message, C }) {
   if (!message) return null;
   return (
-    <div style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)) + 16px)", background: C.surface3, border: `1px solid ${C.borderStrong}`, padding: "10px 18px", borderRadius: 999, fontSize: 13.5, fontWeight: 600, zIndex: 300, whiteSpace: "nowrap", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
+    <div style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: "calc(55px + max(36px, 8px + var(--safe-bottom)) + 16px)", background: C.surface3, border: `1px solid ${C.borderStrong}`, padding: "10px 18px", borderRadius: 999, fontSize: 13.5, fontWeight: 600, zIndex: 300, whiteSpace: "nowrap", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
       {message}
     </div>
   );
@@ -4872,7 +4987,7 @@ function BottomNav({ active, onChange, mode, C }) {
   const items = [firstTab, { id: "songs", label: "Songs", icon: ListMusic }, { id: "setlists", label: "Setlists", icon: Layers }, { id: "settings", label: "Settings", icon: SettingsIcon }];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
-      <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + env(safe-area-inset-bottom, 0px)))" }}>
+      <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + var(--safe-bottom)))" }}>
         {items.map(({ id, label, icon: Icon }) => {
           const isActive = active === id;
           const isPiano = Icon === PianoIcon;
@@ -5659,6 +5774,15 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandKey]);
 
+  // Clean redundant built-in spellings out of this device's saved spelling chart (once, if unchanged).
+  useEffect(() => {
+    if (!spellingReady) return;
+    const stale = Object.keys(REMOVED_SEED_WORDS).filter((k) => spellingChartRef.current[k] === REMOVED_SEED_WORDS[k]);
+    if (!stale.length) return;
+    stale.forEach((k) => recordDeletedSpellingKey(k));
+    saveSpellingChart((prev) => { const next = { ...prev }; stale.forEach((k) => { delete next[k]; }); return next; });
+  }, [spellingReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Drums notes written in the old format ([note]lyrics) are rewritten once in the new one
   // (note [lyrics]); the format mark makes this safe to repeat and keeps synced devices consistent.
   useEffect(() => {
@@ -5737,48 +5861,12 @@ function AppInner() {
   }, []);
 
   // Screen rotation rules:
-  //   Phone  → always portrait, whatever the rotation setting / lock state is.
-  //            Native shell: locked by Info.plist + ZongBridgeViewController.
-  //            Android / browsers: orientation.lock("portrait") where allowed.
-  //            Everywhere else (iOS Safari/PWA can't be locked): if the OS rotates
-  //            the viewport to landscape anyway, the whole page (incl. portal
-  //            modals, since we transform <body>) is counter-rotated so it stays
-  //            fixed relative to the phone body.
+  //   Phone  → always portrait, whatever the rotation setting / lock state is
+  //            (see startPhoneOrientationLock; the native app is locked by the OS).
   //   iPad   → free rotation per the device setting.
   //   Mac/PC → UI never rotates; it stays landscape-oriented at any window size.
-  //
-  // On every device class the piano uses <LandscapeLock>, which rotates it to
-  // always face the wider edge regardless of OS orientation.
-  useEffect(() => {
-    if (DEVICE_CLASS !== "phone") return undefined;
-    window.screen?.orientation?.lock?.("portrait")?.catch?.(() => { });
-
-    const body = document.body;
-    const reset = () => {
-      ["top", "left", "right", "bottom", "width", "height", "transform", "transformOrigin"].forEach((p) => { body.style[p] = ""; });
-    };
-    const apply = () => {
-      const iw = window.innerWidth;
-      const ih = window.innerHeight;
-      if (iw <= ih) { reset(); return; }
-      const angle = window.screen?.orientation?.angle ?? (typeof window.orientation === "number" ? window.orientation : 90);
-      const rot = (angle === 270 || angle === -90) ? 90 : -90;
-      Object.assign(body.style, {
-        top: "50%", left: "50%", right: "auto", bottom: "auto",
-        width: `${ih}px`, height: `${iw}px`,
-        transformOrigin: "center center",
-        transform: `translate(-50%, -50%) rotate(${rot}deg)`,
-      });
-    };
-    apply();
-    window.addEventListener("resize", apply);
-    window.addEventListener("orientationchange", apply);
-    return () => {
-      window.removeEventListener("resize", apply);
-      window.removeEventListener("orientationchange", apply);
-      reset();
-    };
-  }, []);
+  // The piano rotates itself to face the wider edge on every device class (<LandscapeLock>).
+  useEffect(() => (DEVICE_CLASS === "phone" ? startPhoneOrientationLock() : undefined), []);
 
   // iOS Safari quirk: focusing a text input (e.g. the search bar) makes the
   // browser scroll the whole layout viewport to keep the input above the
@@ -6016,12 +6104,12 @@ function AppInner() {
 
   return (
     <div ref={rootRef} style={{
-      position: "fixed", top: 0, left: 0, right: 0, bottom: 0, height: "100dvh", width: "100%", maxWidth: "none",
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0, width: "100%", maxWidth: "none",
       margin: "0 auto", background: C.bg, color: C.text, fontFamily: FONT, overflow: "hidden",
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
-      paddingTop: "env(safe-area-inset-top, 0px)",
+      paddingTop: "var(--safe-top)",
     }}>
-      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + env(safe-area-inset-bottom, 0px)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
+      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + var(--safe-bottom)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
           All screens stay mounted at all times. Inactive screens are hidden with
           display:none. Active screens use display:block + height:100% with relative
