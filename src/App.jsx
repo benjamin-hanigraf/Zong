@@ -1,12 +1,13 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { tidySections, reconcileAfterEdit, sectionList } from "./sections.js";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, AlignLeft, AlignCenter, AlignRight, Check, X,
   Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import {
-  syncLibrary, subscribeToChanges, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow,
+  syncLibrary, subscribeToChanges, joinLiveSync, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow,
   recordDeletedSongId, recordDeletedSpellingKey, markSongsDirty, markSpellingDirty,
   markSharedPending, markSharedDeleted, getPendingSharedIds, getDeletedSharedIds, getDirtySongIds,
   getDirtySpellingKeys, clearSharedQueues,
@@ -3741,6 +3742,22 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const [subdivision] = useState(() => (initial?.id ? getSongSubdivision(initial.id) : (seed?.subdivision ?? 1)));
   const [error, setError] = useState("");
   const [sectionTab, setSectionTab] = useState(() => mode === "drums" ? "drums" : mode === "chords" ? "chords" : "lyrics");
+  // All four notes texts share the same sections. Whenever the user leaves a text (switches tab or saves),
+  // a section added / renamed / deleted in it is carried to the other three. `sectionBase` = the texts as
+  // of the last such sync, which is what the edit is measured against.
+  const sectionBase = useRef({ lyrics: lyricsText, chords: chordsText, chart: chartText, drums: drumsText });
+  const [sectionNotice, setSectionNotice] = useState(null);
+  const syncSections = (editedKey) => {
+    const now = { lyrics: lyricsText, chords: chordsText, chart: chartText, drums: drumsText };
+    const res = reconcileAfterEdit(sectionBase.current, now, editedKey);
+    if (res.error) { setSectionNotice(res.error); return null; }
+    if (res.texts.lyrics !== lyricsText) setLyricsText(res.texts.lyrics);
+    if (res.texts.chords !== chordsText) setChordsText(res.texts.chords);
+    if (res.texts.chart !== chartText) setChartText(res.texts.chart);
+    if (res.texts.drums !== drumsText) setDrumsText(res.texts.drums);
+    sectionBase.current = res.texts;
+    return res.texts;
+  };
 
   const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
   const keyboardInset = useKeyboardInset();
@@ -3765,6 +3782,8 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const handleTimeSigChange = (ts) => { setTimeSig(ts); const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats; setAccents(defaultAccents(effBeats)); };
 
   const handleSave = () => {
+    const synced = syncSections(sectionTab);
+    if (!synced) return;
     const cleanTitle = toTitleCase(title.trim());
     const cleanArtist = toTitleCase(artist.trim());
     const isDuplicate = songs.some((s) => {
@@ -3774,7 +3793,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     if (!cleanTitle) return;
     if (isDuplicate) { setError("A song with this title and artist already exists."); return; }
     const savedKey = composeKey(keyNatural, keyAccidental);
-    const normalizedChordsText = chordsTaggedToNumbersTagged(autoBracketNumbers(chordsText), savedKey, keyQuality);
+    const normalizedChordsText = chordsTaggedToNumbersTagged(autoBracketNumbers(synced.chords), savedKey, keyQuality);
     // Persist accents & subdivision to device-local storage (not synced to Supabase).
     // We need the song id — for new songs onSave returns the id; for edits we have initial.id.
     // We save now for edits; for new songs the parent's onSave handler will call setSongAccentsLocal
@@ -3786,7 +3805,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
     onSave({
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: savedKey, keyQuality, language, description, accents, subdivision,
-      lyricsText, chordsText: normalizedChordsText, chartText, drumsText: drumsFromEditor(drumsText),
+      lyricsText: synced.lyrics, chordsText: normalizedChordsText, chartText: synced.chart, drumsText: drumsFromEditor(synced.drums),
     });
   };
   // Save only lights up once something differs from the values the form opened with.
@@ -3853,7 +3872,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
             {SECTION_TABS.map((t) => {
               const active = sectionTab === t.id;
               return (
-                <button key={t.id} onClick={() => setSectionTab(t.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
+                <button key={t.id} onClick={() => { if (t.id === sectionTab) return; if (syncSections(sectionTab)) setSectionTab(t.id); }} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
                   {t.label}
                 </button>
               );
@@ -3884,6 +3903,13 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           </div>
         ) : null}
       </div>
+      {sectionNotice && (
+        <NoticeDialog
+          title="Section still has notes"
+          message={`"${sectionNotice.label}" can't be removed yet — ${sectionNotice.modes.join(" and ")} still ${sectionNotice.modes.length > 1 ? "have" : "has"} notes under it. Delete those notes there first, or add the "-${sectionNotice.label}" line back here.`}
+          onClose={() => setSectionNotice(null)} C={C}
+        />
+      )}
     </div>
   );
 }
@@ -4105,7 +4131,7 @@ function SongDetailScreen({
   song, contextKey, onKeyChange, contextTempo, onTempoChange, onBack, onEdit, onDelete,
   fontSize, textAlign, lyricsBold, notesBold, lineSpacing, noteSpacing = 1, chordFontSize, sectionFontSize,
   isInSetlist, isSharedSetlist, syncedKeyOverride, syncedTempoOverride, onSaveOverrideToTeam,
-  onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, C
+  onRemoveFromSetlist, onPrevSong, onNextSong, mode, engine, tanglishMode, liveSync, C
 }) {
   const [viewKey, setViewKey] = useState(contextKey ?? song.key);
   const [descOpen, setDescOpen] = useState(false);
@@ -4162,6 +4188,62 @@ function SongDetailScreen({
 
   const isVocals = mode === "vocals";
   const activeRawText = isVocals ? ms.lyricsText : mode === "drums" ? drumsToTagged(ms.drumsText) : (chordsView === "chords" ? ms.chordsText : ms.chartText);
+
+  // ── Stage Mode ──────────────────────────────────────────────────────────────
+  // Every song's texts share the same sections, so a section KEY (label + occurrence) means the same place
+  // in every mode. liveSync = { role: "lead" | "follow", status, target, onSection } or null when off.
+  const syncRole = liveSync?.role || null;
+  const sectionEntries = useMemo(() => sectionList(activeRawText), [activeRawText]);
+  const keyedBlocks = (blocks) => { let c = 0; return blocks.map((block) => ({ block, key: block.label ? sectionEntries[c++]?.key : null })); };
+  const [activeSection, setActiveSection] = useState(0);
+  const activeKey = syncRole ? sectionEntries[activeSection]?.key : null;
+  const syncMarker = (key) => (syncRole && key && key === activeKey
+    ? <div aria-hidden="true" style={{ position: "absolute", left: -13, top: 0, bottom: 0, width: 3, borderRadius: 2, background: C.accent }} />
+    : null);
+  const scrollToSection = (idx) => {
+    const el = scrollRef.current?.querySelector(`[data-section-key="${CSS.escape(sectionEntries[idx]?.key || "")}"]`);
+    const box = scrollRef.current;
+    if (!el || !box) return;
+    const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 6;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    box.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+  };
+  const goToSection = (idx, report) => {
+    if (!sectionEntries.length) return;
+    const next = Math.min(sectionEntries.length - 1, Math.max(0, idx));
+    setActiveSection(next);
+    scrollToSection(next);
+    if (report) liveSync?.onSection?.({ sectionKey: sectionEntries[next].key, sectionIdx: next });
+  };
+  // New song: back to the first section (the lead tells the others; followers wait for the lead's position).
+  useEffect(() => {
+    setActiveSection(0);
+    if (syncRole === "lead") liveSync.onSection?.({ sectionKey: sectionEntries[0]?.key ?? null, sectionIdx: 0 });
+  }, [song.id, syncRole]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Followers: jump to whatever section the lead says.
+  useEffect(() => {
+    const t = liveSync?.target;
+    if (syncRole !== "follow" || !t || t.songId !== song.id) return;
+    const at = t.sectionKey ? sectionEntries.findIndex((e) => e.key === t.sectionKey) : -1;
+    goToSection(at >= 0 ? at : Math.min(t.sectionIdx ?? 0, sectionEntries.length - 1), false);
+  }, [liveSync?.target]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Lead: next / previous section from the screen buttons or a keyboard / clicker / pedal.
+  const stepSection = (delta) => {
+    if (delta > 0 && activeSection >= sectionEntries.length - 1) { if (onNextSong) onNextSong(); return; }
+    goToSection(activeSection + delta, true);
+  };
+  const stepRef = useRef(stepSection);
+  stepRef.current = stepSection;
+  useEffect(() => {
+    if (syncRole !== "lead") return undefined;
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || "")) return;
+      if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) { e.preventDefault(); stepRef.current(1); }
+      else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) { e.preventDefault(); stepRef.current(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [syncRole]);
 
   const hasKeyChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && viewKey !== (syncedKeyOverride ?? song.key));
   const currentBpm = engine ? Math.round(engine.bpm) : (contextTempo ?? song.tempo);
@@ -4262,8 +4344,9 @@ function SongDetailScreen({
         {(() => {
           if (mode === "chords" && chordsView === "chords") {
             const rawText = ms.chordsText;
-            return parseTextIntoBlocks(rawText, true).map((block, idx) => (
-              <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+            return keyedBlocks(parseTextIntoBlocks(rawText, true)).map(({ block, key }, idx) => (
+              <div key={idx} data-section-key={key || undefined} style={{ position: "relative", marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+                {syncMarker(key)}
                 {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
                 <ChordsOnlyBlock
                   lines={block.lines}
@@ -4287,8 +4370,9 @@ function SongDetailScreen({
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
-          return parseTextIntoBlocks(displayText, true).map((block, idx) => (
-            <div key={idx} style={{ marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+          return keyedBlocks(parseTextIntoBlocks(displayText, true)).map(({ block, key }, idx) => (
+            <div key={idx} data-section-key={key || undefined} style={{ position: "relative", marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+              {syncMarker(key)}
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
@@ -4299,6 +4383,25 @@ function SongDetailScreen({
           ));
         })()}
       </div>
+
+      {syncRole && (
+        <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 10, padding: `10px 16px ${showBottomBar ? 10 : "max(14px, calc(6px + var(--safe-bottom)))"}`, borderTop: `1px solid ${C.border}`, background: C.bg }}>
+          <span title={liveSync.status === "live" ? "Connected" : "Reconnecting…"} style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: liveSync.status === "live" ? C.accent : "#FFB020" }} />
+          {syncRole === "lead" ? (
+            <>
+              <button onClick={() => stepSection(-1)} aria-label="Previous section" style={{ width: 52, height: 44, borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronLeft size={22} /></button>
+              <div style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {sectionEntries[activeSection]?.label || "—"} <span style={{ color: C.textMuted, fontWeight: 600 }}>{sectionEntries.length ? `${activeSection + 1}/${sectionEntries.length}` : ""}</span>
+              </div>
+              <button onClick={() => stepSection(1)} aria-label="Next section" style={{ width: 52, height: 44, borderRadius: 12, border: `1px solid ${C.accentDim}`, background: C.accentSoft, color: C.accent, display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronRight size={22} /></button>
+            </>
+          ) : (
+            <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.textMuted, fontWeight: 600 }}>
+              Following · {sectionEntries[activeSection]?.label || "—"}{liveSync.status === "live" ? "" : " · reconnecting…"}
+            </div>
+          )}
+        </div>
+      )}
 
       {showBottomBar && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + var(--safe-bottom)))", background: "#0B0B0C" }}>
@@ -4852,7 +4955,7 @@ function SpacingIcon({ gap, size = 18 }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, live, onOpenStageMode, C }) {
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
@@ -5031,6 +5134,20 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
                 <RefreshCw size={15} color={C.accent} />
               </button>
             </div>
+          </div>
+
+          <SectionLabel>STAGE</SectionLabel>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 26 }}>
+            <button
+              onClick={onOpenStageMode}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", color: C.text, fontFamily: FONT, fontSize: 15, fontWeight: 600, padding: "16px 16px", cursor: "pointer", textAlign: "left" }}
+            >
+              <span>Stage Mode</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 7, color: live.role === "off" ? C.textMuted : C.accent, fontSize: 13, fontWeight: 700 }}>
+                {live.role !== "off" && <span style={{ width: 8, height: 8, borderRadius: "50%", background: live.connected ? C.accent : "#FFB020" }} />}
+                {live.role === "lead" ? "Leading" : live.role === "follow" ? "Following" : "Off"}
+              </span>
+            </button>
           </div>
 
           <div style={{ textAlign: "center", fontSize: 11.5, color: C.textFaint, paddingTop: 12 }}>Created by Benjamin Hanigraf</div>
@@ -5331,6 +5448,21 @@ function RemoveSharedSongModal({ song, setlist, onConfirm, onCancel, C }) {
   );
 }
 
+function NoticeDialog({ title, message, buttonLabel = "OK", onClose, C }) {
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.surface2, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "22px 20px 20px", boxSizing: "border-box", boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+          <AlertTriangle size={18} color={C.danger ?? "#FF453A"} /> {title}
+        </div>
+        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 18 }}>{message}</div>
+        <button onClick={onClose} style={{ width: "100%", height: 40, borderRadius: 10, border: "none", background: C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{buttonLabel}</button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function LeaveTeamWarningModal({ onConfirm, onCancel, C }) {
   return createPortal(
     <div
@@ -5520,6 +5652,138 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
    Root
    ========================================================================= */
 
+/* =========================================================================
+   Stage Mode (live section sync over the Team's realtime channel)
+   One device leads, the rest follow. The lead's position (song + section) is broadcast; followers
+   jump to it. See joinLiveSync in supabaseSync.js for the transport.
+   ========================================================================= */
+function useLiveSync({ teamKey, onApply }) {
+  const [role, setRole] = useState("off");          // "off" | "lead" | "follow"
+  const [connected, setConnected] = useState(false);
+  const [peeked, setPeeked] = useState(false);       // presence has been read at least once
+  const [otherLead, setOtherLead] = useState(false); // another device is leading
+  const ctl = useRef(null);
+  const roleRef = useRef("off");
+  const posRef = useRef(null);
+  const lastSig = useRef("");
+  const applyRef = useRef(onApply);
+  applyRef.current = onApply;
+  const deviceId = getDeviceId();
+  const available = Boolean(teamKey) && isSupabaseConfigured();
+
+  const changeRole = (next) => { roleRef.current = next; setRole(next); };
+  const close = () => {
+    if (ctl.current) { try { ctl.current.leave(); } catch { /* ignore */ } ctl.current = null; }
+    changeRole("off"); setConnected(false); setPeeked(false); setOtherLead(false);
+    lastSig.current = "";
+  };
+  // Opens the channel without taking a role, so the Stage Mode dialog can see whether someone already leads.
+  const open = () => {
+    if (ctl.current || !available) return;
+    setPeeked(false);
+    ctl.current = joinLiveSync({
+      teamKey, deviceId,
+      onStatus: (st) => {
+        setConnected(st === "SUBSCRIBED");
+        if (st === "SUBSCRIBED") {
+          if (roleRef.current === "follow") ctl.current?.ask();
+          if (roleRef.current === "lead" && posRef.current) ctl.current?.sendPosition(posRef.current);
+        }
+      },
+      onLeads: (leads) => {
+        setPeeked(true);
+        setOtherLead(leads.some((l) => l.deviceId !== deviceId));
+        const top = [...leads].sort((a, b) => b.since - a.since || (a.deviceId < b.deviceId ? 1 : -1))[0];
+        if (roleRef.current === "lead" && top && top.deviceId !== deviceId) {   // someone took over
+          ctl.current?.setLead(false); changeRole("follow"); ctl.current?.ask();
+        }
+      },
+      onPosition: (pos) => {
+        if (roleRef.current !== "follow" || !pos) return;
+        const sig = JSON.stringify([pos.songId, pos.setlistId, pos.sectionKey, pos.sectionIdx]);
+        if (sig === lastSig.current) return;      // the lead's regular re-send: nothing new, don't pull anyone back
+        if (applyRef.current(pos)) lastSig.current = sig;
+      },
+      onAsk: () => { if (roleRef.current === "lead" && posRef.current) ctl.current?.sendPosition(posRef.current); },
+      onPeerJoined: () => { setTimeout(() => { if (roleRef.current === "lead" && posRef.current) ctl.current?.sendPosition(posRef.current); }, 800); },
+    });
+  };
+  const start = (asLead) => {
+    open();
+    if (!ctl.current) return;
+    lastSig.current = "";
+    if (asLead) { ctl.current.setLead(true); changeRole("lead"); }
+    else { ctl.current.setLead(false); changeRole("follow"); ctl.current.ask(); }
+  };
+  const publish = (pos) => {
+    posRef.current = pos;
+    if (roleRef.current === "lead") ctl.current?.sendPosition(pos);
+  };
+  // The lead repeats its position every few seconds so a device that dropped out lands in the right place.
+  useEffect(() => {
+    if (role !== "lead") return undefined;
+    const t = setInterval(() => { if (posRef.current) ctl.current?.sendPosition(posRef.current); }, 4000);
+    return () => clearInterval(t);
+  }, [role]);
+  useEffect(() => close, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { close(); }, [teamKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { available, role, connected, peeked, otherLead, open, close, start, publish };
+}
+
+function StageModeModal({ live, onClose, C }) {
+  const { role, connected, peeked, otherLead } = live;
+  const ready = connected && peeked;
+  const btn = (primary, danger) => ({ width: "100%", height: 46, borderRadius: 12, border: primary ? "none" : `1px solid ${danger ? (C.danger ?? "#FF453A") : C.border}`, background: primary ? C.accent : "transparent", color: primary ? "#fff" : danger ? (C.danger ?? "#FF453A") : C.text, fontFamily: FONT, fontSize: 15, fontWeight: 700, cursor: "pointer" });
+  const body = (text) => <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 16 }}>{text}</div>;
+  let content;
+  if (role === "lead") {
+    content = (<>
+      {body(connected ? "You're leading. Everyone in Stage Mode follows the section you're on." : "Reconnecting… the others will catch up as soon as you're back.")}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <button onClick={() => { live.start(false); }} style={btn(false)}>Stop leading</button>
+        <button onClick={() => { live.close(); onClose(); }} style={btn(false, true)}>Leave Stage Mode</button>
+      </div>
+    </>);
+  } else if (role === "follow") {
+    content = (<>
+      {body(connected ? (otherLead ? "You're following the lead's section." : "Waiting for someone to lead…") : "Reconnecting…")}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <button onClick={() => live.start(true)} style={btn(false)}>Take over as lead</button>
+        <button onClick={() => { live.close(); onClose(); }} style={btn(false, true)}>Leave Stage Mode</button>
+      </div>
+    </>);
+  } else if (!ready) {
+    content = body("Looking for your band…");
+  } else if (otherLead) {
+    content = (<>
+      {body("Someone is already leading. Follow along to stay on the same section.")}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <button onClick={() => { live.start(false); onClose(); }} style={btn(true)}>Follow along</button>
+        <button onClick={() => { live.start(true); onClose(); }} style={btn(false)}>Take over as lead</button>
+      </div>
+    </>);
+  } else {
+    content = (<>
+      {body("Will you lead? The leader moves through the sections and every other device follows.")}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <button onClick={() => { live.start(true); onClose(); }} style={btn(true)}>Yes, I'll lead</button>
+        <button onClick={() => { live.start(false); onClose(); }} style={btn(false)}>No, follow along</button>
+      </div>
+    </>);
+  }
+  const dismiss = () => { if (role === "off") live.close(); onClose(); };
+  return createPortal(
+    <div onClick={dismiss} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.surface2, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "22px 20px 20px", boxSizing: "border-box", boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Stage Mode</div>
+        {content}
+        {role === "off" && <button onClick={dismiss} style={{ ...btn(false), marginTop: 10, border: "none", color: C.textMuted, height: 36, fontSize: 13.5, fontWeight: 600 }}>Cancel</button>}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function AppInner() {
   useEffect(() => {
     let meta = document.querySelector('meta[name="viewport"]');
@@ -5550,6 +5814,7 @@ function AppInner() {
   useEffect(() => { setActiveTanglishExceptions(spellingChart); }, [spellingChart]);
   const [bandKey, setBandKey] = useState(() => localStorage.getItem("zong:access-key") || "");
   const [syncStatus, setSyncStatus] = useState(() => bandKey ? "Ready" : "Public only");
+  const [firstSyncDone, setFirstSyncDone] = useState(false);
   // Shared setlist ids edited locally but not yet committed with "Done" —
   // incoming remote updates must not clobber these mid-edit.
   const uncommittedSharedEdits = useRef(new Set());
@@ -5591,6 +5856,8 @@ function AppInner() {
   const [tab, setTab] = useState(() => (mode === "vocals" ? "songs" : "practice"));
   const [editingSong, setEditingSong] = useState(undefined);
   const [newSongSeed, setNewSongSeed] = useState(null);
+  const [stageModalOpen, setStageModalOpen] = useState(false);
+  const [liveTarget, setLiveTarget] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [songToDelete, setSongToDelete] = useState(null);
   const [sharedSongToRemove, setSharedSongToRemove] = useState(null);
@@ -5771,6 +6038,7 @@ function AppInner() {
       }
 
       if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
+      setFirstSyncDone(true);
     } catch (error) {
       console.error("[Zong sync]", error);
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
@@ -5859,6 +6127,22 @@ function AppInner() {
     if (!songsRef.current.some((s) => s.drumsText && !isNewDrumsText(s.drumsText))) return;
     saveSongs((prev) => prev.map((s) => (s.drumsText && !isNewDrumsText(s.drumsText) ? { ...s, drumsText: convertOldDrumsText(s.drumsText) } : s)));
   }, [songsReady, songs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Every song keeps the same sections (-Verse, -Chorus, …) in lyrics, chords, chart and drums — Stage Mode
+  // jumps all devices to the same section. Songs written before that (or edited by an older app version) are
+  // tidied here: any section one text has and another lacks is added, empty. Safe to repeat (already-matching
+  // songs are left untouched). With a Team it waits for the first sync, so it never works from stale data.
+  useEffect(() => {
+    if (!songsReady || (bandKey && !firstSyncDone)) return;
+    const tidied = (s) => {
+      const m = migrateSongShape(s);
+      const res = tidySections({ lyrics: m.lyricsText || "", chords: m.chordsText || "", chart: m.chartText || "", drums: drumsToEditor(m.drumsText || "") });
+      if (!res.changed) return s;
+      return { ...s, lyricsText: res.texts.lyrics, chordsText: res.texts.chords, chartText: res.texts.chart, drumsText: drumsFromEditor(res.texts.drums) };
+    };
+    if (songsRef.current.every((s) => tidied(s) === s)) return;
+    saveSongs((prev) => prev.map(tidied));
+  }, [songsReady, songs, firstSyncDone, bandKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local data finished loading: run the sync that was skipped while it was loading.
   useEffect(() => {
@@ -6024,6 +6308,29 @@ function AppInner() {
   const nextSetlistSongId = viewingSetlist && viewingSetlistIndex >= 0 && viewingSetlistIndex < viewingSetlist.entries.length - 1 ? viewingSetlist.entries[viewingSetlistIndex + 1].songId : null;
 
   useEffect(() => { if (tab !== "practice") setPianoHighlight(null); }, [tab]);
+  // ── Stage Mode wiring ──
+  const busyRef = useRef(false);
+  busyRef.current = editingSong !== undefined || !!newSongSeed;     // never yank someone out of the song editor
+  const latestLivePos = useRef(null);
+  const applyLivePosition = (pos) => {
+    latestLivePos.current = pos;
+    if (!pos?.songId || busyRef.current) return false;
+    if (!songsRef.current.some((s) => s.id === pos.songId)) return false;      // not synced to this device yet
+    const sl = pos.setlistId && setlistsRef.current.some((l) => l.id === pos.setlistId) ? pos.setlistId : null;
+    setViewing((v) => (v && v.songId === pos.songId && (v.fromSetlistId || null) === sl ? v : { songId: pos.songId, fromSetlistId: sl }));
+    setLiveTarget({ ...pos, nonce: Math.random() });
+    return true;
+  };
+  const live = useLiveSync({ teamKey: bandKey, onApply: applyLivePosition });
+  useEffect(() => {
+    if (!busyRef.current && live.role === "follow" && latestLivePos.current) applyLivePosition(latestLivePos.current);
+  }, [editingSong, newSongSeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openStageMode = () => {
+    if (!live.available) { flash("Join a Team first (Settings → Team)"); return; }
+    live.open();
+    setStageModalOpen(true);
+  };
+
   const handleTabChange = (next) => { setTab(next); setStageIndex(null); setViewing(null); };
 
   const handleSaveSong = (data) => {
@@ -6203,6 +6510,7 @@ function AppInner() {
         </div>
         <div style={{ display: tab === "settings" ? "block" : "none", height: "100%", position: "relative" }}>
           <SettingsScreen
+            live={live} onOpenStageMode={openStageMode}
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
@@ -6257,6 +6565,10 @@ function AppInner() {
           onDelete={requestDeleteSong}
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
+          liveSync={live.role === "off" ? null : {
+            role: live.role, status: live.connected ? "live" : "connecting", target: liveTarget,
+            onSection: ({ sectionKey, sectionIdx }) => live.publish({ songId: viewingSong.id, setlistId: viewing?.fromSetlistId || null, sectionKey, sectionIdx }),
+          }}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           fontSize={fontSize} textAlign={textAlign} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} noteSpacing={noteSpacing} chordFontSize={chordFontSize} sectionFontSize={sectionFontSize}
           mode={mode} engine={engine} tanglishMode={tanglishMode}
@@ -6281,6 +6593,7 @@ function AppInner() {
         <SpellingChartScreen chart={spellingChart} onSave={saveSpellingChart} onBack={() => setSpellingChartOpen(false)} C={C} />
       )}
 
+      {stageModalOpen && <StageModeModal live={live} onClose={() => setStageModalOpen(false)} C={C} />}
       {songToDelete && (
         <DeleteSongModal
           song={songToDelete}

@@ -584,3 +584,39 @@ export function subscribeToChanges({ onSongChange, onSpellingChange, onTeam, tea
 export function resetSyncCursors() {
   try { localStorage.removeItem(CURSOR_KEY); localStorage.removeItem(KNOWN_SPELLING_KEY); } catch { /* ignore */ }
 }
+
+/* =========================================================================
+   Stage Mode — live "where are we in the song" channel for a Team.
+   Uses Realtime Broadcast + Presence only (nothing is stored in the database).
+     • Presence says who is the lead (the one with the newest `since` wins, so taking over is unambiguous).
+     • The lead broadcasts its position ({ songId, setlistId, sectionKey, sectionIdx }); followers apply it.
+   Messages carry the full current position (not "next"), so a device that dropped and came back just
+   asks for / waits for the latest one and lands in the right place.
+   ========================================================================= */
+export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onStatus, onPeerJoined, onAsk }) {
+  const sb = client();
+  const channel = sb.channel(`zong_live_${teamKey}`, { config: { broadcast: { self: false }, presence: { key: deviceId } } });
+  let meta = { lead: false, since: 0 };
+  let subscribed = false;
+  const leads = () => {
+    const out = [];
+    Object.entries(channel.presenceState()).forEach(([key, metas]) => metas.forEach((m) => { if (m?.lead) out.push({ deviceId: key, since: m.since || 0 }); }));
+    return out;
+  };
+  const track = () => (subscribed ? channel.track(meta).catch(() => { }) : undefined);
+  channel
+    .on("presence", { event: "sync" }, () => onLeads?.(leads()))
+    .on("presence", { event: "join" }, ({ key }) => { if (key !== deviceId) onPeerJoined?.(key); })
+    .on("broadcast", { event: "pos" }, ({ payload }) => onPosition?.(payload))
+    .on("broadcast", { event: "ask" }, () => onAsk?.())
+    .subscribe((status) => {
+      onStatus?.(status);
+      if (status === "SUBSCRIBED") { subscribed = true; track(); } else subscribed = false;   // re-announces itself after every reconnect
+    });
+  return {
+    setLead(isLead) { meta = { lead: isLead, since: isLead ? Date.now() : 0 }; track(); return meta.since; },
+    sendPosition(position) { if (subscribed) channel.send({ type: "broadcast", event: "pos", payload: position }).catch(() => { }); },
+    ask() { if (subscribed) channel.send({ type: "broadcast", event: "ask", payload: {} }).catch(() => { }); },
+    leave() { subscribed = false; sb.removeChannel(channel); },
+  };
+}
