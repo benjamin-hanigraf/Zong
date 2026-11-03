@@ -3,10 +3,10 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
 import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
-import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, unlockAudioPlayback } from "../lib/audio.js";
+import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, loadPadSamples, padSamplesReady, findNearestPadSample, PAD_LOOP, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
-import { padVoicing } from "../lib/chords.js";
+import { padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
 import { PieIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
@@ -86,10 +86,15 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
 
   useEffect(() => {
     // In the iOS app the native engine plays the piano: no Web Audio context is created at all.
-    if (isNativePlatform()) return;
+    if (isNativePlatform()) {
+      nativePiano.padSamplesReady().then((ok) => { nativePadReady.current = ok; });
+      return;
+    }
     const ctx = ensureCtx();
     if (!_pianoBuffers || Object.keys(_pianoBuffers).length === 0) loadAudioSamples(ctx).catch(() => { });
+    loadPadSamples(ctx).catch(() => { });
   }, []);
+  const nativePadReady = useRef(false);   // the iOS engine has loaded the warm-pad samples
 
   const midiFor = (semitone) => (octaveStartRef.current + 1) * 12 + semitone;
 
@@ -152,6 +157,37 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   // spec (optional) = { third, fifth, seventh, bass } for the joystick's chords (7th, aug, dim, slash …); without it
   // this is the plain major / minor pad of the Vocals chord piano, unchanged.
   const startPadChord = (rootSemitone, spec) => {
+    // Warm-pad samples (public/tones/pad_*.mp3), when present: every pad chord — the Vocals chord piano's major / minor
+    // keys as well as the joystick's — is the same list of notes played from the same samples. Otherwise the built-in
+    // synthesised pad below plays.
+    const padSpec = spec || plainPadSpec(rootSemitone, chordQualityRef.current === "Minor");
+    if (isNativePlatform() && nativePadReady.current) {
+      const nativeId = nextNativeNoteId();
+      padSampleNotes(padSpec).forEach((n) => nativePiano.padSampleOn(nativeId, n.midi, n.gain, n.pan));
+      return { nativeId };
+    }
+    if (!isNativePlatform() && padSamplesReady()) {
+      const ctx = ensureCtx();
+      const now = ctx.currentTime;
+      const masterGain = ctx.createGain();
+      masterGain.gain.setValueAtTime(0, now);
+      masterGain.gain.linearRampToValueAtTime(0.9, now + 0.08);
+      masterGain.connect(masterCompRef.current || ctx.destination);
+      const sources = padSampleNotes(padSpec).map((n) => {
+        const s = findNearestPadSample(n.midi);
+        const src = ctx.createBufferSource();
+        src.buffer = s.buffer;
+        src.loop = true; src.loopStart = PAD_LOOP.start; src.loopEnd = PAD_LOOP.end;
+        src.playbackRate.value = Math.pow(2, (n.midi - s.midi) / 12);
+        const g = ctx.createGain(); g.gain.value = n.gain;
+        let tail = g;
+        if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = n.pan; g.connect(p); tail = p; }
+        src.connect(g); tail.connect(masterGain);
+        src.start(now);
+        return src;
+      });
+      return { masterGain, oscillators: sources };
+    }
     if (isNativePlatform()) {
       const nativeId = nextNativeNoteId();
       if (spec) { const v = padVoicing(spec); nativePiano.padChordOn(nativeId, v.root, v.third, v.fifth, v.octave, v.extra, v.bass); }

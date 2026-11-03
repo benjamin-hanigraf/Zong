@@ -159,3 +159,65 @@ export function findNearestPianoSample(midi) {
   }
   return best;
 }
+
+/* =========================================================================
+   Warm pad samples (public/tones/pad_<note>.mp3): one long sustained note every three semitones, looped while a
+   chord is held. If the files are missing the built-in synthesised pad plays instead.
+   ========================================================================= */
+const PAD_LOOP_START = 3;    // seconds: the slow attack plays once, then 3 s – 11 s repeats
+const PAD_LOOP_END = 11;
+const PAD_CROSSFADE = 1;     // seconds blended at the loop seam so it never clicks
+
+export const PAD_LOOP = { start: PAD_LOOP_START, end: PAD_LOOP_END };
+let _padBuffers = null;      // { [name]: { buffer, midi } }
+let _padLoading = null;
+
+// Blends the end of the loop region into the material just before its start, so jumping back is seamless.
+function makeLoopable(ctx, src) {
+  const sr = src.sampleRate;
+  const a = Math.round(PAD_LOOP_START * sr), b = Math.min(Math.round(PAD_LOOP_END * sr), src.length - 1), xf = Math.round(PAD_CROSSFADE * sr);
+  if (b - a < 2 * xf || a < xf) return src;
+  const out = ctx.createBuffer(src.numberOfChannels, src.length, sr);
+  for (let c = 0; c < src.numberOfChannels; c++) {
+    const d = out.getChannelData(c);
+    d.set(src.getChannelData(c));
+    for (let i = 0; i < xf; i++) {
+      const t = i / xf;
+      d[b - xf + i] = d[b - xf + i] * Math.cos(t * Math.PI / 2) + d[a - xf + i] * Math.sin(t * Math.PI / 2);
+    }
+  }
+  return out;
+}
+
+export function loadPadSamples(ctx) {
+  if (_padLoading) return _padLoading;
+  _padLoading = (async () => {
+    const results = await Promise.all(PIANO_SAMPLE_DEFS.map(async ({ name, midi }) => {
+      try {
+        const res = await fetch(`/tones/pad_${name}.mp3`);
+        if (!res.ok) return null;
+        const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+        return { name, midi, buffer: makeLoopable(ctx, buf) };
+      } catch { return null; }
+    }));
+    const map = {};
+    results.forEach((r) => { if (r) map[r.name] = { buffer: r.buffer, midi: r.midi }; });
+    _padBuffers = Object.keys(map).length ? map : null;
+    return _padBuffers;
+  })();
+  return _padLoading;
+}
+
+export const padSamplesReady = () => !!_padBuffers;
+
+export function findNearestPadSample(midi) {
+  if (!_padBuffers) return null;
+  let best = null, minDist = Infinity;
+  for (const def of PIANO_SAMPLE_DEFS) {
+    const entry = _padBuffers[def.name];
+    if (!entry) continue;
+    const dist = Math.abs(midi - def.midi);
+    if (dist < minDist) { minDist = dist; best = entry; }
+  }
+  return best;
+}

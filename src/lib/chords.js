@@ -375,3 +375,22 @@ export function padVoicing(spec) {
     bass: bassMidi,
   };
 }
+
+/** The chord a plain Major / Minor pad key stands for (Vocals chord piano), in the same shape as chordToPadSpec. */
+export const plainPadSpec = (root, minor) => ({ root, third: minor ? 3 : 4, fifth: 7, seventh: 0, bass: -1 });
+
+/**
+ * The notes of a pad chord as the warm-pad samples play them: [{ midi, gain, pan }]. The web player and the iOS engine
+ * both play exactly this list, so the Vocals chord piano and the joystick sound the same everywhere.
+ */
+export function padSampleNotes(spec) {
+  const v = padVoicing(spec);
+  return [
+    { midi: v.root, gain: 0.26, pan: -0.30 },
+    { midi: v.fifth, gain: 0.20, pan: 0.25 },
+    v.octave >= 0 && { midi: v.octave, gain: 0.22, pan: 0 },
+    { midi: v.third, gain: 0.20, pan: 0.20 },
+    v.extra >= 0 && { midi: v.extra, gain: 0.16, pan: -0.15 },
+    v.bass >= 0 && { midi: v.bass, gain: 0.26, pan: -0.10 },
+  ].filter(Boolean);
+}

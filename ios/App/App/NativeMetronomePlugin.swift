@@ -18,6 +18,8 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "pianoNoteOn",  returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "padOn",        returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "padChordOn",   returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "padSamplesReady", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "padSampleOn",  returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pianoNoteOff", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pianoAllOff",  returnType: CAPPluginReturnPromise),
     ]
@@ -84,6 +86,17 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         NativePianoSynth.shared.padChordOn(
             id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 48, third: call.getInt("third") ?? 52,
             fifth: call.getInt("fifth") ?? 55, octave: call.getInt("octave") ?? -1, extra: call.getInt("extra") ?? -1, bass: call.getInt("bass") ?? -1)
+        call.resolve()
+    }
+
+    @objc func padSamplesReady(_ call: CAPPluginCall) {
+        call.resolve(["ready": NativePianoSynth.shared.padSamplesReady])
+    }
+
+    @objc func padSampleOn(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.padSampleOn(
+            id: call.getInt("id") ?? 0, midi: call.getInt("midi") ?? 60,
+            gain: call.getDouble("gain") ?? 0.2, pan: call.getDouble("pan") ?? 0)
         call.resolve()
     }
 

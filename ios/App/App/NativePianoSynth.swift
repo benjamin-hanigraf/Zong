@@ -44,12 +44,20 @@ private struct SynthVoice {
     var rate: Double = 1
     // pad voices
     var oscCount = 0
+    // looped warm-pad sample voices (loopEnd > 0)
+    var loopStart: Double = 0
+    var loopEnd: Double = 0
+    var level: Float = 1
+    var panMode = 0          // 0 none (piano), 1 pan left of centre, 2 pan right — the Web Audio StereoPanner law for stereo input
+    var panL: Float = 1
+    var panR: Float = 1
 }
 
 private final class SynthCore {
     static let maxVoices = 24
     static let maxCommands = 64
     static let maxOsc = 16
+    static let maxBank = 32      // 12 piano samples + 12 warm-pad samples (+ spare)
     static let tableSlots = 32   // 0..23 = the 12 roots x major/minor pads, 24..31 = spare slots for the joystick's chords
 
     private let voices: UnsafeMutablePointer<SynthVoice>
@@ -73,6 +81,9 @@ private final class SynthCore {
     private let bankR: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>
     private let bankFrames: UnsafeMutablePointer<Int>
     private let bankMidi: UnsafeMutablePointer<Int>
+    private let bankIsPad: UnsafeMutablePointer<Bool>          // warm-pad sample (looped) rather than a piano sample
+    private let bankLoopStart: UnsafeMutablePointer<Double>
+    private let bankLoopEnd: UnsafeMutablePointer<Double>
     private var bankCount = 0
 
     private var ageCounter = 0
@@ -98,25 +109,37 @@ private final class SynthCore {
         queue = .allocate(capacity: SynthCore.maxCommands);   queue.initialize(repeating: SynthCommand(), count: SynthCore.maxCommands)
         drained = .allocate(capacity: SynthCore.maxCommands); drained.initialize(repeating: SynthCommand(), count: SynthCore.maxCommands)
         lock = .allocate(capacity: 1); lock.initialize(to: os_unfair_lock())
-        bankL = .allocate(capacity: 16); bankL.initialize(repeating: nil, count: 16)
-        bankR = .allocate(capacity: 16); bankR.initialize(repeating: nil, count: 16)
-        bankFrames = .allocate(capacity: 16); bankFrames.initialize(repeating: 0, count: 16)
-        bankMidi = .allocate(capacity: 16); bankMidi.initialize(repeating: 0, count: 16)
+        bankL = .allocate(capacity: SynthCore.maxBank); bankL.initialize(repeating: nil, count: SynthCore.maxBank)
+        bankR = .allocate(capacity: SynthCore.maxBank); bankR.initialize(repeating: nil, count: SynthCore.maxBank)
+        bankFrames = .allocate(capacity: SynthCore.maxBank); bankFrames.initialize(repeating: 0, count: SynthCore.maxBank)
+        bankMidi = .allocate(capacity: SynthCore.maxBank); bankMidi.initialize(repeating: 0, count: SynthCore.maxBank)
+        bankIsPad = .allocate(capacity: SynthCore.maxBank); bankIsPad.initialize(repeating: false, count: SynthCore.maxBank)
+        bankLoopStart = .allocate(capacity: SynthCore.maxBank); bankLoopStart.initialize(repeating: 0, count: SynthCore.maxBank)
+        bankLoopEnd = .allocate(capacity: SynthCore.maxBank); bankLoopEnd.initialize(repeating: 0, count: SynthCore.maxBank)
         attackCoef = 1 - expf(-1 / (0.006 * Float(kSampleRate)))
         releaseCoef = 1 - expf(-1 / (0.220 * Float(kSampleRate)))
     }
 
     // MARK: Control thread
 
-    func addSample(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int, midi: Int) {
-        guard bankCount < 16 else { return }
+    /// `loopEnd > 0` marks a warm-pad sample that loops between loopStart and loopEnd (frames).
+    func addSample(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int, midi: Int, loopStart: Int = 0, loopEnd: Int = 0) {
+        guard bankCount < SynthCore.maxBank else { return }
         os_unfair_lock_lock(lock)
         bankL[bankCount] = left
         bankR[bankCount] = right
         bankFrames[bankCount] = frames
         bankMidi[bankCount] = midi
+        bankIsPad[bankCount] = loopEnd > 0
+        bankLoopStart[bankCount] = Double(loopStart)
+        bankLoopEnd[bankCount] = Double(loopEnd)
         bankCount += 1
         os_unfair_lock_unlock(lock)
+    }
+
+    var hasPadSamples: Bool {
+        for i in 0..<bankCount where bankIsPad[i] { return true }
+        return false
     }
 
     func push(_ command: SynthCommand) {
@@ -146,6 +169,7 @@ private final class SynthCore {
         case 0: startSample(id: c.id, midi: Int(c.value))
         case 1: startPad(id: c.id, root: Int(c.value), minor: c.flag == 1)
         case 4: startPadSlot(id: c.id, t: Int(c.value))
+        case 5: startPadSample(id: c.id, midi: Int(c.value), packed: Int(c.flag))
         case 2:
             for v in 0..<SynthCore.maxVoices where voices[v].active && voices[v].id == c.id && !voices[v].releasing {
                 release(v)
@@ -157,7 +181,7 @@ private final class SynthCore {
 
     private func release(_ v: Int) {
         voices[v].releasing = true
-        let seconds: Float = voices[v].isPad ? 0.28 : 0.30
+        let seconds: Float = (voices[v].isPad || voices[v].loopEnd > 0) ? 0.28 : 0.30
         let start = max(voices[v].env, 0.0002)
         // exponential fall from the current level to 0.0001 over `seconds` (like exponentialRampToValueAtTime)
         voices[v].releaseMul = expf(logf(0.0001 / start) / (seconds * sr))
@@ -177,7 +201,7 @@ private final class SynthCore {
         guard bankCount > 0 else { return }
         var best = 0
         var bestDist = Int.max
-        for i in 0..<bankCount {
+        for i in 0..<bankCount where !bankIsPad[i] {
             let d = abs(midi - bankMidi[i])
             if d < bestDist { bestDist = d; best = i }
         }
@@ -193,6 +217,42 @@ private final class SynthCore {
         voice.bank = best
         voice.pos = 0
         voice.rate = pow(2.0, Double(midi - bankMidi[best]) / 12.0)
+        voice.age = ageCounter
+        voices[v] = voice
+    }
+
+    /// One note of a warm-pad chord: the nearest pad sample, pitched to `midi`, looped while held.
+    /// packed = pan index * 1000 + gain * 100 (pan index 0...20 = -1...+1).
+    private func startPadSample(id: Int32, midi: Int, packed: Int) {
+        var best = -1
+        var bestDist = Int.max
+        for i in 0..<bankCount where bankIsPad[i] {
+            let d = abs(midi - bankMidi[i])
+            if d < bestDist { bestDist = d; best = i }
+        }
+        guard best >= 0 else { return }
+        let gain = Float(packed % 1000) / 100
+        let pan = Double(packed / 1000 - 10) / 10
+        // StereoPanner (stereo input): pan <= 0 -> x = pan + 1, else x = pan; gL = cos, gR = sin of x * pi/2
+        let x = pan <= 0 ? pan + 1 : pan
+        let v = allocateVoice()
+        ageCounter += 1
+        var voice = SynthVoice()
+        voice.active = true
+        voice.id = id
+        voice.isPad = false
+        voice.env = 0
+        voice.target = 0.9
+        voice.attackInc = 0.9 / (0.08 * sr)
+        voice.bank = best
+        voice.pos = 0
+        voice.rate = pow(2.0, Double(midi - bankMidi[best]) / 12.0)
+        voice.loopStart = bankLoopStart[best]
+        voice.loopEnd = bankLoopEnd[best]
+        voice.level = gain
+        voice.panMode = pan <= 0 ? 1 : 2
+        voice.panL = Float(cos(x * Double.pi / 2))
+        voice.panR = Float(sin(x * Double.pi / 2))
         voice.age = ageCounter
         voices[v] = voice
     }
@@ -366,9 +426,15 @@ private final class SynthCore {
                     let i0 = Int(voice.pos)
                     if i0 + 1 >= total { voice.active = false; break }
                     let frac = Float(voice.pos - Double(i0))
-                    let l = bl[i0] * (1 - frac) + bl[i0 + 1] * frac
-                    let r = br[i0] * (1 - frac) + br[i0 + 1] * frac
+                    var l = bl[i0] * (1 - frac) + bl[i0 + 1] * frac
+                    var r = br[i0] * (1 - frac) + br[i0 + 1] * frac
+                    if voice.panMode != 0 {
+                        let il = l * voice.level, ir = r * voice.level
+                        if voice.panMode == 1 { l = il + ir * voice.panL; r = ir * voice.panR }
+                        else { l = il * voice.panL; r = ir + il * voice.panR }
+                    }
                     voice.pos += voice.rate
+                    if voice.loopEnd > 0 && voice.pos >= voice.loopEnd { voice.pos -= (voice.loopEnd - voice.loopStart) }
                     if voice.releasing {
                         voice.env *= voice.releaseMul
                         if voice.env < 0.0003 { voice.active = false; break }
@@ -449,6 +515,17 @@ final class NativePianoSynth {
         ensureRunning()
     }
 
+    /// True once the warm-pad samples (public/tones/pad_*.mp3) have been loaded; the app then plays pads from them.
+    var padSamplesReady: Bool { core.hasPadSamples }
+
+    /// One note of a warm-pad chord (all notes of a chord share `id`, so noteOff(id) releases them together).
+    func padSampleOn(id: Int, midi: Int, gain: Double, pan: Double) {
+        let packedPan = max(0, min(20, Int((pan * 10).rounded()) + 10))
+        let packedGain = max(0, min(100, Int((gain * 100).rounded())))
+        core.push(SynthCommand(type: 5, id: Int32(id), value: Int32(midi), flag: Int32(packedPan * 1000 + packedGain)))
+        ensureRunning()
+    }
+
     func noteOff(id: Int) { core.push(SynthCommand(type: 2, id: Int32(id), value: 0, flag: 0)) }
     func allOff() { core.push(SynthCommand(type: 3, id: 0, value: 0, flag: 0)) }
 
@@ -503,7 +580,59 @@ final class NativePianoSynth {
                 print("[NativePiano] load error \(name): \(error)")
             }
         }
+        loadPadSamples(fmt)
         print("[NativePiano] samples ready")
+    }
+
+    /// Warm-pad samples: one long note every three semitones (pad_<name>.mp3), looped while a chord is held. The loop
+    /// region (3 s - 11 s) has its end blended into the material before its start so the seam never clicks.
+    /// Missing files are skipped: without them the app keeps using the synthesised pad.
+    private func loadPadSamples(_ fmt: AVAudioFormat) {
+        let sr = Int(kSampleRate)
+        for (name, midi) in sampleDefs {
+            guard let url = Bundle.main.url(forResource: "pad_\(name)", withExtension: "mp3", subdirectory: "public/tones") else { continue }
+            do {
+                let file = try AVAudioFile(forReading: url)
+                guard let src = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else { continue }
+                try file.read(into: src)
+                guard let converter = AVAudioConverter(from: src.format, to: fmt) else { continue }
+                let ratio = kSampleRate / src.format.sampleRate
+                let capacity = AVAudioFrameCount(Double(src.frameLength) * ratio) + 256
+                guard let out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: capacity) else { continue }
+                var fed = false
+                var error: NSError?
+                converter.convert(to: out, error: &error) { _, status in
+                    if fed { status.pointee = .noDataNow; return nil }
+                    fed = true
+                    status.pointee = .haveData
+                    return src
+                }
+                if error != nil { continue }
+                guard let data = out.floatChannelData else { continue }
+                let n = Int(out.frameLength)
+                let loopStart = 3 * sr
+                let loopEnd = min(11 * sr, n - 1)
+                let xf = sr
+                guard loopEnd - loopStart > 2 * xf, loopStart >= xf else { continue }
+                let l = UnsafeMutablePointer<Float>.allocate(capacity: n)
+                let r = UnsafeMutablePointer<Float>.allocate(capacity: n)
+                l.update(from: data[0], count: n)
+                r.update(from: data[1], count: n)
+                for i in 0..<xf {
+                    let t = Float(i) / Float(xf)
+                    let wOut = cosf(t * Float.pi / 2)
+                    let wIn = sinf(t * Float.pi / 2)
+                    let a = loopEnd - xf + i
+                    let b = loopStart - xf + i
+                    l[a] = l[a] * wOut + l[b] * wIn
+                    r[a] = r[a] * wOut + r[b] * wIn
+                }
+                core.addSample(left: l, right: r, frames: n, midi: midi, loopStart: loopStart, loopEnd: loopEnd)
+            } catch {
+                print("[NativePiano] pad load error \(name): \(error)")
+            }
+        }
+        print("[NativePiano] pad samples: \(core.hasPadSamples ? "ready" : "none found")")
     }
 
     private func activateSession() {

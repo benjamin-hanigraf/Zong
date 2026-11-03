@@ -65,6 +65,9 @@ export const nativePiano = {
   padOn(id, root, minor) { Plugin?.padOn({ id, root, minor })?.catch(quiet); },
   // The joystick's chords: the MIDI note of each voice (root, third, fifth, root an octave up, 7th / 9th, slash bass; -1 = not used).
   padChordOn(id, root, third, fifth, octave, extra, bass) { Plugin?.padChordOn({ id, root, third, fifth, octave, extra, bass })?.catch(quiet); },
+  // Warm-pad samples (public/tones/pad_*.mp3): ask once whether the iOS engine has them, then play each note of a chord.
+  padSamplesReady() { return Plugin?.padSamplesReady ? Plugin.padSamplesReady().then((r) => !!r?.ready).catch(() => false) : Promise.resolve(false); },
+  padSampleOn(id, midi, gain, pan) { Plugin?.padSampleOn({ id, midi, gain, pan })?.catch(quiet); },
   noteOff(id) { Plugin?.pianoNoteOff({ id })?.catch(quiet); },
   allOff() { Plugin?.pianoAllOff()?.catch(quiet); },
 };
