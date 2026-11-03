@@ -189,28 +189,32 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
   }, [readOnly]);
 
   const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
+  // Laid out for a phone held sideways. On a bigger screen (Mac / PC) everything is scaled up by the same factor (sticks, key
+  // selector, chord name), so it keeps the same proportions as on the iPhone instead of looking small in a large window.
+  const scale = Math.max(1, Math.min(box.w / 760, box.h / 380, 2.4));
+  const bw = box.w / scale, bh = box.h / scale;
   // Two sticks plus the key selector (about 250px) must fit side by side, and the sticks must fit the height.
-  const stick = Math.max(100, Math.min(box.h - 16, (box.w - 190 - 42) / 2, 300));
+  const stick = Math.max(100, Math.min(bh - 16, (bw - 190 - 42) / 2, 300)) * scale;
   const keyLabel = `${flatify(v.keyName)}${v.keyQuality === "Minor" ? "m" : ""}`;
   return (
     <div ref={boxRef} style={{ flex: 1, position: "relative", overflow: "hidden", touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}>
       {/* the chord being played (nothing when nothing is) */}
-      <div style={{ position: "absolute", top: 6, left: 0, right: 0, textAlign: "center", fontFamily: FONT, fontSize: Math.min(64, box.h * 0.2), fontWeight: 800, lineHeight: 1.1, minHeight: Math.min(64, box.h * 0.2) * 1.1, color: C.accent, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 6 * scale, left: 0, right: 0, textAlign: "center", fontFamily: FONT, fontSize: Math.min(64, bh * 0.2) * scale, fontWeight: 800, lineHeight: 1.1, minHeight: Math.min(64, bh * 0.2) * scale * 1.1, color: C.accent, pointerEvents: "none" }}>
         {chordName ? flatify(chordName) : ""}
       </div>
       {/* left: quality, right: degree */}
-      <div style={{ position: "absolute", left: 14, bottom: 12 }}>
+      <div style={{ position: "absolute", left: 14 * scale, bottom: 12 * scale }}>
         <Stick size={stick} wedges={QUALITY_WEDGES} centreLabel="M" C={C}
           mirror={readOnly ? qualityMirror(v.quality) : undefined} hl={qualityMirror(quality)}
           onChange={(sel) => setQuality(!sel ? "auto" : sel.centre ? "M" : QUALITY_WEDGES[sel.wedge].value)} />
       </div>
-      <div style={{ position: "absolute", right: 14, bottom: 12 }}>
+      <div style={{ position: "absolute", right: 14 * scale, bottom: 12 * scale }}>
         <Stick size={stick} wedges={DEGREE_WEDGES} centreLabel="1" C={C}
           mirror={readOnly ? degreeMirror(v.degree) : undefined} hl={degreeMirror(degree)}
           onChange={(sel) => setDegree(!sel ? null : sel.centre ? 1 : DEGREE_WEDGES[sel.wedge].value)} />
       </div>
       {/* key selector (same element as the song view, a little bigger) with the scale switch below it, same width */}
-      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+      <div style={{ position: "absolute", bottom: 12 * scale, left: "50%", transform: `translateX(-50%) scale(${scale})`, transformOrigin: "50% 100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <KeyStepper label={keyLabel} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} disabled={readOnly} large C={C} />
         </div>
