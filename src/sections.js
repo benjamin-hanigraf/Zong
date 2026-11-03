@@ -15,7 +15,8 @@
 export const SECTION_TEXT_KEYS = ["lyrics", "chords", "chart", "drums"];
 export const SECTION_TEXT_NAMES = { lyrics: "Lyrics", chords: "Chords", chart: "Chart", drums: "Drums" };
 
-const normLabel = (label) => String(label || "").toLowerCase().replace(/\s+/g, " ").trim();
+// Case, spacing and brackets are ignored when matching ("Verse [1]" — written by an older version that bracketed the number — is "Verse 1").
+const normLabel = (label) => String(label || "").toLowerCase().replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
 const isHeader = (line) => line.trimStart().startsWith("-");
 const labelOf = (line) => line.trimStart().slice(1).trim();
 
@@ -128,9 +129,10 @@ export function reconcileAfterEdit(base, texts, edited) {
   const pairs = lcs(oldList.map((e) => e.section.norm), newList.map((e) => e.section.norm));
 
   // Walk the gaps between matched sections: equal numbers removed/added in a gap are renames.
-  const renames = []; // { from: oldKey, head }
-  const removes = []; // oldKey
-  const adds = [];    // newIndex
+  const matched = pairs.map(([oi, ni]) => ({ oi, ni }));   // same label, same place
+  const renames = [];   // { oi, ni }
+  const removes = [];   // oi
+  const adds = [];      // ni
   const anchors = [[-1, -1], ...pairs, [oldList.length, newList.length]];
   for (let a = 0; a < anchors.length - 1; a++) {
     const [oi, ni] = anchors[a];
@@ -138,22 +140,28 @@ export function reconcileAfterEdit(base, texts, edited) {
     const gone = []; for (let x = oi + 1; x < oj; x++) gone.push(x);
     const fresh = []; for (let y = ni + 1; y < nj; y++) fresh.push(y);
     const pairUp = Math.min(gone.length, fresh.length);
-    for (let p = 0; p < pairUp; p++) renames.push({ from: oldList[gone[p]].key, head: newList[fresh[p]].section.head });
-    gone.slice(pairUp).forEach((x) => removes.push(oldList[x].key));
+    for (let p = 0; p < pairUp; p++) renames.push({ oi: gone[p], ni: fresh[p] });
+    gone.slice(pairUp).forEach((x) => removes.push(x));
     fresh.slice(pairUp).forEach((y) => adds.push(y));
   }
 
   const others = SECTION_TEXT_KEYS.filter((k) => k !== edited);
   const parsedOthers = {};
-  others.forEach((k) => { parsedOthers[k] = parse(texts[k]); });
+  // Every section of the other texts is looked up ONCE, by its key in the old list, before anything is changed
+  // (removing / renaming one duplicate shifts the keys of the rest).
+  const lookup = {};
+  others.forEach((k) => {
+    parsedOthers[k] = parse(texts[k]);
+    lookup[k] = new Map(keyed(parsedOthers[k]).map((e) => [e.key, e.section]));
+  });
 
   // Deleting a section is only allowed when the other texts have nothing in it.
   const blockedBy = {};
-  removes.forEach((key) => {
-    const label = oldList.find((e) => e.key === key).section.label;
+  removes.forEach((oi) => {
+    const label = oldList[oi].section.label;
     others.forEach((k) => {
-      const hit = keyed(parsedOthers[k]).find((e) => e.key === key);
-      if (hit && hasContent(hit.section)) { (blockedBy[label] ||= []).push(SECTION_TEXT_NAMES[k]); }
+      const hit = lookup[k].get(oldList[oi].key);
+      if (hit && hasContent(hit)) { (blockedBy[label] ||= []).push(SECTION_TEXT_NAMES[k]); }
     });
   });
   const blockedLabels = Object.keys(blockedBy);
@@ -165,19 +173,25 @@ export function reconcileAfterEdit(base, texts, edited) {
   const out = { ...texts };
   others.forEach((k) => {
     const p = parsedOthers[k];
-    // Renames first (keys of the old list), then deletions, then additions positioned by the new list.
-    renames.forEach(({ from, head }) => {
-      const hit = keyed(p).find((e) => e.key === from);
-      if (hit) { hit.section.head = head; hit.section.label = labelOf(head); hit.section.norm = normLabel(labelOf(head)); }
+    const at = new Array(newList.length).fill(null);          // new-list index -> this text's section object
+    matched.forEach(({ oi, ni }) => { at[ni] = lookup[k].get(oldList[oi].key) || null; });
+    renames.forEach(({ oi, ni }) => {
+      const sec = lookup[k].get(oldList[oi].key);
+      if (!sec) return;
+      const head = newList[ni].section.head;
+      sec.head = head; sec.label = labelOf(head); sec.norm = normLabel(labelOf(head));
+      at[ni] = sec;
     });
-    removes.forEach((key) => {
-      const hit = keyed(p).find((e) => e.key === key);
-      if (hit) p.sections.splice(p.sections.indexOf(hit.section), 1);
+    removes.forEach((oi) => {
+      const sec = lookup[k].get(oldList[oi].key);
+      if (sec) p.sections.splice(p.sections.indexOf(sec), 1);
     });
-    adds.forEach((idx) => {
-      const prev = idx > 0 ? newList[idx - 1].key : null;
-      // The new list's keys match this text's keys once renames/removals are applied.
-      insertSection(p, newList[idx].section.head, prev);
+    adds.sort((x, y) => x - y).forEach((ni) => {
+      let prev = null;
+      for (let x = ni - 1; x >= 0 && !prev; x--) prev = at[x];
+      const entry = { head: newList[ni].section.head, label: newList[ni].section.label, norm: newList[ni].section.norm, body: [] };
+      p.sections.splice(prev ? p.sections.indexOf(prev) + 1 : 0, 0, entry);
+      at[ni] = entry;
     });
     out[k] = serialize(p);
   });

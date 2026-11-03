@@ -538,8 +538,9 @@ let _teamChannel     = null;
  *   onSpellingChange(eventType, tamil, latin|null)
  *   onTeam({ revision, sharedSetlists })
  */
-export function subscribeToChanges({ onSongChange, onSpellingChange, onTeam, teamKey }) {
+export function subscribeToChanges({ onSongChange, onSpellingChange, onTeam, onReconnect, teamKey }) {
   const sb = client();
+  let seenSubscribed = false;
 
   _songsChannel = sb
     .channel("zong_songs_changes")
@@ -550,7 +551,10 @@ export function subscribeToChanges({ onSongChange, onSpellingChange, onTeam, tea
       const gone = payload.eventType === "DELETE";
       onSongChange(payload.eventType, gone ? null : rowToSong(row), row.id);
     })
-    .subscribe();
+    .subscribe((status) => {
+      // Realtime does not replay what was missed while the connection was down: after a reconnect, catch up with a normal sync.
+      if (status === "SUBSCRIBED") { if (seenSubscribed) onReconnect?.(); seenSubscribed = true; }
+    });
 
   _spellingChannel = sb
     .channel("zong_spelling_changes")
@@ -595,7 +599,7 @@ export function resetSyncCursors() {
    ========================================================================= */
 export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, onStatus, onPeerJoined, onAsk }) {
   const sb = client();
-  const channel = sb.channel(`zong_live_${teamKey}`, { config: { broadcast: { self: false }, presence: { key: deviceId } } });
+  const channel = sb.channel(`zong_live_${String(teamKey).replace(/[^A-Za-z0-9_-]/g, "_")}`, { config: { broadcast: { self: false }, presence: { key: deviceId } } });
   let meta = { lead: false, since: 0 };
   let subscribed = false;
   const leads = () => {
@@ -610,8 +614,9 @@ export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, 
     .on("broadcast", { event: "pos" }, ({ payload }) => onPosition?.(payload))
     .on("broadcast", { event: "ask" }, () => onAsk?.())
     .subscribe((status) => {
+      subscribed = status === "SUBSCRIBED";   // must be set before onStatus: its handlers send right away
+      if (subscribed) track();                // re-announces itself after every reconnect
       onStatus?.(status);
-      if (status === "SUBSCRIBED") { subscribed = true; track(); } else subscribed = false;   // re-announces itself after every reconnect
     });
   return {
     setLead(isLead) { meta = { lead: isLead, since: isLead ? Date.now() : 0 }; track(); return meta.since; },

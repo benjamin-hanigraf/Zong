@@ -939,7 +939,10 @@ function precededByStandaloneX(text, offset) {
 // inside [] is left alone. Surrounding punctuation (brackets, slashes, hyphens,
 // quotes) doesn't stop a number being a chord, but a number right after a
 // standalone "x" stays text.
-function autoBracketNumbers(text) {
+// Section headers ("-Verse 1") are never chords: converters below leave those lines alone.
+const mapNonHeaderLines = (text, fn) => String(text || "").split("\n").map((l) => (l.trimStart().startsWith("-") ? l : fn(l))).join("\n");
+function autoBracketNumbers(text) { return mapNonHeaderLines(text, autoBracketNumbersLine); }
+function autoBracketNumbersLine(text) {
   const s = String(text || "");
   let out = "";
   let i = 0;
@@ -1128,17 +1131,17 @@ function chordToNumberToken(symbol, key, quality) {
 // (e.g. typing "[D]" while in the Chords tab) get stored in the canonical
 // number form once saved.
 function chordsTaggedToNumbersTagged(taggedText, key, quality) {
-  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (m, tok, off, whole) => (
+  return mapNonHeaderLines(taggedText, (line) => line.replace(/\[([^\]]*)\]/g, (m, tok, off, whole) => (
     precededByStandaloneX(whole, off) ? tok : `[${chordToNumberToken(tok, key, quality)}]`
-  ));
+  )));
 }
 // Converts every [number] tag in a tagged (lyric-interleaved) text block
 // into its derived [ChordLetter] for the given key/quality, leaving the
 // lyric characters and non-number tags untouched.
 function numbersTaggedToChordsTagged(taggedText, key, quality) {
-  return String(taggedText || "").replace(/\[([^\]]*)\]/g, (_, tok, off, whole) => (
+  return mapNonHeaderLines(taggedText, (line) => line.replace(/\[([^\]]*)\]/g, (_, tok, off, whole) => (
     precededByStandaloneX(whole, off) ? tok : `[${tokenToChord(tok, key, quality)}]`
-  ));
+  )));
 }
 
 /* =========================================================================
@@ -4540,7 +4543,7 @@ function SongDetailScreen({
             </>
           ) : (
             <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.textMuted, fontWeight: 600 }}>
-              Following · {sectionEntries[activeSection]?.label || "—"}{liveSync.status === "live" ? "" : " · reconnecting…"}
+              {liveSync.leaderPresent === false ? "Waiting for a leader…" : `Following · ${sectionEntries[activeSection]?.label || "—"}`}{liveSync.status === "live" ? "" : " · reconnecting…"}
             </div>
           )}
         </div>
@@ -5942,7 +5945,7 @@ function StageModeModal({ live, onClose, C }) {
     content = (<>
       {body(connected ? "You're leading. Everyone in Stage Mode follows the section you're on." : "Reconnecting… the others will catch up as soon as you're back.")}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <button onClick={() => { live.start(false); }} style={btn(false)}>Stop leading</button>
+        <button onClick={() => { live.start(false); onClose(); }} style={btn(false)}>Stop leading</button>
         <button onClick={() => { live.close(); onClose(); }} style={btn(false, true)}>Leave Stage Mode</button>
       </div>
     </>);
@@ -5950,7 +5953,7 @@ function StageModeModal({ live, onClose, C }) {
     content = (<>
       {body(connected ? (otherLead ? "You're following the lead's section." : "Waiting for someone to lead…") : "Reconnecting…")}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <button onClick={() => live.start(true)} style={btn(false)}>Take over as lead</button>
+        <button onClick={() => { live.start(true); onClose(); }} style={btn(false)}>Take over as lead</button>
         <button onClick={() => { live.close(); onClose(); }} style={btn(false, true)}>Leave Stage Mode</button>
       </div>
     </>);
@@ -6097,6 +6100,14 @@ function AppInner() {
 
   // Debounced trigger so rapid commits collapse into one network round-trip.
   const syncTimer = useRef(null);
+  // After a failed sync, try again with growing pauses (4s, 8s … 60s) until one succeeds.
+  const syncRetry = useRef({ timer: null, attempt: 0 });
+  const scheduleSyncRetry = () => {
+    const r = syncRetry.current;
+    clearTimeout(r.timer);
+    r.attempt += 1;
+    r.timer = setTimeout(() => performSyncRef.current?.(), Math.min(60000, 4000 * 2 ** (r.attempt - 1)));
+  };
   const requestSync = (delay = 0) => {
     if (syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => { syncTimer.current = null; performSyncRef.current?.(); }, delay);
@@ -6258,8 +6269,10 @@ function AppInner() {
 
       if (bandKey) setSyncStatus(result.teamError ? `Team error: ${result.teamError}` : "Up to date");
       setFirstSyncDone(true);
+      if (result.teamError) scheduleSyncRetry(); else { syncRetry.current.attempt = 0; clearTimeout(syncRetry.current.timer); }
     } catch (error) {
       console.error("[Zong sync]", error);
+      scheduleSyncRetry();   // weak signal / server hiccup: the browser may never fire "online", so try again by itself
       if (bandKey) setSyncStatus(navigator.onLine ? error.message : "Offline");
       // Re-throw for manual sync so the UI can show a specific toast.
       if (force) throw error;
@@ -6296,6 +6309,7 @@ function AppInner() {
     if (isSupabaseConfigured()) {
       unsubscribeRealtime = subscribeToChanges({
         teamKey: bandKey || null,
+        onReconnect: () => performSyncRef.current?.(),
         onSongChange: (_eventType, song, songId) => {
           if (getDirtySongIds().includes(songId)) return; // don't clobber our unpushed edit
           setSongs((prev) => {
@@ -6573,11 +6587,23 @@ function AppInner() {
       if (!data || data.app !== "zong" || !Array.isArray(data.songs)) throw new Error("not a Zong library");
       const same = (a, b) => a.id === b.id || ((a.title || "").trim().toLowerCase() === (b.title || "").trim().toLowerCase() && (a.artist || "").trim().toLowerCase() === (b.artist || "").trim().toLowerCase());
       let added = 0, updated = 0;
-      const incoming = data.songs.filter((r) => r && typeof r === "object" && typeof r.title === "string" && r.title.trim());
+      // Only known fields, each forced to the type the rest of the app expects (a hand-edited or damaged file can't break the app).
+      const str = (v) => (typeof v === "string" ? v : "");
+      const cleanSong = (r) => ({
+        id: typeof r.id === "string" && r.id ? r.id.slice(0, 80) : uid(),
+        title: str(r.title).trim(), artist: str(r.artist), key: str(r.key).slice(0, 3), keyQuality: r.keyQuality === "Minor" ? "Minor" : "Major",
+        tempo: Number.isFinite(Number(r.tempo)) && r.tempo !== "" && r.tempo != null ? Math.min(300, Math.max(30, Number(r.tempo))) : "",
+        timeSignature: /^\d{1,2}\/\d{1,2}$/.test(str(r.timeSignature)) ? r.timeSignature : "4/4", language: str(r.language),
+        description: str(r.description), lyricsText: str(r.lyricsText), chordsText: str(r.chordsText), chartText: str(r.chartText), drumsText: str(r.drumsText),
+        updatedAt: Number.isFinite(Number(r.updatedAt)) ? Number(r.updatedAt) : 0,
+        accents: Array.isArray(r.accents) ? r.accents.map((a) => (["normal", "accent", "mute"].includes(a) ? a : "normal")).slice(0, 16) : undefined,
+        subdivision: [1, 2, 3, 4].includes(Number(r.subdivision)) ? Number(r.subdivision) : undefined,
+      });
+      const incoming = data.songs.filter((r) => r && typeof r === "object" && typeof r.title === "string" && r.title.trim()).map(cleanSong);
       saveSongs((prev) => {
         const next = [...prev];
         incoming.forEach((raw) => {
-          const song = { ...raw, id: typeof raw.id === "string" && raw.id ? raw.id : uid() };
+          const song = raw;
           const idx = next.findIndex((l) => same(l, song));
           if (idx === -1) { next.push(song); added += 1; }
           else if ((song.updatedAt || 0) > (next[idx].updatedAt || 0)) { next[idx] = { ...song, id: next[idx].id }; updated += 1; }
@@ -6596,13 +6622,14 @@ function AppInner() {
           const next = [...prev];
           data.setlists.forEach((sl) => {
             if (!sl || typeof sl.id !== "string" || typeof sl.name !== "string" || !Array.isArray(sl.entries) || next.some((x) => x.id === sl.id)) return;
-            next.push({ ...sl, shared: false, teamSynced: false });   // imported setlists stay on this device until shared again
+            const entries = sl.entries.filter((e) => e && typeof e.songId === "string").map((e) => ({ songId: e.songId, keyOverride: typeof e.keyOverride === "string" ? e.keyOverride : null, tempoOverride: Number.isFinite(Number(e.tempoOverride)) && e.tempoOverride != null ? Number(e.tempoOverride) : null }));
+            next.push({ id: sl.id.slice(0, 80), name: sl.name.slice(0, 120), entries, createdAt: Number(sl.createdAt) || Date.now(), shared: false, teamSynced: false });   // imported setlists stay on this device until shared again
             lists += 1;
           });
           return next;
         });
       }
-      const words = data.spellingChart && typeof data.spellingChart === "object" ? Object.entries(data.spellingChart).filter(([k, v]) => typeof k === "string" && typeof v === "string") : [];
+      const words = data.spellingChart && typeof data.spellingChart === "object" ? Object.entries(data.spellingChart).filter(([k, v]) => typeof v === "string" && k.length <= 80 && v.length <= 80) : [];
       if (words.length) saveSpellingChart((prev) => ({ ...prev, ...Object.fromEntries(words) }));
       flash(`Imported ${added} new and ${updated} updated song${added + updated === 1 ? "" : "s"}${lists ? `, ${lists} setlist${lists === 1 ? "" : "s"}` : ""}`);
     } catch {
@@ -6850,7 +6877,7 @@ function AppInner() {
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           liveSync={live.role === "off" ? null : {
-            role: live.role, status: live.connected ? "live" : "connecting", target: liveTarget, onLeave: live.close,
+            role: live.role, status: live.connected ? "live" : "connecting", leaderPresent: live.peeked ? live.otherLead : undefined, target: liveTarget, onLeave: live.close,
             onSection: ({ sectionKey, sectionIdx }) => live.publish({ songId: viewingSong.id, setlistId: viewing?.fromSetlistId || null, sectionKey, sectionIdx }),
           }}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
