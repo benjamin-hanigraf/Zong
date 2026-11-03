@@ -593,7 +593,7 @@ export function resetSyncCursors() {
    Messages carry the full current position (not "next"), so a device that dropped and came back just
    asks for / waits for the latest one and lands in the right place.
    ========================================================================= */
-export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onStatus, onPeerJoined, onAsk }) {
+export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, onStatus, onPeerJoined, onAsk }) {
   const sb = client();
   const channel = sb.channel(`zong_live_${teamKey}`, { config: { broadcast: { self: false }, presence: { key: deviceId } } });
   let meta = { lead: false, since: 0 };
@@ -605,7 +605,7 @@ export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onStatus,
   };
   const track = () => (subscribed ? channel.track(meta).catch(() => { }) : undefined);
   channel
-    .on("presence", { event: "sync" }, () => onLeads?.(leads()))
+    .on("presence", { event: "sync" }, () => { onLeads?.(leads()); onPeers?.(Object.keys(channel.presenceState()).filter((k) => k !== deviceId).length); })
     .on("presence", { event: "join" }, ({ key }) => { if (key !== deviceId) onPeerJoined?.(key); })
     .on("broadcast", { event: "pos" }, ({ payload }) => onPosition?.(payload))
     .on("broadcast", { event: "ask" }, () => onAsk?.())

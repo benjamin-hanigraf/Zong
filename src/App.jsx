@@ -5665,6 +5665,7 @@ function useLiveSync({ teamKey, onApply }) {
   const ctl = useRef(null);
   const roleRef = useRef("off");
   const posRef = useRef(null);
+  const peersRef = useRef(0);   // other devices on the channel
   const lastSig = useRef("");
   const applyRef = useRef(onApply);
   applyRef.current = onApply;
@@ -5690,6 +5691,7 @@ function useLiveSync({ teamKey, onApply }) {
           if (roleRef.current === "lead" && posRef.current) ctl.current?.sendPosition(posRef.current);
         }
       },
+      onPeers: (n) => { peersRef.current = n; },
       onLeads: (leads) => {
         setPeeked(true);
         setOtherLead(leads.some((l) => l.deviceId !== deviceId));
@@ -5719,10 +5721,11 @@ function useLiveSync({ teamKey, onApply }) {
     posRef.current = pos;
     if (roleRef.current === "lead") ctl.current?.sendPosition(pos);
   };
-  // The lead repeats its position every few seconds so a device that dropped out lands in the right place.
+  // Every move is sent instantly (publish). On top of that the lead repeats its position now and then so a device
+  // that dropped out lands in the right place — only while someone else is listening, and sparingly to save data.
   useEffect(() => {
     if (role !== "lead") return undefined;
-    const t = setInterval(() => { if (posRef.current) ctl.current?.sendPosition(posRef.current); }, 4000);
+    const t = setInterval(() => { if (posRef.current && peersRef.current > 0) ctl.current?.sendPosition(posRef.current); }, 12000);
     return () => clearInterval(t);
   }, [role]);
   useEffect(() => close, []); // eslint-disable-line react-hooks/exhaustive-deps
