@@ -597,7 +597,7 @@ export function resetSyncCursors() {
    Messages carry the full current position (not "next"), so a device that dropped and came back just
    asks for / waits for the latest one and lands in the right place.
    ========================================================================= */
-export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, onStatus, onPeerJoined, onAsk }) {
+export function joinLiveSync({ teamKey, deviceId, onPosition, onJoy, onLeads, onPeers, onStatus, onPeerJoined, onAsk }) {
   const sb = client();
   const channel = sb.channel(`zong_live_${String(teamKey).replace(/[^A-Za-z0-9_-]/g, "_")}`, { config: { broadcast: { self: false }, presence: { key: deviceId } } });
   let meta = { lead: false, since: 0 };
@@ -612,6 +612,7 @@ export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, 
     .on("presence", { event: "sync" }, () => { onLeads?.(leads()); onPeers?.(Object.keys(channel.presenceState()).filter((k) => k !== deviceId).length); })
     .on("presence", { event: "join" }, ({ key }) => { if (key !== deviceId) onPeerJoined?.(key); })
     .on("broadcast", { event: "pos" }, ({ payload }) => onPosition?.(payload))
+    .on("broadcast", { event: "joy" }, ({ payload }) => onJoy?.(payload))
     .on("broadcast", { event: "ask" }, () => onAsk?.())
     .subscribe((status) => {
       subscribed = status === "SUBSCRIBED";   // must be set before onStatus: its handlers send right away
@@ -621,6 +622,8 @@ export function joinLiveSync({ teamKey, deviceId, onPosition, onLeads, onPeers, 
   return {
     setLead(isLead) { meta = { lead: isLead, since: isLead ? Date.now() : 0 }; track(); return meta.since; },
     sendPosition(position) { if (subscribed) channel.send({ type: "broadcast", event: "pos", payload: position }).catch(() => { }); },
+    // The joystick chord piano state (key, sticks, chord) — shown, not played, on followers.
+    sendJoy(state) { if (subscribed) channel.send({ type: "broadcast", event: "joy", payload: state }).catch(() => { }); },
     ask() { if (subscribed) channel.send({ type: "broadcast", event: "ask", payload: {} }).catch(() => { }); },
     leave() { subscribed = false; sb.removeChannel(channel); },
   };

@@ -25,7 +25,8 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const isVocals = mode === "vocals";
   const isDrums = mode === "drums";
-  const canSwipeRight = (isDrums && !!onLoadToMetronome) || (isVocals && !!onLoadToPiano);
+  const isChords = mode === "chords";
+  const canSwipeRight = (isDrums && !!onLoadToMetronome) || ((isVocals || isChords) && !!onLoadToPiano);
 
   const startPress = (e) => {
     firedLongPressRef.current = false;
@@ -67,7 +68,7 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
     if (swipeDx > 60 && !wasOpenRef.current) {
       swipeFiredRef.current = true;
       if (isDrums && onLoadToMetronome) onLoadToMetronome(song);
-      else if (isVocals && onLoadToPiano) onLoadToPiano(song);
+      else if ((isVocals || isChords) && onLoadToPiano) onLoadToPiano(song);
     }
     setSwipeDx(0);
     swipeStartRef.current = null;

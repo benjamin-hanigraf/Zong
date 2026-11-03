@@ -12,7 +12,7 @@ import { BeatAccentControl, PlayStopGlyph, SubdivisionIcon, useHoldRepeat } from
 import { useEdgeSwipeBack, useSetlistSongSwipe } from "../lib/swipe.js";
 import { DEVICE_CLASS } from "../lib/viewport.js";
 import { Tamil } from "../components/Tamil.jsx";
-import { MetronomeIcon, TimeSigPicker } from "../components/shared.jsx";
+import { KeyStepper, MetronomeIcon, TimeSigPicker } from "../components/shared.jsx";
 import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
 import { ConfirmDialog } from "../components/dialogs.jsx";
@@ -100,7 +100,6 @@ export function SongDetailScreen({
   const labelFontSize = sectionFontSize != null ? sectionFontSize : Math.max(10, Math.min(18, Math.round(fontSize * 0.5)));
   const badgeStyle = { fontSize: 12.5, color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
   const chevronBtn = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0 };
-  const keyButtonStyle = { width: 44, minWidth: 44, height: 28, padding: 0, borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.border}`, background: C.surface2, color: C.text };
   const lyricsToggleStyle = (on) => ({ height: 28, minWidth: 56, padding: "0 8px", borderRadius: 8, fontFamily: FONT, fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${on ? C.accentDim : C.border}`, background: on ? C.accentSoft : C.surface2, color: on ? C.accent : C.textMuted });
 
   const isVocals = mode === "vocals";
@@ -252,11 +251,7 @@ export function SongDetailScreen({
                 <Save size={14} color={C.accent} />
               </button>
             )}
-            <button onClick={() => stepKey(-1)} style={chevronBtn}><ChevronLeft size={15} /></button>
-            <button onClick={() => setNashvilleMode(!nashvilleMode)} style={{ ...keyButtonStyle, border: `1px solid ${!nashvilleMode ? C.accentDim : C.border}`, background: !nashvilleMode ? C.accentSoft : C.surface2, color: !nashvilleMode ? C.accent : C.text }}>
-              {flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)}
-            </button>
-            <button onClick={() => stepKey(1)} style={chevronBtn}><ChevronRight size={15} /></button>
+            <KeyStepper label={flatify(`${viewKey}${song.keyQuality === "Minor" ? "m" : ""}`)} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} onKeyClick={() => setNashvilleMode(!nashvilleMode)} active={!nashvilleMode} C={C} />
           </div>
         </div>
       )}

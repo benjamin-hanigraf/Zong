@@ -340,10 +340,12 @@ export function chordToPadSpec(chord) {
   const dim = suffix.startsWith("dim");
   const aug = suffix.startsWith("aug") || suffix.startsWith("+");
   const minor = !dim && /^m(?!aj)/.test(suffix);
-  const seventh = /dim7/.test(suffix) ? 9 : /maj7/i.test(suffix) ? 11 : /7/.test(suffix) ? 10 : 0;
+  const sus = suffix.startsWith("sus2") ? 2 : suffix.startsWith("sus") ? 5 : 0;   // sus2 / sus4 replace the third
+  // `seventh` = an extra tone above the octave root: 7th (9 / 10 / 11) or the added 9th (2 = add9).
+  const seventh = /dim7/.test(suffix) ? 9 : /maj7/i.test(suffix) ? 11 : /add9/.test(suffix) ? 2 : /7/.test(suffix) ? 10 : 0;
   return {
     root,
-    third: dim || minor ? 3 : 4,
+    third: sus || (dim || minor ? 3 : 4),
     fifth: dim ? 6 : aug ? 8 : 7,
     seventh,
     bass: m[4] ? (KEY_TO_SEMITONE[m[4]] ?? -1) : -1,

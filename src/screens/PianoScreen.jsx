@@ -1,5 +1,5 @@
 // Piano / Chord Piano tab.
-import { ChevronLeft, ChevronRight, Joystick } from "lucide-react";
+import { ChevronLeft, ChevronRight, Joystick, X } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
 import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
@@ -25,7 +25,7 @@ const BLACK_KEYS = [
   { name: "A#", semitone: 10, afterWhiteIndex: 5 },
 ];
 
-export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlightSemitone = null }) {
+export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlightSemitone = null, joystickOn = false, onJoystickToggle, joystickRemote = null, joystickKey = null, onJoystickState, onLeaveStage }) {
   const [octaveStart, setOctaveStartState] = useState(4);
   const octaveStartRef = useRef(4);
   const masterCompRef = useRef(null);
@@ -35,8 +35,9 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
   const isVocals = mode === "vocals";
-  const [joystickOn, setJoystickOn] = useState(false);   // Chords mode: joystick chord piano instead of the keyboard
-  const joystick = joystickOn && mode === "chords";
+  // Chords mode: the joystick chord piano instead of the keyboard — switched on here, or (following a Stage Mode leader) from outside.
+  const followingJoystick = mode === "chords" && !!joystickRemote?.on;
+  const joystick = mode === "chords" && (joystickOn || followingJoystick);
   const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
   const chordQualityRef = useRef(loadedQuality || "Major");
 
@@ -433,8 +434,15 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {mode === "chords" && (
-              <button onClick={() => setJoystickOn((v) => !v)} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
+            {followingJoystick && (
+              <button onClick={() => onLeaveStage?.()} aria-label="Leave Stage Mode" title="Leave Stage Mode" style={{
+                width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <X size={16} />
+              </button>
+            )}
+            {mode === "chords" && !followingJoystick && (
+              <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
                 width: 32, height: 32, borderRadius: "50%", border: `1px solid ${joystick ? C.accent : C.borderStrong}`, background: joystick ? C.accentSoft : C.surface2,
                 color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center", marginRight: joystick ? 0 : 8,
               }}>
@@ -461,7 +469,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       </div>
 
       {joystick ? (
-        <ChordJoystick C={C} playPad={(spec) => startPadChord(spec.root, spec)} stopPad={stopPadChord} />
+        <ChordJoystick C={C} playPad={(spec) => startPadChord(spec.root, spec)} stopPad={stopPadChord} loadKey={joystickKey} onState={onJoystickState} readOnly={followingJoystick} remote={joystickRemote} />
       ) : (
       <div
         ref={containerRef}

@@ -1,5 +1,5 @@
 // Shared form controls (Field, ClearableInput, pickers, switches) and small icons.
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { isShown, useKeys } from "../lib/keys.js";
 import { FONT, TIME_SIGS } from "../lib/constants.js";
@@ -7,6 +7,20 @@ import { FONT, TIME_SIGS } from "../lib/constants.js";
 /* =========================================================================
    Shared bits
    ========================================================================= */
+// The key stepper used in the song view and the joystick chord piano: previous key, the key itself, next key.
+// Render it inside a row with gap 4. `active` tints the key button (the song view uses it for the letter-chords toggle).
+export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, disabled = false, C }) {
+  const chevronBtn = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0, opacity: disabled ? 0.6 : 1 };
+  const keyButtonStyle = { width: 44, minWidth: 44, height: 28, padding: 0, borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${active ? C.accentDim : C.border}`, background: active ? C.accentSoft : C.surface2, color: active ? C.accent : C.text };
+  return (
+    <>
+      <button onClick={onPrev} disabled={disabled} aria-label="Previous key" style={chevronBtn}><ChevronLeft size={15} /></button>
+      <button onClick={onKeyClick} disabled={disabled} style={keyButtonStyle}>{label}</button>
+      <button onClick={onNext} disabled={disabled} aria-label="Next key" style={chevronBtn}><ChevronRight size={15} /></button>
+    </>
+  );
+}
+
 export function Field({ label, children }) {
   return (
     <div>

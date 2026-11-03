@@ -590,7 +590,23 @@ function AppInner() {
     setLiveTarget({ ...pos, nonce: Math.random() });
     return true;
   };
-  const live = useLiveSync({ teamKey: bandKey, onApply: applyLivePosition });
+  // Joystick chord piano: the lead's key / sticks / chord arrive here and are shown (not played) on followers in Chords mode.
+  const [joystickOn, setJoystickOn] = useState(false);
+  const [joyRemote, setJoyRemote] = useState(null);
+  const [joystickKey, setJoystickKey] = useState(null);   // { key, quality, nonce }: key to load into the joystick piano (swipe a song right)
+  useEffect(() => { if (!joystickOn) setJoystickKey(null); }, [joystickOn]);   // the swiped-in key applies once
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const applyJoy = (state) => {
+    if (!state?.on) { setJoyRemote(null); return; }
+    if (modeRef.current !== "chords") return;
+    setJoyRemote(state);
+    setViewing(null); setStageIndex(null); setTab("practice");   // taken to the joystick piano
+  };
+  const live = useLiveSync({ teamKey: bandKey, onApply: applyLivePosition, onJoy: applyJoy });
+  useEffect(() => { if (live.role !== "follow") setJoyRemote(null); }, [live.role]);
+  // The lead tells followers what its joystick is doing.
+  const publishJoystick = (state) => live.publishJoy?.(state);
   useEffect(() => {
     if (!busyRef.current && live.role === "follow" && latestLivePos.current) applyLivePosition(latestLivePos.current);
   }, [editingSong, newSongSeed]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -822,10 +838,20 @@ function AppInner() {
 
   const handleLoadSongToPiano = (song) => {
     const q = song.keyQuality || "Major";
+    if (mode === "chords") {
+      // Chords mode: straight to the joystick chord piano, set to the song's key and scale.
+      if (KEY_TO_SEMITONE[song.key] != null) setJoystickKey({ key: song.key, quality: q, nonce: Math.random() });
+      setJoystickOn(true);
+      setTab("practice");
+      return;
+    }
     setPianoQuality(q);
     setPianoHighlight(KEY_TO_SEMITONE[song.key] ?? null);
     setTab("practice");
   };
+
+  // The joystick chord piano takes the whole screen: no bottom bar while it is open (the joystick button in its title bar leaves it).
+  const navHidden = tab === "practice" && mode === "chords" && (joystickOn || !!joyRemote?.on);
 
   return (
     <div ref={rootRef} style={{
@@ -834,7 +860,7 @@ function AppInner() {
       border: "none", boxSizing: "border-box", touchAction: "pan-x pan-y",
       paddingTop: "var(--safe-top)",
     }}>
-      <div style={{ paddingBottom: "calc(55px + max(36px, 8px + var(--safe-bottom)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
+      <div style={{ paddingBottom: navHidden ? 0 : "calc(55px + max(36px, 8px + var(--safe-bottom)))", height: "100%", overflow: "hidden", boxSizing: "border-box", position: "relative" }}>
         {/*
           All screens stay mounted at all times. Inactive screens are hidden with
           display:none. Active screens use display:block + height:100% with relative
@@ -846,11 +872,12 @@ function AppInner() {
             <MetronomeScreen engine={engine} onUpdateSongAccents={handleUpdateSongAccents} onUpdateSongSubdivision={handleUpdateSongSubdivision} onLongPressTitle={() => { setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} C={C} />
           </div>
           <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%", position: "relative" }}>
-            <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} highlightSemitone={tab === "practice" ? pianoHighlight : null} />
+            <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} highlightSemitone={tab === "practice" ? pianoHighlight : null}
+              joystickOn={joystickOn} onJoystickToggle={() => setJoystickOn((v) => !v)} joystickKey={joystickKey} joystickRemote={joyRemote} onJoystickState={publishJoystick} onLeaveStage={live.close} />
           </div>
         </div>
         <div style={{ display: tab === "songs" ? "block" : "none", height: "100%", position: "relative" }}>
-          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
+          <SongsScreen songs={songs} onOpen={(s) => setViewing({ songId: s.id, fromSetlistId: null })} onAdd={() => { if (mode === "drums") setNewSongSeed({ tempo: Math.round(engine.bpm), timeSignature: formatTimeSig(engine.timeSig), accents: engine.accents, subdivision: engine.subdivision }); setEditingSong(null); }} onEdit={(s) => setEditingSong(s)} onDelete={requestDeleteSong} onLoadToMetronome={mode === "drums" ? (s) => { engine.loadSong(s); setTab("practice"); } : undefined} onLoadToPiano={mode === "vocals" || mode === "chords" ? handleLoadSongToPiano : undefined} mode={mode} tanglishMode={tanglishMode} C={C} />
         </div>
         <div style={{ display: tab === "setlists" ? "block" : "none", height: "100%", position: "relative" }}>
           <SetlistsScreen setlists={setlists} onOpenStage={handleOpenSetlist} onCreate={handleCreateSetlist} onDelete={handleDeleteSetlist} C={C} />
@@ -888,7 +915,7 @@ function AppInner() {
         </div>
       </div>
 
-      <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />
+      {!navHidden && <BottomNav active={tab} onChange={handleTabChange} mode={mode} C={C} />}
 
       {editingSong !== undefined && (
         <SongForm initial={editingSong} seed={newSongSeed} onSave={handleSaveSong} onCancel={() => { setEditingSong(undefined); setNewSongSeed(null); }} onDelete={requestDeleteSong} onDuplicate={handleDuplicateSong} songs={songs} mode={mode} fontSize={fontSize} chordFontSize={chordFontSize} lyricsBold={lyricsBold} notesBold={notesBold} lineSpacing={lineSpacing} textAlign={textAlign} C={C} />
