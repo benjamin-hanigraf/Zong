@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { KEY_TO_SEMITONE, chordToPadSpec, flatify, tokenToChord, transposeKey } from "../lib/chords.js";
 import { KeyStepper, TabSelect } from "./shared.jsx";
+import { hasOpenLayer, isTypingTarget } from "../lib/keys.js";
 
 // Right stick: centre = 1, wedges clockwise from the top = 2 3 4 5 6 7.
 const DEGREE_WEDGES = [2, 3, 4, 5, 6, 7].map((n) => ({ label: String(n), value: n }));
@@ -12,16 +13,19 @@ const QUALITY_WEDGES = [
   { label: "sus4", value: "sus4" }, { label: "sus2", value: "sus2" }, { label: "maj7", value: "maj7" }, { label: "7", value: "7" },
   { label: "m", value: "m" }, { label: "♭", value: "b" }, { label: "♯", value: "#" }, { label: "add9", value: "add9" },
 ];
+// Computer keyboard: 1-7 = the degree; S = the left stick's centre (M) and the keys around it are its wedges, in the same
+// places: W sus4, E sus2, D maj7, C 7, X m, Z ♭, A ♯, Q add9. Keyed by physical key (e.code), so any layout works.
+const QUALITY_KEYS = { KeyS: "M", KeyW: "sus4", KeyE: "sus2", KeyD: "maj7", KeyC: "7", KeyX: "m", KeyZ: "b", KeyA: "#", KeyQ: "add9" };
 const CENTRE_RATIO = 0.4;        // centre circle radius as a share of the stick radius
 const LABEL_SIZE = 15;           // every label on both sticks, centre included
 
 // Stick. onChange(sel | null): sel = { centre: true } or { wedge: n }; null when the finger is lifted.
 // `mirror` (read-only): "c" | wedge index | null — the highlighted part, driven from outside.
-function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
+function Stick({ size, wedges, centreLabel, onChange, mirror, hl = null, C }) {
   const [own, setOwn] = useState(null);   // "c" | wedge index | null
   const ownRef = useRef(null);
   const readOnly = mirror !== undefined;
-  const active = readOnly ? mirror : own;
+  const active = readOnly ? mirror : (own ?? hl);   // hl = what the computer keyboard is holding
   const n = wedges.length;
   const step = 360 / n;
   const R = size / 2;
@@ -149,6 +153,41 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
   }, [keyName, keyQuality, degree, quality, readOnly]);
   useEffect(() => () => { if (pending.current) clearTimeout(pending.current); if (!readOnly) stateRef.current?.({ o: 0 }); }, [readOnly]);
 
+  // Computer keyboard (see QUALITY_KEYS). Held keys are tracked in press order; the most recent one still held wins.
+  useEffect(() => {
+    if (readOnly) return undefined;
+    let degrees = [];
+    let qualities = [];
+    const apply = () => {
+      setDegree(degrees.length ? degrees[degrees.length - 1] : null);
+      setQuality(qualities.length ? QUALITY_KEYS[qualities[qualities.length - 1]] : "auto");
+    };
+    const degreeOf = (e) => { const m = /^(?:Digit|Numpad)([1-7])$/.exec(e.code); return m ? Number(m[1]) : null; };
+    const onDown = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || isTypingTarget(e.target) || hasOpenLayer()) return;
+      const d = degreeOf(e);
+      const isQ = e.code in QUALITY_KEYS;
+      if (d == null && !isQ) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      if (d != null) degrees = [...degrees.filter((x) => x !== d), d];
+      else qualities = [...qualities.filter((x) => x !== e.code), e.code];
+      apply();
+    };
+    const onUp = (e) => {
+      const d = degreeOf(e);
+      if (d != null) degrees = degrees.filter((x) => x !== d);
+      else if (e.code in QUALITY_KEYS) qualities = qualities.filter((x) => x !== e.code);
+      else return;
+      apply();
+    };
+    const releaseAll = () => { if (degrees.length || qualities.length) { degrees = []; qualities = []; apply(); } };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", releaseAll);
+    return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseAll); };
+  }, [readOnly]);
+
   const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
   // Two sticks plus the key selector (about 250px) must fit side by side, and the sticks must fit the height.
   const stick = Math.max(100, Math.min(box.h - 16, (box.w - 190 - 42) / 2, 300));
@@ -162,12 +201,12 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
       {/* left: quality, right: degree */}
       <div style={{ position: "absolute", left: 14, bottom: 12 }}>
         <Stick size={stick} wedges={QUALITY_WEDGES} centreLabel="M" C={C}
-          mirror={readOnly ? qualityMirror(v.quality) : undefined}
+          mirror={readOnly ? qualityMirror(v.quality) : undefined} hl={qualityMirror(quality)}
           onChange={(sel) => setQuality(!sel ? "auto" : sel.centre ? "M" : QUALITY_WEDGES[sel.wedge].value)} />
       </div>
       <div style={{ position: "absolute", right: 14, bottom: 12 }}>
         <Stick size={stick} wedges={DEGREE_WEDGES} centreLabel="1" C={C}
-          mirror={readOnly ? degreeMirror(v.degree) : undefined}
+          mirror={readOnly ? degreeMirror(v.degree) : undefined} hl={degreeMirror(degree)}
           onChange={(sel) => setDegree(!sel ? null : sel.centre ? 1 : DEGREE_WEDGES[sel.wedge].value)} />
       </div>
       {/* key selector (same element as the song view, a little bigger) with the scale switch below it, same width */}
