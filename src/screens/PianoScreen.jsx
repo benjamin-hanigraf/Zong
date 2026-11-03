@@ -95,8 +95,16 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   useEffect(() => {
     // In the iOS app the native engine plays the piano: no Web Audio context is created at all.
     if (isNativePlatform()) {
-      nativePiano.padSamplesReady().then((ok) => { nativePadReady.current = ok; });
-      return;
+      // The native engine loads its samples in the background, so it may not be ready yet: ask again every second
+      // (up to a minute) until it says yes, instead of settling for the first answer.
+      let tries = 0;
+      const ask = () => {
+        nativePiano.padSamplesReady().then((ok) => { nativePadReady.current = ok; if (ok) clearInterval(timer); });
+        if (++tries >= 60) clearInterval(timer);
+      };
+      const timer = setInterval(ask, 1000);
+      ask();
+      return () => clearInterval(timer);
     }
     const ctx = ensureCtx();
     if (!_pianoBuffers || Object.keys(_pianoBuffers).length === 0) loadAudioSamples(ctx).catch(() => { });
