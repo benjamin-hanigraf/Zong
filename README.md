@@ -57,12 +57,16 @@ Zong/
 ├── .env                           # Local environment secrets (VITE_SUPABASE_URL, etc.)
 │
 ├── src/
-│   ├── App.jsx                    # Primary application monolithic file (UI, state, Audio, Tanglish)
+│   ├── App.jsx                    # App shell: state, sync, tab / overlay routing (screens are imported)
 │   ├── main.jsx                   # React application entry point (registers Service Worker)
 │   ├── supabaseSync.js            # Supabase API client, optimistic syncing, Realtime listeners, Stage Mode channel
 │   ├── sections.js                # Shared song sections (-Verse, -Chorus …) kept identical across the four notes texts
 │   ├── nativeMetronome.js         # Bridge to the native iOS audio plugin (metronome, piano); no-op on the web
-│   └── styles.css                 # Global CSS resets, typography, dark mode tokens, animations
+│   ├── styles.css                 # Global CSS resets, typography, dark mode tokens, animations
+│   ├── lib/                       # Non-visual logic: storage, keyboard layer stack, chords, Tanglish engine,
+│   │                              #   song model, audio, metronome engine, viewport / orientation, swipe, Stage Mode hook
+│   ├── components/                # Shared UI: form controls, ChordText, dialogs, metronome controls, chrome
+│   └── screens/                   # Piano, Metronome, Songs, Song form / viewer, Setlists, Spelling chart, Settings
 │
 ├── public/
 │   ├── manifest.webmanifest       # PWA manifest (app name, colors, standalone display, icons)
@@ -116,7 +120,7 @@ Zong dynamically reorganizes its user interface based on the active musician mod
 - **Shared sections (`src/sections.js`)**: a song's four notes texts (lyrics, chords, chart, drums) always carry the same `-Section` headers. Adding / renaming a section in one text is carried to the other three when you switch tab or save; deleting one is refused while another text still has notes under it. Existing songs are tidied once after the first sync (empty headers only; notes are never touched). Sections are matched by label + occurrence (`chorus#2`), ignoring case, spacing and brackets.
 - **Stage Mode (Settings → Stage)**: one device leads, the others follow section by section. It uses Supabase Realtime *Broadcast + Presence* on the Team's channel (`zong_live_<TEAM>`) — nothing is stored in the database. The lead's position (song, setlist, section key) is sent on every move and repeated every 12 s while someone is listening; followers ask for it on (re)connect. The lead can tap a section or use ← → ↑ ↓ / Page Up/Down / Space (Home/End = first/last, Shift+← → = previous/next song). The ✕ in the Stage bar leaves Stage Mode.
 - **Library export / import (Settings → Library)**: Export shares a `zong-library-<date>.json` (songs incl. accents/subdivision, setlists, spelling chart) via the share sheet, or downloads it. Import merges: new songs are added, existing songs are replaced only by a newer copy, imported setlists stay local, spelling words are added. Every imported field is type-checked.
-- **Keyboard (desktop)**: screens, dialogs and pop-ups register with `useKeys` (App.jsx); the topmost owns **Esc** (close / back; asks before discarding an edited song), **Enter** (primary action — Ctrl/Cmd+Enter or Ctrl/Cmd+S inside text boxes) and **Tab** (kept inside it). **/** or Ctrl/Cmd+K focuses the search box on Songs / Setlists; ↑ ↓ Home End Enter work on song and setlist rows. The focus ring uses the current mode's accent colour.
+- **Keyboard (desktop)**: screens, dialogs and pop-ups register with `useKeys` (`src/lib/keys.js`); the topmost owns **Esc** (close / back; asks before discarding an edited song), **Enter** (primary action — Ctrl/Cmd+Enter or Ctrl/Cmd+S inside text boxes) and **Tab** (kept inside it). **/** or Ctrl/Cmd+K focuses the search box on Songs / Setlists; ↑ ↓ Home End Enter work on song and setlist rows; **E** edits the song you are viewing. The focus ring uses the current mode's accent colour.
 
 ### 3.2. Web Audio Engines
 
