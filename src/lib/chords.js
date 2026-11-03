@@ -146,7 +146,9 @@ export function tokenizeTaggedLine(rawLine) {
     if (line[i] === "[") {
       const end = line.indexOf("]", i);
       if (end === -1) { tokens.push({ ch: line[i], tag: pendingTag }); pendingTag = null; i++; continue; }
-      pendingTag = line.slice(i + 1, end);
+      // Tags with no character between them ([1][4][5]) all belong to the same place: keep every one, not just the last.
+      const inner = line.slice(i + 1, end);
+      pendingTag = pendingTag !== null ? `${pendingTag} ${inner}` : inner;
       i = end + 1;
       continue;
     }

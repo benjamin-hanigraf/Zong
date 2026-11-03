@@ -190,9 +190,11 @@ export function ChordText({ text, onChange, editable, dim, brightTags, dimTags, 
             groups.shift();
           }
           if (groups.length > 1 && groups[0].type === "space" && groups[1].type === "word") {
-            const taggedSpaceItem = groups[0].items.find((it) => it.tok.tag);
-            if (taggedSpaceItem) {
-              groups[1].items[0].tok.tag = taggedSpaceItem.tok.tag;
+            // Every note written before the first word moves onto it ("[1] [4] Hello" shows "1 4" over "H"), not just the first.
+            const leading = groups[0].items.filter((it) => it.tok.tag).map((it) => it.tok.tag);
+            if (leading.length) {
+              const first = groups[1].items[0];
+              first.tok = { ...first.tok, tag: [...leading, ...(first.tok.tag ? [first.tok.tag] : [])].join(" ") };
             }
             groups.shift();
           }
@@ -279,48 +281,51 @@ export function ChordText({ text, onChange, editable, dim, brightTags, dimTags, 
                   );
                 }
                 if (hasTag && !editable) {
-                  const tagText = flatify(repItem.tok.tag);
-                  return (
-                    <span
-                      key={gi}
-                      style={{
-                        display: "inline-block",
-                        verticalAlign: "bottom",
-                        margin: gi === 0 ? "0 0.35em 0 0" : "0 0.35em",
-                        textAlign: "center",
-                        lineHeight: 1,
-                        paddingTop: rowPad,
-                        position: "relative"
-                      }}
-                    >
+                  // Several notes can sit between the same two words ("[1] [4] [5]"): show every one, not just the first.
+                  return g.items.filter((it) => it.tok.tag).map((it, ti) => {
+                    const tagText = flatify(it.tok.tag);
+                    return (
                       <span
-                        data-tag="1"
+                        key={`${gi}-${ti}`}
                         style={{
-                          position: "absolute",
-                          top: 0,
-                          left: 0,
-                          right: 0,
+                          display: "inline-block",
+                          verticalAlign: "bottom",
+                          margin: gi === 0 && ti === 0 ? "0 0.35em 0 0" : "0 0.35em",
                           textAlign: "center",
-                          fontSize: tagSize,
-                          fontWeight: noteWeightBold ? 800 : 600,
-                          color: dimTags ? C.textFaint : brightTags ? C.text : accent,
-                          whiteSpace: "nowrap"
+                          lineHeight: 1,
+                          paddingTop: rowPad,
+                          position: "relative"
                         }}
                       >
-                        {tagText}
+                        <span
+                          data-tag="1"
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            textAlign: "center",
+                            fontSize: tagSize,
+                            fontWeight: noteWeightBold ? 800 : 600,
+                            color: dimTags ? C.textFaint : brightTags ? C.text : accent,
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {tagText}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: tagSize,
+                            fontWeight: noteWeightBold ? 800 : 600,
+                            visibility: "hidden",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {tagText}
+                        </span>
                       </span>
-                      <span
-                        style={{
-                          fontSize: tagSize,
-                          fontWeight: noteWeightBold ? 800 : 600,
-                          visibility: "hidden",
-                          whiteSpace: "nowrap"
-                        }}
-                      >
-                        {tagText}
-                      </span>
-                    </span>
-                  );
+                    );
+                  });
                 }
                 const minWidthCh = Math.max(1, tagDrivenWidth);
                 const minWidthVal = showTags ? `${minWidthCh}ch` : undefined;
