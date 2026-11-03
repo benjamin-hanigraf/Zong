@@ -1,11 +1,12 @@
 // Piano / Chord Piano tab.
-import { ChevronLeft, ChevronRight, Joystick, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
 import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
+import { PieIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
 
@@ -403,8 +404,18 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>
-          {isVocals ? "Chord Piano" : "Piano"}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>
+            {isVocals ? "Chord Piano" : "Piano"}
+          </div>
+          {mode === "chords" && !followingJoystick && (
+            <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
+              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${joystick ? C.accent : C.borderStrong}`, background: joystick ? C.accentSoft : C.surface2,
+              color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <PieIcon size={17} />
+            </button>
+          )}
         </div>
         {isVocals ? (
           <div style={{ display: "flex", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 3, gap: 4 }}>
@@ -439,14 +450,6 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
                 width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2, color: C.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 <X size={16} />
-              </button>
-            )}
-            {mode === "chords" && !followingJoystick && (
-              <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
-                width: 32, height: 32, borderRadius: "50%", border: `1px solid ${joystick ? C.accent : C.borderStrong}`, background: joystick ? C.accentSoft : C.surface2,
-                color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center", marginRight: joystick ? 0 : 8,
-              }}>
-                <Joystick size={16} />
               </button>
             )}
             {!joystick && <>

@@ -9,14 +9,15 @@ import { FONT, TIME_SIGS } from "../lib/constants.js";
    ========================================================================= */
 // The key stepper used in the song view and the joystick chord piano: previous key, the key itself, next key.
 // Render it inside a row with gap 4. `active` tints the key button (the song view uses it for the letter-chords toggle).
-export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, disabled = false, C }) {
-  const chevronBtn = { width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0, opacity: disabled ? 0.6 : 1 };
-  const keyButtonStyle = { width: 44, minWidth: 44, height: 28, padding: 0, borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${active ? C.accentDim : C.border}`, background: active ? C.accentSoft : C.surface2, color: active ? C.accent : C.text };
+export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, disabled = false, large = false, C }) {
+  const h = large ? 38 : 28;
+  const chevronBtn = { width: h, height: h, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", color: C.text, flexShrink: 0, opacity: disabled ? 0.6 : 1 };
+  const keyButtonStyle = { width: large ? 60 : 44, minWidth: large ? 60 : 44, height: h, padding: 0, borderRadius: 8, fontFamily: FONT, fontWeight: 800, fontSize: large ? 17 : 13.5, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${active ? C.accentDim : C.border}`, background: active ? C.accentSoft : C.surface2, color: active ? C.accent : C.text };
   return (
     <>
-      <button onClick={onPrev} disabled={disabled} aria-label="Previous key" style={chevronBtn}><ChevronLeft size={15} /></button>
+      <button onClick={onPrev} disabled={disabled} aria-label="Previous key" style={chevronBtn}><ChevronLeft size={large ? 18 : 15} /></button>
       <button onClick={onKeyClick} disabled={disabled} style={keyButtonStyle}>{label}</button>
-      <button onClick={onNext} disabled={disabled} aria-label="Next key" style={chevronBtn}><ChevronRight size={15} /></button>
+      <button onClick={onNext} disabled={disabled} aria-label="Next key" style={chevronBtn}><ChevronRight size={large ? 18 : 15} /></button>
     </>
   );
 }
@@ -238,18 +239,29 @@ export function IosSwitch({ checked, onChange, C }) {
   );
 }
 
-export function TabSelect({ options, value, onChange, C }) {
+export function TabSelect({ options, value, onChange, buttonPadding = "10px 0", C }) {
   return (
     <div style={{ display: "flex", gap: 6, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4 }}>
       {options.map((opt) => {
         const active = value === opt.id;
         return (
-          <button key={opt.id} onClick={() => onChange(opt.id)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
+          <button key={opt.id} onClick={() => onChange(opt.id)} style={{ flex: 1, padding: buttonPadding, borderRadius: 8, border: "none", fontFamily: FONT, fontSize: 13.5, fontWeight: 700, background: active ? C.accentSoft : "transparent", color: active ? C.accent : C.textMuted }}>
             {opt.label}
           </button>
         );
       })}
     </div>
+  );
+}
+
+// A small circle cut into pie slices: the joystick chord piano's icon.
+export function PieIcon({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M12 2.5v6M12 15.5v6M3.8 7.2l5.2 3M15 13.8l5.2 3M3.8 16.8l5.2-3M15 10.2l5.2-3" />
+      <circle cx="12" cy="12" r="3.4" />
+    </svg>
   );
 }
 

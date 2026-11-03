@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { KEY_TO_SEMITONE, chordToPadSpec, flatify, tokenToChord, transposeKey } from "../lib/chords.js";
-import { KeyStepper } from "./shared.jsx";
+import { KeyStepper, TabSelect } from "./shared.jsx";
 
 // Right stick: centre = 1, wedges clockwise from the top = 2 3 4 5 6 7.
 const DEGREE_WEDGES = [2, 3, 4, 5, 6, 7].map((n) => ({ label: String(n), value: n }));
@@ -12,13 +12,12 @@ const QUALITY_WEDGES = [
   { label: "sus4", value: "sus4" }, { label: "sus2", value: "sus2" }, { label: "maj7", value: "maj7" }, { label: "7", value: "7" },
   { label: "m", value: "m" }, { label: "♭", value: "b" }, { label: "♯", value: "#" }, { label: "add9", value: "add9" },
 ];
-const CENTRE_RATIO = 0.3;        // centre circle radius as a share of the stick radius
-const KNOB_TRAVEL = 0.62;        // how far the knob may move (share of the stick radius)
+const CENTRE_RATIO = 0.4;        // centre circle radius as a share of the stick radius
+const LABEL_SIZE = 15;           // every label on both sticks, centre included
 
-// Springy stick. onChange(sel | null): sel = { centre: true } or { wedge: n }; null when the finger is lifted.
+// Stick. onChange(sel | null): sel = { centre: true } or { wedge: n }; null when the finger is lifted.
 // `mirror` (read-only): "c" | wedge index | null — the highlighted part, driven from outside.
 function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
-  const [knob, setKnob] = useState({ x: 0, y: 0, down: false });
   const [own, setOwn] = useState(null);   // "c" | wedge index | null
   const ownRef = useRef(null);
   const readOnly = mirror !== undefined;
@@ -31,9 +30,6 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
     const dx = e.nativeEvent.offsetX - R;
     const dy = e.nativeEvent.offsetY - R;
     const dist = Math.hypot(dx, dy);
-    const lim = R * KNOB_TRAVEL;
-    const k = dist > lim ? lim / dist : 1;
-    setKnob({ x: dx * k, y: dy * k, down: true });
     let sel;
     if (dist < R * CENTRE_RATIO) sel = { centre: true };
     else {
@@ -44,17 +40,8 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
     if (ownRef.current !== key) { ownRef.current = key; setOwn(key); onChange(sel); }
   };
   const release = () => {
-    setKnob({ x: 0, y: 0, down: false });
     if (ownRef.current !== null) { ownRef.current = null; setOwn(null); onChange(null); }
   };
-  // Knob position when mirroring someone else's stick.
-  const mirrorKnob = (() => {
-    if (!readOnly || active === null || active === undefined) return { x: 0, y: 0, down: false };
-    if (active === "c") return { x: 0, y: 0, down: true };
-    const a = ((active * step - 90) * Math.PI) / 180;
-    return { x: Math.cos(a) * R * KNOB_TRAVEL, y: Math.sin(a) * R * KNOB_TRAVEL, down: true };
-  })();
-  const k = readOnly ? mirrorKnob : knob;
   // Annular wedge path (viewBox -100..100).
   const wedgePath = (i) => {
     const a0 = ((i * step - 90 - step / 2) * Math.PI) / 180, a1 = ((i * step - 90 + step / 2) * Math.PI) / 180;
@@ -62,7 +49,6 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
     const p = (r, a) => `${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`;
     return `M ${p(r0, a0)} L ${p(r1, a0)} A ${r1} ${r1} 0 0 1 ${p(r1, a1)} L ${p(r0, a1)} A ${r0} ${r0} 0 0 0 ${p(r0, a0)} Z`;
   };
-  const fontSize = n > 6 ? 14 : 17;
   return (
     <div
       onPointerDown={readOnly ? undefined : (e) => { e.currentTarget.setPointerCapture(e.pointerId); pick(e); }}
@@ -80,20 +66,13 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, C }) {
           return (
             <g key={w.label}>
               <path d={wedgePath(i)} fill={active === i ? C.accentSoft : "transparent"} stroke={C.border} strokeWidth="1" />
-              <text x={(68 * Math.cos(a)).toFixed(1)} y={(68 * Math.sin(a)).toFixed(1)} textAnchor="middle" dominantBaseline="central" fontFamily={FONT} fontWeight="700" fontSize={fontSize} fill={active === i ? C.accent : C.textMuted}>{w.label}</text>
+              <text x={(71 * Math.cos(a)).toFixed(1)} y={(71 * Math.sin(a)).toFixed(1)} textAnchor="middle" dominantBaseline="central" fontFamily={FONT} fontWeight="700" fontSize={LABEL_SIZE} fill={active === i ? C.accent : C.textMuted}>{w.label}</text>
             </g>
           );
         })}
         <circle r={CENTRE_RATIO * 100} fill={active === "c" ? C.accentSoft : C.surface3} stroke={C.border} strokeWidth="1" />
-        <text textAnchor="middle" dominantBaseline="central" fontFamily={FONT} fontWeight="800" fontSize="22" fill={active === "c" ? C.accent : C.text}>{centreLabel}</text>
+        <text textAnchor="middle" dominantBaseline="central" fontFamily={FONT} fontWeight="700" fontSize={LABEL_SIZE} fill={active === "c" ? C.accent : C.text}>{centreLabel}</text>
       </svg>
-      {/* the knob follows the thumb and springs back to the middle on release */}
-      <div aria-hidden="true" style={{
-        position: "absolute", left: R - 17, top: R - 17, width: 34, height: 34, borderRadius: "50%", pointerEvents: "none",
-        background: k.down ? C.accent : C.surface3, border: `2px solid ${C.accent}`, boxShadow: k.down ? `0 0 14px ${C.accentDim}` : "none",
-        transform: `translate(${k.x}px, ${k.y}px)`,
-        transition: k.down && !readOnly ? "background 80ms linear" : "transform 380ms cubic-bezier(0.34, 1.7, 0.5, 1), background 160ms ease, box-shadow 160ms ease",
-      }} />
     </div>
   );
 }
@@ -172,7 +151,7 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
 
   const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
   // Two sticks plus the key selector (about 250px) must fit side by side, and the sticks must fit the height.
-  const stick = Math.max(100, Math.min(box.h - 16, (box.w - 250 - 42) / 2, 300));
+  const stick = Math.max(100, Math.min(box.h - 16, (box.w - 190 - 42) / 2, 300));
   const keyLabel = `${flatify(v.keyName)}${v.keyQuality === "Minor" ? "m" : ""}`;
   return (
     <div ref={boxRef} style={{ flex: 1, position: "relative", overflow: "hidden", touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}>
@@ -191,16 +170,14 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
           mirror={readOnly ? degreeMirror(v.degree) : undefined}
           onChange={(sel) => setDegree(!sel ? null : sel.centre ? 1 : DEGREE_WEDGES[sel.wedge].value)} />
       </div>
-      {/* key selector (same element as the song view) with the scale toggle below it */}
-      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      {/* key selector (same element as the song view, a little bigger) with the scale switch below it, same width */}
+      <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <KeyStepper label={keyLabel} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} disabled={readOnly} C={C} />
+          <KeyStepper label={keyLabel} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} disabled={readOnly} large C={C} />
         </div>
-        <button onClick={() => setKeyQuality((q) => (q === "Major" ? "Minor" : "Major"))} disabled={readOnly} aria-label="Major or minor key" style={{
-          height: 28, padding: "0 14px", borderRadius: 8, fontFamily: FONT, fontSize: 12.5, fontWeight: 700,
-          border: `1px solid ${v.keyQuality === "Minor" ? C.accentDim : C.border}`, background: v.keyQuality === "Minor" ? C.accentSoft : C.surface2,
-          color: v.keyQuality === "Minor" ? C.accent : C.text, opacity: readOnly ? 0.6 : 1,
-        }}>{v.keyQuality}</button>
+        <div style={{ width: 144, opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
+          <TabSelect options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]} value={v.keyQuality} onChange={setKeyQuality} buttonPadding="8px 0" C={C} />
+        </div>
       </div>
     </div>
   );
