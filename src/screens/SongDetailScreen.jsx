@@ -1,5 +1,5 @@
 // Song viewer, including Stage Mode controls.
-import { ChevronDown, ChevronLeft, ChevronRight, Save, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Maximize, Minimize, Save, X } from "lucide-react";
 import { sectionList } from "../sections.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isTopLayer, isTypingTarget, useKeys } from "../lib/keys.js";
@@ -10,6 +10,7 @@ import { maybeTanglish, maybeTanglishTitle, stripAltTitle, tanglishLetterSpacing
 import { drumsToTagged, migrateSongShape, parseTextIntoBlocks } from "../lib/songModel.js";
 import { BeatAccentControl, PlayStopGlyph, SubdivisionIcon, useHoldRepeat } from "../components/metronome.jsx";
 import { useEdgeSwipeBack, useSetlistSongSwipe } from "../lib/swipe.js";
+import { DEVICE_CLASS } from "../lib/viewport.js";
 import { Tamil } from "../components/Tamil.jsx";
 import { MetronomeIcon, TimeSigPicker } from "../components/shared.jsx";
 import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
@@ -37,7 +38,28 @@ export function SongDetailScreen({
   const scrollRef = useRef(null);
   const detailRoot = useRef(null);
   const [leaveStageAsk, setLeaveStageAsk] = useState(false);
-  useKeys({ rootRef: detailRoot, escape: () => { if (descOpen) setDescOpen(false); else onBack(); } });
+  // Full-screen view (Windows / Mac only): the button or the ` (tilde) key toggles it; Esc leaves it.
+  const canFullscreen = DEVICE_CLASS === "desktop" && typeof document !== "undefined" && !!document.fullscreenEnabled;
+  const [isFull, setIsFull] = useState(() => !!document.fullscreenElement);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => { });
+  };
+  useEffect(() => {
+    const sync = () => setIsFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", sync);
+    return () => { document.removeEventListener("fullscreenchange", sync); if (document.fullscreenElement) document.exitFullscreen?.(); };   // closing the song leaves full screen
+  }, []);
+  useEffect(() => {
+    if (!canFullscreen) return undefined;
+    const onKey = (e) => {
+      if (e.code !== "Backquote" || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target) || !isTopLayer(detailRoot.current)) return;
+      e.preventDefault(); toggleFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canFullscreen]);
+  useKeys({ rootRef: detailRoot, escape: () => { if (document.fullscreenElement) document.exitFullscreen?.(); else if (descOpen) setDescOpen(false); else onBack(); } });
   // Layout effect: the reset must land before the new song is painted (it may be sliding in).
   useLayoutEffect(() => {
     setViewKey(contextKey ?? song.key);
@@ -191,6 +213,11 @@ export function SongDetailScreen({
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode)}</Tamil></div>}
         </div>
+        {canFullscreen && (
+          <button onClick={toggleFullscreen} aria-label={isFull ? "Exit full screen" : "Full screen"} title={isFull ? "Exit full screen (Esc)" : "Full screen (`)"} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1 }}>
+            {isFull ? <Minimize size={15} /> : <Maximize size={15} />}
+          </button>
+        )}
         {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
