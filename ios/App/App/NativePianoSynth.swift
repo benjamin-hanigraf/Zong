@@ -463,10 +463,20 @@ private final class SynthCore {
                 out = x + (1 / ratio - 1) * t * t / (2 * knee)
             }
             let g = powf(10, (out - x) / 20) * makeup
-            left[i] = max(-1, min(1, left[i] * g))
-            right[i] = max(-1, min(1, right[i] * g))
+            // Soft ceiling instead of a hard clip: below 0.7 the signal passes untouched; above it curves smoothly towards 1,
+            // so a loud chord is rounded off gently on the phone speaker instead of crackling.
+            left[i] = softCeiling(left[i] * g)
+            right[i] = softCeiling(right[i] * g)
         }
     }
+}
+
+@inline(__always) private func softCeiling(_ x: Float) -> Float {
+    let knee: Float = 0.7
+    let a = abs(x)
+    if a <= knee { return x }
+    let y = knee + (1 - knee) * tanhf((a - knee) / (1 - knee))
+    return x < 0 ? -y : y
 }
 
 final class NativePianoSynth {

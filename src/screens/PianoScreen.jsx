@@ -70,7 +70,15 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       comp.ratio.setValueAtTime(3.0, ctx.currentTime);
       comp.attack.setValueAtTime(0.006, ctx.currentTime);
       comp.release.setValueAtTime(0.22, ctx.currentTime);
-      comp.connect(ctx.destination);
+      // A brick-wall limiter after the compressor: lets the chords run louder without the phone speaker crackling.
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.setValueAtTime(-3, ctx.currentTime);
+      limiter.knee.setValueAtTime(3, ctx.currentTime);
+      limiter.ratio.setValueAtTime(20, ctx.currentTime);
+      limiter.attack.setValueAtTime(0.002, ctx.currentTime);
+      limiter.release.setValueAtTime(0.1, ctx.currentTime);
+      comp.connect(limiter);
+      limiter.connect(ctx.destination);
       masterCompRef.current = comp;
     }
     // iOS can leave the context "interrupted" (not just "suspended") after another audio

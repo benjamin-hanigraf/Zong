@@ -398,14 +398,14 @@ export function padSampleNotes(spec) {
 
 /**
  * Audibility: the ear hears high notes much more easily than low ones, so a chord of low notes sounds weak next to one of
- * higher notes. Each note's gain is lifted in proportion to how low it is (up to +9 dB below middle C, a touch less above
- * it), then the whole chord is scaled to one fixed loudness — so every chord, in every key and with any modifier, comes
+ * higher notes. Each note's gain is lifted in proportion to how low it is (up to +6 dB below middle C, a touch less above
+ * it; phone speakers can't reproduce the deepest notes, so pushing those harder only distorts), then the whole chord is scaled to one fixed loudness — so every chord, in every key and with any modifier, comes
  * out equally audible, and the low notes of a chord are no longer buried under its high ones.
  */
-const PAD_LOUDNESS = 0.5;
+const PAD_LOUDNESS = 0.72;
 export function padLevels(notes) {
   const lifted = notes.map((n) => {
-    const db = n.midi < 60 ? Math.min(9, 0.5 * (60 - n.midi)) : -Math.min(3, 0.2 * (n.midi - 60));
+    const db = n.midi < 60 ? Math.min(6, 0.4 * (60 - n.midi)) : -Math.min(3, 0.2 * (n.midi - 60));
     return { ...n, gain: n.gain * Math.pow(10, db / 20) };
   });
   const total = Math.sqrt(lifted.reduce((s, n) => s + n.gain * n.gain, 0)) || 1;
