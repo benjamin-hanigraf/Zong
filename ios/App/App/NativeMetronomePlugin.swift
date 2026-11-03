@@ -17,6 +17,7 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
         // Piano / pad chord voices (rendered natively so they ignore the silent switch)
         CAPPluginMethod(name: "pianoNoteOn",  returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "padOn",        returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "padChordOn",   returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pianoNoteOff", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pianoAllOff",  returnType: CAPPluginReturnPromise),
     ]
@@ -76,6 +77,13 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func padOn(_ call: CAPPluginCall) {
         NativePianoSynth.shared.padOn(id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 0, minor: call.getBool("minor") ?? false)
+        call.resolve()
+    }
+
+    @objc func padChordOn(_ call: CAPPluginCall) {
+        NativePianoSynth.shared.padChordOn(
+            id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 0, third: call.getInt("third") ?? 4,
+            fifth: call.getInt("fifth") ?? 7, seventh: call.getInt("seventh") ?? 0, bass: call.getInt("bass") ?? -1)
         call.resolve()
     }
 

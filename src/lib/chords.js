@@ -18,7 +18,7 @@ export const KEY_TO_SEMITONE = {
   Bb: 10, B: 11, Cb: 11,
 };
 
-const ALL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+export const ALL_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 function spellNote(semitone, useFlats) {
   const s = ((semitone % 12) + 12) % 12;
@@ -325,4 +325,27 @@ export function numbersTaggedToChordsTagged(taggedText, key, quality) {
   return mapNonHeaderLines(taggedText, (line) => line.replace(/\[([^\]]*)\]/g, (_, tok, off, whole) => (
     precededByStandaloneX(whole, off) ? tok : `[${tokenToChord(tok, key, quality)}]`
   )));
+}
+
+/**
+ * Turns a chord name ("Dm7", "G/B", "C#aug", "Bdim", "Ab") into what the pad synth needs:
+ * the root's semitone and the intervals above it. bass = semitone of a slash-chord's bass note, or -1.
+ */
+export function chordToPadSpec(chord) {
+  const m = String(chord || "").trim().match(/^([A-G])([#b]?)(.*?)(?:\/([A-G][#b]?))?$/);
+  if (!m) return null;
+  const root = KEY_TO_SEMITONE[m[1] + m[2]];
+  if (root == null) return null;
+  const suffix = m[3];
+  const dim = suffix.startsWith("dim");
+  const aug = suffix.startsWith("aug") || suffix.startsWith("+");
+  const minor = !dim && /^m(?!aj)/.test(suffix);
+  const seventh = /dim7/.test(suffix) ? 9 : /maj7/i.test(suffix) ? 11 : /7/.test(suffix) ? 10 : 0;
+  return {
+    root,
+    third: dim || minor ? 3 : 4,
+    fifth: dim ? 6 : aug ? 8 : 7,
+    seventh,
+    bass: m[4] ? (KEY_TO_SEMITONE[m[4]] ?? -1) : -1,
+  };
 }

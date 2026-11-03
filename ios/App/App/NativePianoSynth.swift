@@ -22,7 +22,7 @@ import UIKit
 private let kSampleRate: Double = 44100
 
 private struct SynthCommand {
-    var type: Int32 = 0      // 0 sample note on, 1 pad on, 2 off (by id), 3 all off
+    var type: Int32 = 0      // 0 sample note on, 1 pad on, 2 off (by id), 3 all off, 4 pad on from a table slot
     var id: Int32 = 0
     var value: Int32 = 0     // midi note (sample) or root semitone (pad)
     var flag: Int32 = 0      // pad: 1 = minor
@@ -50,13 +50,14 @@ private final class SynthCore {
     static let maxVoices = 24
     static let maxCommands = 64
     static let maxOsc = 16
+    static let tableSlots = 32   // 0..23 = the 12 roots x major/minor pads, 24..31 = spare slots for the joystick's chords
 
     private let voices: UnsafeMutablePointer<SynthVoice>
     private let padPhase: UnsafeMutablePointer<Double>
     private let padInc: UnsafeMutablePointer<Double>
     private let padAmpL: UnsafeMutablePointer<Float>
     private let padAmpR: UnsafeMutablePointer<Float>
-    // pad chord tables: index = root * 2 + (minor ? 1 : 0)
+    // pad chord tables: index = root * 2 + (minor ? 1 : 0); 24...31 hold custom chords (see buildCustomPad)
     private let tableInc: UnsafeMutablePointer<Double>
     private let tableL: UnsafeMutablePointer<Float>
     private let tableR: UnsafeMutablePointer<Float>
@@ -89,11 +90,11 @@ private final class SynthCore {
         padInc = .allocate(capacity: oscTotal);   padInc.initialize(repeating: 0, count: oscTotal)
         padAmpL = .allocate(capacity: oscTotal);  padAmpL.initialize(repeating: 0, count: oscTotal)
         padAmpR = .allocate(capacity: oscTotal);  padAmpR.initialize(repeating: 0, count: oscTotal)
-        let tableTotal = 24 * SynthCore.maxOsc
+        let tableTotal = SynthCore.tableSlots * SynthCore.maxOsc
         tableInc = .allocate(capacity: tableTotal); tableInc.initialize(repeating: 0, count: tableTotal)
         tableL = .allocate(capacity: tableTotal);   tableL.initialize(repeating: 0, count: tableTotal)
         tableR = .allocate(capacity: tableTotal);   tableR.initialize(repeating: 0, count: tableTotal)
-        tableCount = .allocate(capacity: 24);       tableCount.initialize(repeating: 0, count: 24)
+        tableCount = .allocate(capacity: SynthCore.tableSlots); tableCount.initialize(repeating: 0, count: SynthCore.tableSlots)
         queue = .allocate(capacity: SynthCore.maxCommands);   queue.initialize(repeating: SynthCommand(), count: SynthCore.maxCommands)
         drained = .allocate(capacity: SynthCore.maxCommands); drained.initialize(repeating: SynthCommand(), count: SynthCore.maxCommands)
         lock = .allocate(capacity: 1); lock.initialize(to: os_unfair_lock())
@@ -144,6 +145,7 @@ private final class SynthCore {
         switch c.type {
         case 0: startSample(id: c.id, midi: Int(c.value))
         case 1: startPad(id: c.id, root: Int(c.value), minor: c.flag == 1)
+        case 4: startPadSlot(id: c.id, t: Int(c.value))
         case 2:
             for v in 0..<SynthCore.maxVoices where voices[v].active && voices[v].id == c.id && !voices[v].releasing {
                 release(v)
@@ -254,9 +256,60 @@ private final class SynthCore {
         }
     }
 
+    /// Builds one pad chord with any intervals (7th, aug, dim, slash bass …) into a spare table slot, with exactly
+    /// the same voicing / filtering as the 24 built-in pads. Runs on the control thread BEFORE the start command
+    /// is queued, so the audio thread only ever copies a finished slot. `bass` = pitch class 0-11 or -1 for none.
+    func buildCustomPad(slot t: Int, root: Int, third: Int, fifth: Int, seventh: Int, bass: Int) {
+        guard t >= 24, t < SynthCore.tableSlots, root >= 0, root < 12 else { return }
+        let base = 48 + root
+        var notes: [(Int, Double, Double, Double, Double)] = [
+            (base,              0.28, 800,  0, -0.30),
+            (base + fifth,      0.18, 1600, 5,  0.25),
+            (base + 12,         0.32, 1800, 6,  0.00),
+            (base + 12 + third, 0.20, 2000, 5,  0.20),
+        ]
+        if seventh > 0 { notes.append((base + 12 + seventh, 0.16, 2000, 5, -0.15)) }
+        if bass >= 0 && bass < 12 { notes.append((36 + bass, 0.28, 700, 0, -0.10)) }
+        var count = 0
+        let offset = t * SynthCore.maxOsc
+
+        func add(freq: Double, amp: Double, left: Double, right: Double) {
+            guard count < SynthCore.maxOsc else { return }
+            tableInc[offset + count] = 2 * Double.pi * freq / kSampleRate
+            tableL[offset + count] = Float(amp * left)
+            tableR[offset + count] = Float(amp * right)
+            count += 1
+        }
+
+        for (idx, n) in notes.enumerated() {
+            let freq = 440.0 * pow(2.0, Double(n.0 - 69) / 12.0)
+            let master = lowpassGain(freq, cutoff: 2400, qDb: 0.5)
+            let x = (n.4 + 1) / 2
+            let pl = cos(x * Double.pi / 2)
+            let pr = sin(x * Double.pi / 2)
+            let detunes: [Double] = n.3 > 0 ? [-n.3 / 2, n.3 / 2] : [0]
+            for dt in detunes {
+                let f = freq * pow(2.0, dt / 1200.0)
+                add(freq: f, amp: n.1 * lowpassGain(f, cutoff: n.2, qDb: 0.4) * master, left: pl, right: pr)
+            }
+            if idx > 0 {
+                let f2 = freq * 2
+                let airCut = min(n.2 * 1.4, 3000)
+                let amp = n.1 * 0.08 * lowpassGain(f2, cutoff: airCut, qDb: 0.4) * lowpassGain(f2, cutoff: 2400, qDb: 0.5)
+                add(freq: f2, amp: amp, left: 1, right: 1)
+            }
+        }
+        tableCount[t] = count
+    }
+
     private func startPad(id: Int32, root: Int, minor: Bool) {
         guard root >= 0, root < 12 else { return }
-        let t = root * 2 + (minor ? 1 : 0)
+        startPadSlot(id: id, t: root * 2 + (minor ? 1 : 0))
+    }
+
+    /// Starts the pad chord stored in table slot `t`.
+    private func startPadSlot(id: Int32, t: Int) {
+        guard t >= 0, t < SynthCore.tableSlots else { return }
         let v = allocateVoice()
         ageCounter += 1
         let slot = v * SynthCore.maxOsc
@@ -382,6 +435,17 @@ final class NativePianoSynth {
 
     func padOn(id: Int, root: Int, minor: Bool) {
         core.push(SynthCommand(type: 1, id: Int32(id), value: Int32(root), flag: minor ? 1 : 0))
+        ensureRunning()
+    }
+
+    private var customSlot = 0
+
+    /// A pad chord with arbitrary intervals (joystick chord piano). Same sound as padOn, more chord types.
+    func padChordOn(id: Int, root: Int, third: Int, fifth: Int, seventh: Int, bass: Int) {
+        let slot = 24 + (customSlot % 8)
+        customSlot += 1
+        core.buildCustomPad(slot: slot, root: root, third: third, fifth: fifth, seventh: seventh, bass: bass)
+        core.push(SynthCommand(type: 4, id: Int32(id), value: Int32(slot), flag: 0))
         ensureRunning()
     }
 

@@ -1,10 +1,11 @@
 // Piano / Chord Piano tab.
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Joystick } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
 import { useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
+import { ChordJoystick } from "../components/ChordJoystick.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
 
@@ -34,6 +35,8 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   const silentVideoRef = useRef(null);
   const videoUnlockedRef = useRef(false);
   const isVocals = mode === "vocals";
+  const [joystickOn, setJoystickOn] = useState(false);   // Chords mode: joystick chord piano instead of the keyboard
+  const joystick = joystickOn && mode === "chords";
   const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
   const chordQualityRef = useRef(loadedQuality || "Major");
 
@@ -143,10 +146,13 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   };
 
   // --- Warm pad chord voice for Vocals mode (High volume, clean harmonics) ---
-  const startPadChord = (rootSemitone) => {
+  // spec (optional) = { third, fifth, seventh, bass } for the joystick's chords (7th, aug, dim, slash …); without it
+  // this is the plain major / minor pad of the Vocals chord piano, unchanged.
+  const startPadChord = (rootSemitone, spec) => {
     if (isNativePlatform()) {
       const nativeId = nextNativeNoteId();
-      nativePiano.padOn(nativeId, rootSemitone, chordQualityRef.current === "Minor");
+      if (spec) nativePiano.padChordOn(nativeId, rootSemitone, spec.third, spec.fifth, spec.seventh, spec.bass);
+      else nativePiano.padOn(nativeId, rootSemitone, chordQualityRef.current === "Minor");
       return { nativeId };
     }
     const ctx = ensureCtx();
@@ -155,14 +161,16 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     const quality = chordQualityRef.current;
 
     const baseMidi = 48 + rootSemitone; // C3 to B3
-    const thirdInterval = quality === "Minor" ? 3 : 4;
+    const thirdInterval = spec ? spec.third : quality === "Minor" ? 3 : 4;
 
     const notes = [
       { midi: baseMidi, gain: 0.28, cutoff: 800, detune: 0 },
-      { midi: baseMidi + 7, gain: 0.18, cutoff: 1600, detune: 5 },
+      { midi: baseMidi + (spec ? spec.fifth : 7), gain: 0.18, cutoff: 1600, detune: 5 },
       { midi: baseMidi + 12, gain: 0.32, cutoff: 1800, detune: 6 },
       { midi: baseMidi + 12 + thirdInterval, gain: 0.20, cutoff: 2000, detune: 5 },
     ];
+    if (spec && spec.seventh) notes.push({ midi: baseMidi + 12 + spec.seventh, gain: 0.16, cutoff: 2000, detune: 5 });
+    if (spec && spec.bass >= 0) notes.push({ midi: 36 + spec.bass, gain: 0.28, cutoff: 700, detune: 0 });
 
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
@@ -176,7 +184,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     masterFilter.connect(masterGain);
     masterGain.connect(dest);
 
-    const panValues = [-0.30, 0.25, 0.00, 0.20];
+    const panValues = [-0.30, 0.25, 0.00, 0.20, -0.15, -0.10];
     const oscs = [];
 
     notes.forEach(({ midi, gain: noteGainVal, cutoff, detune }, idx) => {
@@ -425,6 +433,15 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {mode === "chords" && (
+              <button onClick={() => setJoystickOn((v) => !v)} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
+                width: 32, height: 32, borderRadius: "50%", border: `1px solid ${joystick ? C.accent : C.borderStrong}`, background: joystick ? C.accentSoft : C.surface2,
+                color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center", marginRight: joystick ? 0 : 8,
+              }}>
+                <Joystick size={16} />
+              </button>
+            )}
+            {!joystick && <>
             <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
               color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
@@ -438,10 +455,14 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
             }}>
               <ChevronRight size={15} />
             </button>
+            </>}
           </div>
         )}
       </div>
 
+      {joystick ? (
+        <ChordJoystick C={C} playPad={(spec) => startPadChord(spec.root, spec)} stopPad={stopPadChord} />
+      ) : (
       <div
         ref={containerRef}
         onPointerDown={handlePointerDown}
@@ -449,6 +470,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       >
         {renderOctaveKeys()}
       </div>
+      )}
     </div>
   );
 
