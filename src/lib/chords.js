@@ -354,8 +354,8 @@ export function chordToPadSpec(chord) {
 
 /**
  * Where each note of a pad chord sits (MIDI numbers, -1 = not used). Close voicing: the third, fifth and 7th / 9th all
- * stay within about an octave of the root, so nothing sounds far away; the whole chord is placed so its root lies
- * between G2 and F#3 whatever the key (G, A, B drop an octave) — never too high or too low — and a slash chord's bass
+ * stay within about an octave of the root, so nothing sounds far away; the root always lies in C3–B3 whatever
+ * the key — never too high, and never down where it is hard to hear — and a slash chord's bass
  * is always the lowest note (the chord moves up an octave if it has to), which keeps the inversion right.
  *   root     the chord's root (lowest note unless there is a slash bass)
  *   third    third / sus2 / sus4      fifth   fifth (or ♭5 / ♯5)
@@ -363,9 +363,10 @@ export function chordToPadSpec(chord) {
  *   extra    7th or added 9th        bass    slash-chord bass
  */
 export function padVoicing(spec) {
-  let base = spec.root <= 6 ? 48 + spec.root : 36 + spec.root;
+  // Every root sits in the same octave (C3–B3), so chords 1–7 all live in one register and none is left down in the
+  // quiet bass (low notes are much harder to hear). A slash bass goes below it (C2–B2), so it is always the lowest note.
+  const base = 48 + spec.root;
   const bassMidi = spec.bass >= 0 ? 36 + spec.bass : -1;
-  if (bassMidi >= 0 && bassMidi >= base) base += 12;
   return {
     root: base,
     third: base + spec.third,
@@ -385,12 +386,30 @@ export const plainPadSpec = (root, minor) => ({ root, third: minor ? 3 : 4, fift
  */
 export function padSampleNotes(spec) {
   const v = padVoicing(spec);
-  return [
+  return padLevels([
     { midi: v.root, gain: 0.26, pan: -0.30 },
     { midi: v.fifth, gain: 0.20, pan: 0.25 },
     v.octave >= 0 && { midi: v.octave, gain: 0.22, pan: 0 },
     { midi: v.third, gain: 0.20, pan: 0.20 },
     v.extra >= 0 && { midi: v.extra, gain: 0.16, pan: -0.15 },
     v.bass >= 0 && { midi: v.bass, gain: 0.26, pan: -0.10 },
-  ].filter(Boolean);
+  ].filter(Boolean));
+}
+
+/**
+ * Audibility: the ear hears high notes much more easily than low ones, so a chord of low notes sounds weak next to one of
+ * higher notes. Each note's gain is lifted in proportion to how low it is (up to +9 dB below middle C, a touch less above
+ * it), then the whole chord is scaled to one fixed loudness — so every chord, in every key and with any modifier, comes
+ * out equally audible, and the low notes of a chord are no longer buried under its high ones.
+ */
+const PAD_LOUDNESS = 0.5;
+export function padLevels(notes) {
+  const lifted = notes.map((n) => {
+    const db = n.midi < 60 ? Math.min(9, 0.5 * (60 - n.midi)) : -Math.min(3, 0.2 * (n.midi - 60));
+    return { ...n, gain: n.gain * Math.pow(10, db / 20) };
+  });
+  const total = Math.sqrt(lifted.reduce((s, n) => s + n.gain * n.gain, 0)) || 1;
+  const peak = Math.max(...lifted.map((n) => n.gain));
+  const k = Math.min(PAD_LOUDNESS / total, 0.95 / peak);
+  return lifted.map((n) => ({ ...n, gain: n.gain * k }));
 }

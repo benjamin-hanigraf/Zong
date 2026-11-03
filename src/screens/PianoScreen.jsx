@@ -6,7 +6,7 @@ import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, loadPadSamples, padSamplesReady, findNearestPadSample, PAD_LOOP, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
-import { padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
+import { padLevels, padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
 import { PieIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
@@ -207,14 +207,14 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     let notes;
     if (spec) {
       const v = padVoicing(spec);
-      notes = [
+      notes = padLevels([
         { midi: v.root, gain: 0.28, cutoff: 800, detune: 0, pan: -0.30 },
         { midi: v.fifth, gain: 0.18, cutoff: 1600, detune: 5, pan: 0.25 },
         v.octave >= 0 && { midi: v.octave, gain: 0.32, cutoff: 1800, detune: 6, pan: 0.00 },
         { midi: v.third, gain: 0.20, cutoff: 2000, detune: 5, pan: 0.20 },
         v.extra >= 0 && { midi: v.extra, gain: 0.16, cutoff: 2000, detune: 5, pan: -0.15 },
         v.bass >= 0 && { midi: v.bass, gain: 0.28, cutoff: 700, detune: 0, pan: -0.10 },
-      ].filter(Boolean);
+      ].filter(Boolean));
     } else {
       notes = [
         { midi: baseMidi, gain: 0.28, cutoff: 800, detune: 0 },
