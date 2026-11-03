@@ -27,7 +27,13 @@ export function useLiveSync({ teamKey, onApply, onJoy }) {
   const joyApplyRef = useRef(onJoy);
   joyApplyRef.current = onJoy;
   const joyRef = useRef(null);   // the lead's latest joystick state
-  const sendAll = () => { if (posRef.current) ctl.current?.sendPosition(posRef.current); if (joyRef.current) ctl.current?.sendJoy(joyRef.current); };
+  // Full state for someone who just joined / reconnected; the regular heartbeat only repeats what is still "live".
+  const sendAll = (heartbeat = false) => {
+    if (posRef.current) ctl.current?.sendPosition(posRef.current);
+    const j = joyRef.current;
+    if (j && j.o && (!heartbeat || j.d != null)) ctl.current?.sendJoy(j);   // an idle joystick is not repeated
+  };
+  const lastJoySent = useRef("");
   const deviceId = getDeviceId();
   const available = Boolean(teamKey) && isSupabaseConfigured();
 
@@ -66,7 +72,7 @@ export function useLiveSync({ teamKey, onApply, onJoy }) {
         if (applyRef.current(pos)) lastSig.current = sig;
       },
       onJoy: (state) => { if (roleRef.current === "follow" && state) joyApplyRef.current?.(state); },
-      onAsk: () => { if (roleRef.current === "lead") sendAll(); },
+      onAsk: () => { if (roleRef.current === "lead") { lastJoySent.current = ""; sendAll(); } },
       onPeerJoined: () => { setTimeout(() => { if (roleRef.current === "lead") sendAll(); }, 800); },
     });
   };
@@ -79,17 +85,21 @@ export function useLiveSync({ teamKey, onApply, onJoy }) {
   };
   const publish = (pos) => {
     posRef.current = pos;
-    if (roleRef.current === "lead") ctl.current?.sendPosition(pos);
+    if (roleRef.current === "lead" && peersRef.current > 0) ctl.current?.sendPosition(pos);
   };
+  // Nothing is sent while nobody else is on the channel, and an unchanged state is never sent twice.
   const publishJoy = (state) => {
     joyRef.current = state;
-    if (roleRef.current === "lead") ctl.current?.sendJoy(state);
+    const sig = JSON.stringify(state);
+    if (roleRef.current !== "lead" || peersRef.current === 0 || sig === lastJoySent.current) return;
+    lastJoySent.current = sig;
+    ctl.current?.sendJoy(state);
   };
   // Every move is sent instantly (publish). On top of that the lead repeats its position now and then so a device
   // that dropped out lands in the right place — only while someone else is listening, and sparingly to save data.
   useEffect(() => {
     if (role !== "lead") return undefined;
-    const t = setInterval(() => { if (peersRef.current > 0) sendAll(); }, 12000);
+    const t = setInterval(() => { if (peersRef.current > 0) sendAll(true); }, 12000);
     return () => clearInterval(t);
   }, [role]);
   useEffect(() => close, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -153,13 +153,22 @@ export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, 
   useEffect(() => () => { if (voiceRef.current) { stopPad(voiceRef.current); voiceRef.current = null; } }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tell Stage Mode followers what is happening (key, sticks, chord).
+  // Kept tiny (a few bytes: key, scale, degree, quality — the chord is worked out again on the other side) and at most
+  // ~8 messages a second, however fast the thumb sweeps across the wedges.
   const stateRef = useRef(onState);
   stateRef.current = onState;
+  const sentAt = useRef(0);
+  const pending = useRef(null);
   useEffect(() => {
-    if (readOnly) return;
-    stateRef.current?.({ on: true, keyName, keyQuality, degree, quality, chord: chordName });
-  }, [keyName, keyQuality, degree, quality, chordName, readOnly]);
-  useEffect(() => () => { if (!readOnly) stateRef.current?.({ on: false }); }, [readOnly]);
+    if (readOnly) return undefined;
+    const msg = { o: 1, k: keyName, m: keyQuality === "Minor" ? 1 : 0, d: degree, q: quality };
+    const send = () => { pending.current = null; sentAt.current = Date.now(); stateRef.current?.(msg); };
+    const wait = 125 - (Date.now() - sentAt.current);
+    if (pending.current) clearTimeout(pending.current);
+    if (wait <= 0) send(); else pending.current = setTimeout(send, wait);
+    return undefined;
+  }, [keyName, keyQuality, degree, quality, readOnly]);
+  useEffect(() => () => { if (pending.current) clearTimeout(pending.current); if (!readOnly) stateRef.current?.({ o: 0 }); }, [readOnly]);
 
   const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
   // Two sticks plus the key selector (about 250px) must fit side by side, and the sticks must fit the height.

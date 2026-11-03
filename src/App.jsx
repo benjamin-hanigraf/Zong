@@ -22,6 +22,7 @@ import { PianoScreen } from "./screens/PianoScreen.jsx";
 import { SongsScreen } from "./screens/SongsScreen.jsx";
 import { SetlistStageScreen, SetlistsScreen } from "./screens/SetlistScreens.jsx";
 import { SettingsScreen } from "./screens/SettingsScreen.jsx";
+import { joystickChord } from "./components/ChordJoystick.jsx";
 import { BottomNav, Toast } from "./components/chrome.jsx";
 import { SongForm } from "./screens/SongForm.jsx";
 import { SongDetailScreen } from "./screens/SongDetailScreen.jsx";
@@ -597,14 +598,22 @@ function AppInner() {
   useEffect(() => { if (!joystickOn) setJoystickKey(null); }, [joystickOn]);   // the swiped-in key applies once
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  const applyJoy = (state) => {
-    if (!state?.on) { setJoyRemote(null); return; }
+  const applyJoy = (msg) => {
+    if (!msg?.o) { setJoyRemote(null); return; }
     if (modeRef.current !== "chords") return;
-    setJoyRemote(state);
+    const keyQuality = msg.m ? "Minor" : "Major";
+    setJoyRemote({ on: true, keyName: msg.k, keyQuality, degree: msg.d, quality: msg.q, chord: joystickChord(msg.k, keyQuality, msg.d, msg.q), at: Date.now() });
     setViewing(null); setStageIndex(null); setTab("practice");   // taken to the joystick piano
   };
   const live = useLiveSync({ teamKey: bandKey, onApply: applyLivePosition, onJoy: applyJoy });
   useEffect(() => { if (live.role !== "follow") setJoyRemote(null); }, [live.role]);
+  // Safety: if a "chord released" message is ever lost, don't leave the chord on a follower's screen for good
+  // (the lead repeats a held chord every 12 s, so a chord older than 30 s is stale).
+  useEffect(() => {
+    if (!joyRemote || joyRemote.degree == null) return undefined;
+    const t = setTimeout(() => setJoyRemote((j) => (j && j.at === joyRemote.at ? { ...j, degree: null, quality: "auto", chord: null } : j)), 30000);
+    return () => clearTimeout(t);
+  }, [joyRemote]);
   // The lead tells followers what its joystick is doing.
   const publishJoystick = (state) => live.publishJoy?.(state);
   useEffect(() => {
