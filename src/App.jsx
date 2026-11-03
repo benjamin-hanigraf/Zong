@@ -25,6 +25,86 @@ function getDeviceId() {
 }
 
 /* =========================================================================
+   Keyboard control (desktop). Screens, dialogs and pop-ups register themselves with useKeys while
+   they are open; the topmost one owns the keyboard:
+     Esc    → closes / goes back          Enter → the primary action (Save, Done, OK …)
+     Tab    → stays inside the open layer (so it never wanders to the page behind)
+   Enter is left alone when a button/link/checkbox is focused (it activates that control as usual)
+   and inside multi-line text boxes (Ctrl/Cmd+Enter or Ctrl/Cmd+S runs the primary action there).
+   ========================================================================= */
+const keyStack = [];
+const hasOpenLayer = () => keyStack.length > 0;
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const isShown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+const isTypingTarget = (t) => !!t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
+function onGlobalKeyDown(e) {
+  if (!keyStack.length || e.defaultPrevented || e.isComposing) return;
+  const top = keyStack[keyStack.length - 1];
+  const t = e.target;
+  const tag = t?.tagName;
+  if (e.key === "Tab") {
+    const layer = [...keyStack].reverse().find((k) => k.root());
+    const root = layer?.root();
+    if (!root) return;
+    const items = [...root.querySelectorAll(FOCUSABLE)].filter(isShown);
+    if (!items.length) return;
+    const active = document.activeElement;
+    if (!root.contains(active)) { e.preventDefault(); items[e.shiftKey ? items.length - 1 : 0].focus(); }
+    else if (e.shiftKey && active === items[0]) { e.preventDefault(); items[items.length - 1].focus(); }
+    else if (!e.shiftKey && active === items[items.length - 1]) { e.preventDefault(); items[0].focus(); }
+    return;
+  }
+  if (e.key === "Escape") { if (top.escape(e)) e.preventDefault(); return; }
+  if ((e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey)) { if (top.hasPrimary()) { e.preventDefault(); top.primary(e); } return; }
+  if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+    const modified = e.metaKey || e.ctrlKey;
+    if (tag === "TEXTAREA" && !modified) return;
+    if (!modified) {
+      if (/^(BUTTON|A|SELECT|SUMMARY)$/.test(tag)) return;
+      if (/^(button|checkbox|radio|link|tab|option|menuitem|switch)$/.test(t?.getAttribute?.("role") || "")) return;
+      if (tag === "INPUT" && /^(button|submit|checkbox|radio|file)$/.test(t.type)) return;
+    }
+    if (top.primary(e)) e.preventDefault();
+  }
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", onGlobalKeyDown);
+
+// handlers: { escape, primary, rootRef }. A handler returns false when it chose not to act, so the key falls through.
+function useKeys({ escape, primary, rootRef } = {}, active = true) {
+  const latest = useRef({});
+  latest.current = { escape, primary, rootRef };
+  useEffect(() => {
+    if (!active) return undefined;
+    const run = (name) => (e) => { const f = latest.current[name]; return f ? f(e) !== false : false; };
+    const entry = { escape: run("escape"), primary: run("primary"), hasPrimary: () => !!latest.current.primary, root: () => latest.current.rootRef?.current || null };
+    keyStack.push(entry);
+    // Opening a layer moves the keyboard into it (so Esc / Enter / Tab act on it, not on a field behind); closing puts focus back.
+    const before = document.activeElement;
+    const frame = requestAnimationFrame(() => {
+      const root = entry.root();
+      if (!root || root.contains(document.activeElement)) return;
+      if (!root.hasAttribute("tabindex")) root.tabIndex = -1;
+      root.focus({ preventScroll: true });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      const i = keyStack.indexOf(entry);
+      if (i >= 0) keyStack.splice(i, 1);
+      setTimeout(() => {
+        const a = document.activeElement;
+        if ((!a || a === document.body) && before && before !== document.body && document.contains(before) && isShown(before)) before.focus({ preventScroll: true });
+      }, 0);
+    };
+  }, [active]);
+}
+// Dialog helper: Esc closes, Enter runs `primary`, Tab stays inside. Attach the returned ref to the dialog's outer element.
+function useModalKeys(onClose, primary, active = true) {
+  const rootRef = useRef(null);
+  useKeys({ escape: onClose, primary, rootRef }, active);
+  return rootRef;
+}
+
+/* =========================================================================
    Persistence — IndexedDB for songs/setlists, localStorage for small prefs.
    Inlined here (rather than a separate hooks file) so this stays a single
    self-contained component file.
@@ -1075,7 +1155,19 @@ function Field({ label, children }) {
 function SectionLabel({ children }) {
   return <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#4D4D50", marginBottom: 10, marginTop: 4, fontWeight: 700 }}>{children}</div>;
 }
-function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, type, inputMode, autoFocus }) {
+// `search` marks it as a list's search box: the / key focuses it, Esc clears it, ↓ jumps to the first result, Enter runs onEnter.
+// Keyboard handling for a focusable list row: Enter / Space activates it, ↑ / ↓ move between rows, Home / End jump to the ends.
+const navRowKeys = (activate) => (e) => {
+  if (e.target !== e.currentTarget) return;
+  const rows = [...document.querySelectorAll("[data-nav-row]")].filter(isShown);
+  const at = rows.indexOf(e.currentTarget);
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, at + 1)]?.focus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); if (at <= 0) [...document.querySelectorAll("input[data-search]")].find(isShown)?.focus(); else rows[at - 1].focus(); }
+  else if (e.key === "Home") { e.preventDefault(); rows[0]?.focus(); }
+  else if (e.key === "End") { e.preventDefault(); rows[rows.length - 1]?.focus(); }
+};
+function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, type, inputMode, autoFocus, search, onEnter }) {
   const [focused, setFocused] = useState(false);
   return (
     <div style={{ position: "relative" }}>
@@ -1084,11 +1176,17 @@ function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, typ
         autoFocus={autoFocus} type={type} inputMode={inputMode} value={value}
         onChange={(e) => onChangeText(e.target.value)}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        data-search={search ? "1" : undefined}
+        onKeyDown={search ? (e) => {
+          if (e.key === "Escape") { e.preventDefault(); if (value) onChangeText(""); else e.currentTarget.blur(); }
+          else if (e.key === "ArrowDown") { const row = [...document.querySelectorAll("[data-nav-row]")].find(isShown); if (row) { e.preventDefault(); row.focus(); } }
+          else if (e.key === "Enter" && onEnter) { e.preventDefault(); onEnter(); }
+        } : undefined}
         placeholder={placeholder} style={style}
       />
       {focused && value ? (
         <button
-          onPointerDown={(e) => { e.preventDefault(); onChangeText(""); }}
+          tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); onChangeText(""); }}
           style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 4, display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           <X size={14} color="#98989D" />
@@ -1100,6 +1198,7 @@ function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, typ
 
 function TimeSigPicker({ value, onChange, fullWidth, height = 44, fontSize, style, subtle, C }) {
   const [open, setOpen] = useState(false);
+  useKeys({ escape: () => setOpen(false) }, open);
   const [openUpward, setOpenUpward] = useState(false);
   const [openLeft, setOpenLeft] = useState(false);
   const btnRef = useRef(null);
@@ -1169,6 +1268,7 @@ const NATURAL_OPTIONS = [
 ];
 function NaturalDropdown({ value, onChange, C }) {
   const [open, setOpen] = useState(false);
+  useKeys({ escape: () => setOpen(false) }, open);
   const [openUpward, setOpenUpward] = useState(false);
   const btnRef = useRef(null);
   const DROPDOWN_HEIGHT = 320;
@@ -2652,6 +2752,7 @@ function dotColor(state, lit, C) {
 function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, muted = false, onToggleMuted, C }) {
   const flashBeat = useFlashBeat();
   const [open, setOpen] = useState(false);
+  useKeys({ escape: () => setOpen(false) }, open);
   const [openUpward, setOpenUpward] = useState(false);
   const [hAlign, setHAlign] = useState("center"); // "center" | "left" | "right" — keeps the popup on-screen horizontally
   const btnRef = useRef(null);
@@ -3761,6 +3862,8 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
 
   const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
   const keyboardInset = useKeyboardInset();
+  const formRoot = useRef(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
 
   const handleTitleChange = (v) => {
     setTitle(v);
@@ -3812,6 +3915,12 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   const formSnapshot = JSON.stringify([title, artist, tempo, timeSig, keyNatural, keyAccidental, keyQuality, language, description, lyricsText, chordsText, chartText, drumsText, accents, subdivision]);
   const openedSnapshot = useRef(formSnapshot);
   const canSave = title.trim().length > 0 && formSnapshot !== openedSnapshot.current;
+  // Esc leaves (asking first when there are unsaved changes); Enter / Ctrl+S saves; Tab stays in the form.
+  useKeys({
+    rootRef: formRoot,
+    escape: () => { if (formSnapshot !== openedSnapshot.current) setDiscardOpen(true); else onCancel(); },
+    primary: () => { if (!canSave) return false; handleSave(); },
+  });
   const SECTION_TAB_VALUES = { lyrics: [lyricsText, setLyricsText], chords: [chordsText, setChordsText], chart: [chartText, setChartText], drums: [drumsText, setDrumsText] };
   const [activeSectionValue, setActiveSectionValue] = SECTION_TAB_VALUES[sectionTab];
   const SECTION_TAB_PLACEHOLDERS = {
@@ -3822,7 +3931,7 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
   };
 
   return (
-    <div className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+    <div ref={formRoot} className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div data-sticky-header style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
@@ -3903,6 +4012,10 @@ function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicate, song
           </div>
         ) : null}
       </div>
+      {discardOpen && (
+        <ConfirmDialog title="Discard changes?" message="You have unsaved changes to this song." confirmLabel="Discard" cancelLabel="Keep editing" danger
+          onConfirm={() => { setDiscardOpen(false); onCancel(); }} onCancel={() => setDiscardOpen(false)} C={C} />
+      )}
       {sectionNotice && (
         <NoticeDialog
           title="Section still has notes"
@@ -3994,7 +4107,7 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 120ms ease" : "none", background: C.bg, zIndex: 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    <div data-nav-row tabIndex={0} role="button" onKeyDown={navRowKeys(() => onOpen(song))} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 120ms ease" : "none", background: C.bg, zIndex: 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -4033,7 +4146,7 @@ function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMetronome
           </div>
         </div>
         <div style={{ marginTop: 16 }}>
-          <ClearableInput value={query} onChangeText={setQuery} placeholder="Search title or artist"
+          <ClearableInput search onEnter={() => { if (filtered[0]) { setQuery(""); onOpen(filtered[0]); } }} value={query} onChangeText={setQuery} placeholder="Search title or artist"
             leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
@@ -4064,8 +4177,10 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
   // English titles first (A–Z), then Tamil titles (in Tamil alphabetical order).
   const filtered = songs.filter((s) => songMatchesQuery(s, query)).sort(compareEnglishThenTamil);
   const commitName = () => { const trimmed = nameDraft.trim(); if (trimmed && onRenameSetlist) onRenameSetlist(trimmed); else setNameDraft(setlistName ?? ""); };
+  const pickerRoot = useRef(null);
+  useKeys({ rootRef: pickerRoot, escape: () => onClose(), primary: () => onClose() });   // Esc / Enter = Done
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box" }}>
+    <div ref={pickerRoot} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 150, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box" }}>
       <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}` }}>
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -4098,7 +4213,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
         <button onClick={onClose} style={{ background: "none", border: "none", fontFamily: FONT, fontSize: 15.5, fontWeight: 700, color: C.accent, padding: "6px 4px" }}>Done</button>
       </div>
       <div style={{ padding: "14px 20px 6px" }}>
-        <ClearableInput autoFocus value={query} onChangeText={setQuery} placeholder="Search title or artist"
+        <ClearableInput search autoFocus value={query} onChangeText={setQuery} placeholder="Search title or artist"
           leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
           style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
       </div>
@@ -4108,7 +4223,7 @@ function SongPickerScreen({ songs, selectedIds, onToggle, onClose, setlistName, 
         ) : filtered.map((s) => {
           const checked = selectedIds.includes(s.id);
           return (
-            <div key={s.id} onClick={() => { setQuery(""); onToggle(s.id); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
+            <div key={s.id} data-nav-row tabIndex={0} role="checkbox" aria-checked={checked} onKeyDown={navRowKeys(() => { setQuery(""); onToggle(s.id); })} onClick={() => { setQuery(""); onToggle(s.id); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
               <div style={{ width: 21, height: 21, borderRadius: "50%", border: `1.5px solid ${checked ? C.accent : C.borderStrong}`, background: checked ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 {checked && <Check size={14} color="#fff" />}
               </div>
@@ -4143,6 +4258,8 @@ function SongDetailScreen({
   const showBottomBar = mode === "drums" && !!engine && metroBarVisible;
 
   const scrollRef = useRef(null);
+  const detailRoot = useRef(null);
+  useKeys({ rootRef: detailRoot, escape: () => { if (descOpen) setDescOpen(false); else onBack(); } });
   // Layout effect: the reset must land before the new song is painted (it may be sliding in).
   useLayoutEffect(() => {
     setViewKey(contextKey ?? song.key);
@@ -4236,16 +4353,34 @@ function SongDetailScreen({
   };
   const stepRef = useRef(stepSection);
   stepRef.current = stepSection;
+  const goRef = useRef(null);
+  goRef.current = (idx) => goToSection(idx, true);
   useEffect(() => {
     if (syncRole !== "lead") return undefined;
     const onKey = (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || "")) return;
-      if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) { e.preventDefault(); stepRef.current(1); }
+      if (e.key === " " && /^(BUTTON|A)$/.test(e.target?.tagName || "")) return;   // Space on a focused button presses that button
+      if (e.shiftKey && e.key === "ArrowRight") { if (onNextSong) { e.preventDefault(); onNextSong(); } }
+      else if (e.shiftKey && e.key === "ArrowLeft") { if (onPrevSong) { e.preventDefault(); onPrevSong(); } }
+      else if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) { e.preventDefault(); stepRef.current(1); }
       else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) { e.preventDefault(); stepRef.current(-1); }
+      else if (e.key === "Home") { e.preventDefault(); goRef.current(0); }
+      else if (e.key === "End") { e.preventDefault(); goRef.current(Infinity); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [syncRole]);
+  }, [syncRole, onNextSong, onPrevSong]);
+  // Not in Stage Mode: ← / → switch songs inside a setlist.
+  useEffect(() => {
+    if (syncRole) return undefined;
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || isTypingTarget(e.target)) return;
+      if (e.key === "ArrowRight" && onNextSong) { e.preventDefault(); onNextSong(); }
+      else if (e.key === "ArrowLeft" && onPrevSong) { e.preventDefault(); onPrevSong(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [syncRole, onNextSong, onPrevSong]);
 
   const hasKeyChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && viewKey !== (syncedKeyOverride ?? song.key));
   const currentBpm = engine ? Math.round(engine.bpm) : (contextTempo ?? song.tempo);
@@ -4256,7 +4391,7 @@ function SongDetailScreen({
     <>
     {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
+    <div ref={detailRoot} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
@@ -4528,9 +4663,11 @@ function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateSetlist,
   });
 
   const bottomInset = "calc(55px + max(36px, 8px + var(--safe-bottom)))";
+  const stageRoot = useRef(null);
+  useKeys({ rootRef: stageRoot, escape: () => onBack() });
 
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
+    <div ref={stageRoot} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 16px 12px", display: "flex", alignItems: "center", gap: 6 }}>
         <button onClick={onBack} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
         {editingName ? (
@@ -4633,7 +4770,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
           <button onClick={onCreate} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
         <div style={{ marginTop: 16 }}>
-          <ClearableInput value={query} onChangeText={setQuery} placeholder="Search setlists"
+          <ClearableInput search onEnter={() => { if (sorted[0]) onOpenStage(sorted[0].id); }} value={query} onChangeText={setQuery} placeholder="Search setlists"
             leftIcon={<Search size={15} color={C.textFaint} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />}
             style={{ width: "100%", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", color: C.text, fontFamily: FONT, fontSize: 16, boxSizing: "border-box", paddingLeft: 36, paddingRight: query ? 36 : 14 }} />
         </div>
@@ -4644,7 +4781,7 @@ function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C }) {
         )}
         {sorted.map((sl) => (
           <SwipeToDelete key={sl.id} id={sl.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(sl.id)} C={C}>
-            <div onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
+            <div data-nav-row tabIndex={0} role="button" onKeyDown={navRowKeys(() => onOpenStage(sl.id))} onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>{sl.name}</div>
                 <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{sl.entries.length} song{sl.entries.length === 1 ? "" : "s"}</div>
@@ -4687,8 +4824,10 @@ function SpellingChartModal({ initialTamil = "", initialLatin = "", isNew = fals
     onSave(t, l);
   };
 
+  const modalRoot = useModalKeys(onClose, () => handleSave());
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 300,
@@ -4737,7 +4876,7 @@ function SpellingChartModal({ initialTamil = "", initialLatin = "", isNew = fals
               fontSize: 15, fontWeight: 500, boxSizing: "border-box", outline: "none"
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") latinInputRef.current?.focus();
+              if (e.key === "Enter") { e.preventDefault(); latinInputRef.current?.focus(); }
             }}
           />
         </div>
@@ -4862,8 +5001,11 @@ function SpellingChartScreen({ chart, onSave, onBack, C }) {
     setModalData(null);
   };
 
+  const chartRoot = useRef(null);
+  useKeys({ rootRef: chartRoot, escape: () => onBack() }, !modalData);
   return (
     <div
+      ref={chartRoot}
       className="scroll-list"
       style={{
         position: "fixed", inset: 0, zIndex: 150,
@@ -5196,9 +5338,11 @@ function DeleteSongModal({ song, onConfirm, onCancel, C }) {
   const [input, setInput] = useState("");
   const keyboardInset = useKeyboardInset();
   const isMatch = input.trim().toLowerCase() === "delete";
+  const modalRoot = useModalKeys(onCancel, undefined, !!song);
   if (!song) return null;
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onCancel}
       style={{
         position: "fixed", inset: 0, zIndex: 300,
@@ -5282,9 +5426,11 @@ function DeleteSetlistModal({ setlist, onConfirm, onCancel, C }) {
   const [input, setInput] = useState("");
   const keyboardInset = useKeyboardInset();
   const isMatch = input.trim().toLowerCase() === "delete";
+  const modalRoot = useModalKeys(onCancel, undefined, !!setlist);
   if (!setlist) return null;
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onCancel}
       style={{
         position: "fixed", inset: 0, zIndex: 300,
@@ -5368,9 +5514,11 @@ function RemoveSharedSongModal({ song, setlist, onConfirm, onCancel, C }) {
   const [input, setInput] = useState("");
   const keyboardInset = useKeyboardInset();
   const isMatch = input.trim().toLowerCase() === "delete";
+  const modalRoot = useModalKeys(onCancel, undefined, !!(song && setlist));
   if (!song || !setlist) return null;
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onCancel}
       style={{
         position: "fixed", inset: 0, zIndex: 300,
@@ -5451,8 +5599,9 @@ function RemoveSharedSongModal({ song, setlist, onConfirm, onCancel, C }) {
 }
 
 function NoticeDialog({ title, message, buttonLabel = "OK", onClose, C }) {
+  const modalRoot = useModalKeys(onClose, () => onClose());
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
+    <div ref={modalRoot} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.surface2, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "22px 20px 20px", boxSizing: "border-box", boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
           <AlertTriangle size={18} color={C.danger ?? "#FF453A"} /> {title}
@@ -5465,9 +5614,31 @@ function NoticeDialog({ title, message, buttonLabel = "OK", onClose, C }) {
   );
 }
 
+
+// Two-button confirmation. Esc = cancel; Enter = the safe choice (cancel) unless `enterConfirms`.
+function ConfirmDialog({ title, message, confirmLabel, cancelLabel = "Cancel", danger, enterConfirms, onConfirm, onCancel, C }) {
+  const modalRoot = useModalKeys(onCancel, enterConfirms ? () => onConfirm() : () => onCancel());
+  const red = C.danger ?? "#FF453A";
+  return createPortal(
+    <div ref={modalRoot} onClick={onCancel} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.surface2, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "22px 20px 20px", boxSizing: "border-box", boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 13.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 18 }}>{message}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, height: 40, borderRadius: 10, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{cancelLabel}</button>
+          <button onClick={onConfirm} style={{ flex: 1, height: 40, borderRadius: 10, border: "none", background: danger ? red : C.accent, color: "#fff", fontFamily: FONT, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function LeaveTeamWarningModal({ onConfirm, onCancel, C }) {
+  const modalRoot = useModalKeys(onCancel);
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onCancel}
       style={{
         position: "fixed", inset: 0, zIndex: 350,
@@ -5528,6 +5699,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
   const [pendingTargetKey, setPendingTargetKey] = useState(null);
   const keyboardInset = useKeyboardInset();
   useEffect(() => { setDraft(initialKey || ""); setError(""); setShowOnlyMemberWarning(false); setPendingTargetKey(null); }, [initialKey, isOpen]);
+  const modalRoot = useModalKeys(onClose, undefined, !!isOpen);
   if (!isOpen) return null;
   const isConnected = Boolean(initialKey && initialKey.trim());
   const handleSave = async (val) => {
@@ -5546,6 +5718,7 @@ function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
   };
   return createPortal(
     <div
+      ref={modalRoot}
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 300,
@@ -5777,8 +5950,11 @@ function StageModeModal({ live, onClose, C }) {
     </>);
   }
   const dismiss = () => { if (role === "off") live.close(); onClose(); };
+  // Enter = the highlighted (primary) button of whichever state the dialog is in.
+  const primaryAction = role !== "off" || !ready ? null : otherLead ? () => { live.start(false); onClose(); } : () => { live.start(true); onClose(); };
+  const modalRoot = useModalKeys(dismiss, primaryAction ? () => primaryAction() : undefined);
   return createPortal(
-    <div onClick={dismiss} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
+    <div ref={modalRoot} onClick={dismiss} style={{ position: "fixed", inset: 0, zIndex: 350, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.surface2, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "22px 20px 20px", boxSizing: "border-box", boxShadow: "0 20px 48px rgba(0,0,0,0.7)", fontFamily: FONT }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Stage Mode</div>
         {content}
@@ -5862,6 +6038,20 @@ function AppInner() {
   const [editingSong, setEditingSong] = useState(undefined);
   const [newSongSeed, setNewSongSeed] = useState(null);
   const [stageModalOpen, setStageModalOpen] = useState(false);
+  // "/" (or Ctrl/Cmd+K) jumps to the search box on the Songs and Setlists pages.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.defaultPrevented || hasOpenLayer()) return;
+      const find = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
+      const slash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target);
+      if (!find && !slash) return;
+      const box = [...document.querySelectorAll("input[data-search]")].find(isShown);
+      if (!box) return;
+      e.preventDefault(); box.focus(); box.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [liveTarget, setLiveTarget] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [songToDelete, setSongToDelete] = useState(null);
