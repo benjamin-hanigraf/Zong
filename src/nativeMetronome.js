@@ -63,8 +63,8 @@ const quiet = () => {};
 export const nativePiano = {
   noteOn(id, midi) { Plugin?.pianoNoteOn({ id, midi })?.catch(quiet); },
   padOn(id, root, minor) { Plugin?.padOn({ id, root, minor })?.catch(quiet); },
-  // The joystick's chords (7th, aug, dim, slash …): intervals above the root + an optional bass note (-1 = none).
-  padChordOn(id, root, third, fifth, seventh, bass) { Plugin?.padChordOn({ id, root, third, fifth, seventh, bass })?.catch(quiet); },
+  // The joystick's chords: the MIDI note of each voice (root, third, fifth, root an octave up, 7th / 9th, slash bass; -1 = not used).
+  padChordOn(id, root, third, fifth, octave, extra, bass) { Plugin?.padChordOn({ id, root, third, fifth, octave, extra, bass })?.catch(quiet); },
   noteOff(id) { Plugin?.pianoNoteOff({ id })?.catch(quiet); },
   allOff() { Plugin?.pianoAllOff()?.catch(quiet); },
 };

@@ -6,6 +6,7 @@ import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
+import { padVoicing } from "../lib/chords.js";
 import { PieIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
@@ -153,7 +154,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   const startPadChord = (rootSemitone, spec) => {
     if (isNativePlatform()) {
       const nativeId = nextNativeNoteId();
-      if (spec) nativePiano.padChordOn(nativeId, rootSemitone, spec.third, spec.fifth, spec.seventh, spec.bass);
+      if (spec) { const v = padVoicing(spec); nativePiano.padChordOn(nativeId, v.root, v.third, v.fifth, v.octave, v.extra, v.bass); }
       else nativePiano.padOn(nativeId, rootSemitone, chordQualityRef.current === "Minor");
       return { nativeId };
     }
@@ -163,16 +164,29 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     const quality = chordQualityRef.current;
 
     const baseMidi = 48 + rootSemitone; // C3 to B3
-    const thirdInterval = spec ? spec.third : quality === "Minor" ? 3 : 4;
+    const thirdInterval = quality === "Minor" ? 3 : 4;
 
-    const notes = [
-      { midi: baseMidi, gain: 0.28, cutoff: 800, detune: 0 },
-      { midi: baseMidi + (spec ? spec.fifth : 7), gain: 0.18, cutoff: 1600, detune: 5 },
-      { midi: baseMidi + 12, gain: 0.32, cutoff: 1800, detune: 6 },
-      { midi: baseMidi + 12 + thirdInterval, gain: 0.20, cutoff: 2000, detune: 5 },
-    ];
-    if (spec && spec.seventh) notes.push({ midi: baseMidi + 12 + spec.seventh, gain: 0.16, cutoff: 2000, detune: 5 });
-    if (spec && spec.bass >= 0) notes.push({ midi: 36 + spec.bass, gain: 0.28, cutoff: 700, detune: 0 });
+    // Vocals chord piano: the original open voicing, unchanged. The joystick's chords (spec) use padVoicing:
+    // close voicing in a fixed register, same voices / filters / pans, just placed closer together.
+    let notes;
+    if (spec) {
+      const v = padVoicing(spec);
+      notes = [
+        { midi: v.root, gain: 0.28, cutoff: 800, detune: 0, pan: -0.30 },
+        { midi: v.fifth, gain: 0.18, cutoff: 1600, detune: 5, pan: 0.25 },
+        v.octave >= 0 && { midi: v.octave, gain: 0.32, cutoff: 1800, detune: 6, pan: 0.00 },
+        { midi: v.third, gain: 0.20, cutoff: 2000, detune: 5, pan: 0.20 },
+        v.extra >= 0 && { midi: v.extra, gain: 0.16, cutoff: 2000, detune: 5, pan: -0.15 },
+        v.bass >= 0 && { midi: v.bass, gain: 0.28, cutoff: 700, detune: 0, pan: -0.10 },
+      ].filter(Boolean);
+    } else {
+      notes = [
+        { midi: baseMidi, gain: 0.28, cutoff: 800, detune: 0 },
+        { midi: baseMidi + 7, gain: 0.18, cutoff: 1600, detune: 5 },
+        { midi: baseMidi + 12, gain: 0.32, cutoff: 1800, detune: 6 },
+        { midi: baseMidi + 12 + thirdInterval, gain: 0.20, cutoff: 2000, detune: 5 },
+      ];
+    }
 
     const masterFilter = ctx.createBiquadFilter();
     masterFilter.type = "lowpass";
@@ -189,7 +203,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     const panValues = [-0.30, 0.25, 0.00, 0.20, -0.15, -0.10];
     const oscs = [];
 
-    notes.forEach(({ midi, gain: noteGainVal, cutoff, detune }, idx) => {
+    notes.forEach(({ midi, gain: noteGainVal, cutoff, detune, pan }, idx) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
       const filt = ctx.createBiquadFilter();
@@ -198,7 +212,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       filt.Q.value = 0.4;
 
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-      if (panner) panner.pan.value = panValues[idx] ?? 0;
+      if (panner) panner.pan.value = pan ?? panValues[idx] ?? 0;
 
       const noteGain = ctx.createGain();
       noteGain.gain.value = noteGainVal;

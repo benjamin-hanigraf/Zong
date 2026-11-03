@@ -351,3 +351,27 @@ export function chordToPadSpec(chord) {
     bass: m[4] ? (KEY_TO_SEMITONE[m[4]] ?? -1) : -1,
   };
 }
+
+/**
+ * Where each note of a pad chord sits (MIDI numbers, -1 = not used). Close voicing: the third, fifth and 7th / 9th all
+ * stay within about an octave of the root, so nothing sounds far away; the whole chord is placed so its root lies
+ * between G2 and F#3 whatever the key (G, A, B drop an octave) — never too high or too low — and a slash chord's bass
+ * is always the lowest note (the chord moves up an octave if it has to), which keeps the inversion right.
+ *   root     the chord's root (lowest note unless there is a slash bass)
+ *   third    third / sus2 / sus4      fifth   fifth (or ♭5 / ♯5)
+ *   octave   the root doubled an octave up (left out for maj7: it would clash with the 7th)
+ *   extra    7th or added 9th        bass    slash-chord bass
+ */
+export function padVoicing(spec) {
+  let base = spec.root <= 6 ? 48 + spec.root : 36 + spec.root;
+  const bassMidi = spec.bass >= 0 ? 36 + spec.bass : -1;
+  if (bassMidi >= 0 && bassMidi >= base) base += 12;
+  return {
+    root: base,
+    third: base + spec.third,
+    fifth: base + spec.fifth,
+    octave: spec.seventh === 11 ? -1 : base + 12,
+    extra: spec.seventh ? base + (spec.seventh === 2 ? 14 : spec.seventh) : -1,
+    bass: bassMidi,
+  };
+}

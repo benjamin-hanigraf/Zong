@@ -82,8 +82,8 @@ public class NativeMetronomePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func padChordOn(_ call: CAPPluginCall) {
         NativePianoSynth.shared.padChordOn(
-            id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 0, third: call.getInt("third") ?? 4,
-            fifth: call.getInt("fifth") ?? 7, seventh: call.getInt("seventh") ?? 0, bass: call.getInt("bass") ?? -1)
+            id: call.getInt("id") ?? 0, root: call.getInt("root") ?? 48, third: call.getInt("third") ?? 52,
+            fifth: call.getInt("fifth") ?? 55, octave: call.getInt("octave") ?? -1, extra: call.getInt("extra") ?? -1, bass: call.getInt("bass") ?? -1)
         call.resolve()
     }
 
