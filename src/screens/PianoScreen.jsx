@@ -259,7 +259,6 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     if (!keyEl) return;
     const isBlack = keyEl.dataset.black === "1";
     keyEl.style.background = pressed ? (isBlack ? BLACK_PRESSED : WHITE_PRESSED) : (isBlack ? BLACK_KEY_BG : WHITE_KEY_BG);
-    keyEl.dataset.pressed = pressed ? "1" : "0";   // lets the highlighted label stay readable on the accent-coloured pressed key
   };
   // Keep a stable ref to paintKey so that the pointermove useEffect (which
   // only re-runs when isVocals changes) always calls the latest version and
@@ -356,15 +355,20 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     };
   }, [isVocals]);
 
+  // The song's key (set by swiping a song into the piano): a soft accent glow rising from the bottom edge, fading out a third of the way up.
+  const keyGlow = (semitone) => (semitone === highlightSemitone
+    ? <div aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "33%", borderRadius: "inherit", pointerEvents: "none", background: `linear-gradient(to top, ${C.accent}59, ${C.accent}00)` }} />
+    : null);
+
   const renderOctaveKeys = () => (
     <>
       <div style={{ position: "absolute", inset: 0, display: "flex" }}>
         {WHITE_KEYS.map((k) => (
           <div key={k.semitone} data-semitone={k.semitone} data-black="0" style={{
-            flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
+            position: "relative", flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
             display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 12, boxSizing: "border-box",
           }}>
-            <span className={k.semitone === highlightSemitone ? "piano-hl" : undefined} style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: k.semitone === highlightSemitone ? C.accent : "rgba(0,0,0,0.42)" }}>{k.name}</span>
+            <span style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: "rgba(0,0,0,0.42)" }}>{k.name}</span>{keyGlow(k.semitone)}
           </div>
         ))}
       </div>
@@ -379,7 +383,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
               background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
               display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
             }}>
-              <span className={k.semitone === highlightSemitone ? "piano-hl" : undefined} style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: k.semitone === highlightSemitone ? C.accent : "rgba(255,255,255,0.70)" }}>{k.name}</span>
+              <span style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: "rgba(255,255,255,0.70)" }}>{k.name}</span>{keyGlow(k.semitone)}
             </div>
           );
         })}

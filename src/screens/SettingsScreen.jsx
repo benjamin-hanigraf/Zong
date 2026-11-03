@@ -1,5 +1,5 @@
 // Settings tab.
-import { AlignCenter, AlignLeft, AlignRight, ChevronLeft, ChevronRight, Download, Minus, Plus, RefreshCw, Share } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, ChevronLeft, ChevronRight, Download, Minus, Plus, RefreshCw, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { CLICK_TONES, FONT, MODES, MODE_META, PAN_OPTIONS } from "../lib/constants.js";
 import { numbersTaggedToChordsTagged } from "../lib/chords.js";
@@ -216,7 +216,7 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
             </div>
             <div style={{ display: "flex", gap: 8, padding: "0 8px 8px 8px" }}>
               {[
-                { label: "Export", Icon: Share, onClick: onExportLibrary },
+                { label: "Export", Icon: Upload, onClick: onExportLibrary },
                 { label: "Import", Icon: Download, onClick: () => importInputRef.current?.click() },
               ].map(({ label, Icon, onClick }) => (
                 <button key={label} onClick={onClick} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>

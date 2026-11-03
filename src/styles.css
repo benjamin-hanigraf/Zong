@@ -60,13 +60,14 @@ button:active {
   opacity: 0.8;
 }
 
+/* !important: most fields set their own inline border, which would otherwise keep the border dull while focused. */
 input:focus, textarea:focus {
   outline: none;
-  border-color: var(--accent, #30D158);
+  border-color: var(--accent, #30D158) !important;
   box-shadow: 0 0 0 2px var(--accent-dim, rgba(48, 209, 88, 0.35));
 }
 input.no-ring:focus, textarea.no-ring:focus {
-  border-color: transparent;
+  border-color: transparent !important;
   box-shadow: none;
 }
 input::placeholder, textarea::placeholder {
@@ -105,10 +106,6 @@ textarea {
   -ms-overflow-style: none;
 }
 
-/* A highlighted piano label (song key) stays readable while its key is pressed. */
-[data-pressed="1"] > .piano-hl {
-  color: rgba(0, 0, 0, 0.6) !important;
-}
 
 /* Keyboard focus: a clear ring on buttons and list rows (not shown for mouse / touch clicks). */
 button:focus-visible,
