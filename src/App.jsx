@@ -4200,6 +4200,8 @@ function SongDetailScreen({
   const syncMarker = (key) => (syncRole && key && key === activeKey
     ? <div aria-hidden="true" style={{ position: "absolute", left: -13, top: 0, bottom: 0, width: 3, borderRadius: 2, background: C.accent }} />
     : null);
+  // Lead: tapping anywhere in a section jumps everyone to it (to play the sections in any order).
+  const sectionTap = (key) => (syncRole === "lead" && key ? () => { const at = sectionEntries.findIndex((e) => e.key === key); if (at >= 0 && at !== activeSection) goToSection(at, true); } : undefined);
   const scrollToSection = (idx) => {
     const el = scrollRef.current?.querySelector(`[data-section-key="${CSS.escape(sectionEntries[idx]?.key || "")}"]`);
     const box = scrollRef.current;
@@ -4345,7 +4347,7 @@ function SongDetailScreen({
           if (mode === "chords" && chordsView === "chords") {
             const rawText = ms.chordsText;
             return keyedBlocks(parseTextIntoBlocks(rawText, true)).map(({ block, key }, idx) => (
-              <div key={idx} data-section-key={key || undefined} style={{ position: "relative", marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+              <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 {syncMarker(key)}
                 {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
                 <ChordsOnlyBlock
@@ -4371,7 +4373,7 @@ function SongDetailScreen({
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
           return keyedBlocks(parseTextIntoBlocks(displayText, true)).map(({ block, key }, idx) => (
-            <div key={idx} data-section-key={key || undefined} style={{ position: "relative", marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
+            <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {syncMarker(key)}
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
               {isVocals ? (
