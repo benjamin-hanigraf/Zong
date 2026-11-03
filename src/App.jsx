@@ -4,7 +4,7 @@ import { tidySections, reconcileAfterEdit, sectionList } from "./sections.js";
 import {
   Search, Plus, Pencil, Trash2, ChevronLeft, ChevronRight, ChevronDown, Play, Square,
   ListMusic, Layers, Minus, AlignLeft, AlignCenter, AlignRight, Check, X,
-  Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle,
+  Settings as SettingsIcon, Copy, Save, RefreshCw, AlertTriangle, Share, Download,
 } from "lucide-react";
 import {
   syncLibrary, subscribeToChanges, joinLiveSync, isSupabaseConfigured, leaveTeam, checkIsOnlyTeamMember, ensureTeamRow,
@@ -4259,6 +4259,7 @@ function SongDetailScreen({
 
   const scrollRef = useRef(null);
   const detailRoot = useRef(null);
+  const [leaveStageAsk, setLeaveStageAsk] = useState(false);
   useKeys({ rootRef: detailRoot, escape: () => { if (descOpen) setDescOpen(false); else onBack(); } });
   // Layout effect: the reset must land before the new song is painted (it may be sliding in).
   useLayoutEffect(() => {
@@ -4523,6 +4524,11 @@ function SongDetailScreen({
 
       {syncRole && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 10, padding: `10px 16px ${showBottomBar ? 10 : "max(14px, calc(6px + var(--safe-bottom)))"}`, borderTop: `1px solid ${C.border}`, background: C.bg }}>
+          <button
+            onClick={() => (syncRole === "lead" ? setLeaveStageAsk(true) : liveSync.onLeave?.())}
+            aria-label="Leave Stage Mode" title="Leave Stage Mode"
+            style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "transparent", color: C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginRight: 4 }}
+          ><X size={16} /></button>
           <span title={liveSync.status === "live" ? "Connected" : "Reconnecting…"} style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: liveSync.status === "live" ? C.accent : "#FFB020" }} />
           {syncRole === "lead" ? (
             <>
@@ -4538,6 +4544,11 @@ function SongDetailScreen({
             </div>
           )}
         </div>
+      )}
+
+      {leaveStageAsk && (
+        <ConfirmDialog title="Leave Stage Mode?" message="You're leading. Everyone else will be left without a leader until someone takes over." confirmLabel="Leave" cancelLabel="Stay" danger
+          onConfirm={() => { setLeaveStageAsk(false); liveSync.onLeave?.(); }} onCancel={() => setLeaveStageAsk(false)} C={C} />
       )}
 
       {showBottomBar && (
@@ -5099,7 +5110,8 @@ function SpacingIcon({ gap, size = 18 }) {
   );
 }
 
-function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, live, onOpenStageMode, C }) {
+function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, live, onOpenStageMode, onExportLibrary, onImportLibrary, C }) {
+  const importInputRef = useRef(null);
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
@@ -5277,6 +5289,18 @@ function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, s
               >
                 <RefreshCw size={15} color={C.accent} />
               </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, padding: "0 8px 8px 8px" }}>
+              {[
+                { label: "Export", Icon: Share, onClick: onExportLibrary },
+                { label: "Import", Icon: Download, onClick: () => importInputRef.current?.click() },
+              ].map(({ label, Icon, onClick }) => (
+                <button key={label} onClick={onClick} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface3, color: C.text, fontFamily: FONT, fontSize: 14.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+                  <Icon size={16} color={C.accent} />{label}
+                </button>
+              ))}
+              <input ref={importInputRef} type="file" accept=".json,application/json" style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onImportLibrary(f); }} />
             </div>
           </div>
 
@@ -6520,6 +6544,71 @@ function AppInner() {
   useEffect(() => {
     if (!busyRef.current && live.role === "follow" && latestLivePos.current) applyLivePosition(latestLivePos.current);
   }, [editingSong, newSongSeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Library export / import (Settings → Library) ──
+  const handleExportLibrary = async () => {
+    const readMap = (key) => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } };
+    const accentsMap = readMap(SONG_ACCENTS_KEY);
+    const data = {
+      app: "zong", version: 1, exportedAt: new Date().toISOString(),
+      songs: songsRef.current.map((s) => ({ ...migrateSongShape(s), accents: accentsMap[s.id] ?? s.accents, subdivision: getSongSubdivision(s.id) })),
+      setlists: setlistsRef.current,
+      spellingChart: spellingChartRef.current,
+    };
+    const name = `zong-library-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([JSON.stringify(data)], name, { type: "application/json" });
+    try {
+      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: "Zong library" }); return; }
+    } catch (err) {
+      if (err?.name === "AbortError") return;      // the user closed the share sheet
+    }
+    const url = URL.createObjectURL(file);          // no share sheet here (desktop browsers): save as a download
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+  const handleImportLibrary = async (file) => {
+    try {
+      if (!file || file.size > 50 * 1024 * 1024) throw new Error("bad file");
+      const data = JSON.parse(await file.text());
+      if (!data || data.app !== "zong" || !Array.isArray(data.songs)) throw new Error("not a Zong library");
+      const same = (a, b) => a.id === b.id || ((a.title || "").trim().toLowerCase() === (b.title || "").trim().toLowerCase() && (a.artist || "").trim().toLowerCase() === (b.artist || "").trim().toLowerCase());
+      let added = 0, updated = 0;
+      const incoming = data.songs.filter((r) => r && typeof r === "object" && typeof r.title === "string" && r.title.trim());
+      saveSongs((prev) => {
+        const next = [...prev];
+        incoming.forEach((raw) => {
+          const song = { ...raw, id: typeof raw.id === "string" && raw.id ? raw.id : uid() };
+          const idx = next.findIndex((l) => same(l, song));
+          if (idx === -1) { next.push(song); added += 1; }
+          else if ((song.updatedAt || 0) > (next[idx].updatedAt || 0)) { next[idx] = { ...song, id: next[idx].id }; updated += 1; }
+        });
+        return next;
+      });
+      incoming.forEach((raw) => {
+        const id = songsRef.current.find((l) => same(l, raw))?.id;
+        if (!id) return;
+        if (Array.isArray(raw.accents)) setSongAccentsLocal(id, raw.accents);
+        if (raw.subdivision != null) setSongSubdivision(id, raw.subdivision);
+      });
+      let lists = 0;
+      if (Array.isArray(data.setlists)) {
+        saveSetlists((prev) => {
+          const next = [...prev];
+          data.setlists.forEach((sl) => {
+            if (!sl || typeof sl.id !== "string" || typeof sl.name !== "string" || !Array.isArray(sl.entries) || next.some((x) => x.id === sl.id)) return;
+            next.push({ ...sl, shared: false, teamSynced: false });   // imported setlists stay on this device until shared again
+            lists += 1;
+          });
+          return next;
+        });
+      }
+      const words = data.spellingChart && typeof data.spellingChart === "object" ? Object.entries(data.spellingChart).filter(([k, v]) => typeof k === "string" && typeof v === "string") : [];
+      if (words.length) saveSpellingChart((prev) => ({ ...prev, ...Object.fromEntries(words) }));
+      flash(`Imported ${added} new and ${updated} updated song${added + updated === 1 ? "" : "s"}${lists ? `, ${lists} setlist${lists === 1 ? "" : "s"}` : ""}`);
+    } catch {
+      flash("That file isn't a Zong library");
+    }
+  };
   const openStageMode = () => {
     if (!live.available) { flash("Join a Team first (Settings → Team)"); return; }
     live.open();
@@ -6705,7 +6794,7 @@ function AppInner() {
         </div>
         <div style={{ display: tab === "settings" ? "block" : "none", height: "100%", position: "relative" }}>
           <SettingsScreen
-            live={live} onOpenStageMode={openStageMode}
+            live={live} onOpenStageMode={openStageMode} onExportLibrary={handleExportLibrary} onImportLibrary={handleImportLibrary}
             mode={mode} setMode={setMode}
             fontSize={fontSize} setFontSize={setFontSize}
             chordFontSize={chordFontSize} setChordFontSize={setChordFontSize}
@@ -6761,7 +6850,7 @@ function AppInner() {
           onRemoveFromSetlist={viewing?.fromSetlistId ? () => handleRemoveSongFromSetlist(viewing.fromSetlistId, viewingSong.id) : null}
           onPrevSong={viewing?.fromSetlistId && prevSetlistSongId ? () => setViewing({ songId: prevSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
           liveSync={live.role === "off" ? null : {
-            role: live.role, status: live.connected ? "live" : "connecting", target: liveTarget,
+            role: live.role, status: live.connected ? "live" : "connecting", target: liveTarget, onLeave: live.close,
             onSection: ({ sectionKey, sectionIdx }) => live.publish({ songId: viewingSong.id, setlistId: viewing?.fromSetlistId || null, sectionKey, sectionIdx }),
           }}
           onNextSong={viewing?.fromSetlistId && nextSetlistSongId ? () => setViewing({ songId: nextSetlistSongId, fromSetlistId: viewing.fromSetlistId }) : null}
