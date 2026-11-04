@@ -7,7 +7,7 @@ import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSamp
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
 import { padLevels, padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
-import { PieIcon } from "../components/shared.jsx";
+import { ChordWheelsIcon, PianoIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
 
@@ -475,11 +475,11 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
             {isVocals ? "Chord Piano" : "Piano"}
           </div>
           {mode === "chords" && !followingJoystick && (
-            <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Joystick chord piano"} title={joystick ? "Piano keys" : "Joystick chord piano"} style={{
-              width: 32, height: 32, borderRadius: "50%", border: `1px solid ${joystick ? C.accent : C.borderStrong}`, background: joystick ? C.accentSoft : C.surface2,
+            <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Chord wheels"} title={joystick ? "Piano keys" : "Chord wheels"} style={{
+              border: "none", background: "transparent", padding: "12px 10px", margin: "-12px -10px", cursor: "pointer",
               color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <PieIcon size={17} />
+              {joystick ? <PianoIcon height={20} color="currentColor" strokeWidth={1.9} /> : <ChordWheelsIcon height={20} color="currentColor" strokeWidth={1.9} />}
             </button>
           )}
         </div>

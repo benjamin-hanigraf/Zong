@@ -254,17 +254,6 @@ export function TabSelect({ options, value, onChange, buttonPadding = "10px 0", 
   );
 }
 
-// A small circle cut into pie slices: the joystick chord piano's icon.
-export function PieIcon({ size = 16, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9.5" />
-      <path d="M12 2.5v6M12 15.5v6M3.8 7.2l5.2 3M15 13.8l5.2 3M3.8 16.8l5.2-3M15 10.2l5.2-3" />
-      <circle cx="12" cy="12" r="3.4" />
-    </svg>
-  );
-}
-
 /* =========================================================================
    Piano tab (shown for Vocals + Chords modes)
    ========================================================================= */
@@ -280,6 +269,21 @@ export function PianoIcon({ size = 18, height, color, strokeWidth }) {
       <rect x="5.5" y="1" width="2" height="8" fill={color} rx="0.5" />
       <rect x="11" y="1" width="2" height="8" fill={color} rx="0.5" />
       <rect x="16.5" y="1" width="2" height="8" fill={color} rx="0.5" />
+    </svg>
+  );
+}
+
+// The chord wheels' icon: the piano icon's rounded rectangle (same outline, same size) with two circles inside — the left and
+// right wheels, in the same places as on the page. Toggles with PianoIcon in the Piano page's title bar.
+export function ChordWheelsIcon({ size = 18, height, color, strokeWidth }) {
+  const h = height ?? size;
+  const w = Math.round(h * 1.32);
+  const sw = strokeWidth ? Math.min(strokeWidth * 0.72, 1.4) : 1.2;
+  return (
+    <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 24 18" fill="none">
+      <rect x="1" y="1" width="22" height="16" rx="2.5" stroke={color} strokeWidth={sw} />
+      <circle cx="7" cy="9" r="3.4" stroke={color} strokeWidth={sw} />
+      <circle cx="17" cy="9" r="3.4" stroke={color} strokeWidth={sw} />
     </svg>
   );
 }

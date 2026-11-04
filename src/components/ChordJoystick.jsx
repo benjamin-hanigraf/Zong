@@ -94,7 +94,9 @@ export function joystickChord(keyName, keyQuality, degree, quality) {
   return tokenToChord(`${acc}${degree}${suffix}`, keyName, keyQuality);
 }
 
-export function ChordJoystick({ C, playPad, stopPad, onState, readOnly = false, remote = null, loadKey = null }) {
+export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = false, remote = null, loadKey = null }) {
+  // This page's fills are one step darker than the app's usual surfaces (wheels, key selector, scale switch).
+  const C = { ...theme, surface2: theme.surface, surface3: theme.surface2 };
   const [keyName, setKeyName] = useState("C");   // spelled as the song has it (Bb stays Bb); stepping uses the same names as the song view
   const [keyQuality, setKeyQuality] = useState("Major");
   const [degree, setDegree] = useState(null);     // 1-7 while the right stick is held, else null
