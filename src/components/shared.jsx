@@ -282,8 +282,9 @@ export function ChordWheelsIcon({ size = 18, height, color, strokeWidth }) {
   return (
     <svg width={w} height={h} style={{ display: "block" }} viewBox="0 0 24 18" fill="none">
       <rect x="1" y="1" width="22" height="16" rx="2.5" stroke={color} strokeWidth={sw} />
-      <circle cx="7" cy="9" r="3.4" stroke={color} strokeWidth={sw} />
-      <circle cx="17" cy="9" r="3.4" stroke={color} strokeWidth={sw} />
+      {/* the two wheels: small circles filled with a darker shade of the icon's colour */}
+      <circle cx="7" cy="9" r="2.6" fill={color} fillOpacity="0.4" stroke={color} strokeWidth={sw * 0.6} />
+      <circle cx="17" cy="9" r="2.6" fill={color} fillOpacity="0.4" stroke={color} strokeWidth={sw * 0.6} />
     </svg>
   );
 }

@@ -1,5 +1,5 @@
 // Rotates a child (the piano) to face the wider screen edge.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useIsLandscapeScreen } from "../lib/viewport.js";
 
 export function LandscapeLock({ children }) {
@@ -9,18 +9,20 @@ export function LandscapeLock({ children }) {
     h: typeof window !== "undefined" ? window.innerHeight : 0,
   }));
   const isLandscapeScreen = useIsLandscapeScreen();
-  useEffect(() => {
+  const measure = () => {
     const el = outerRef.current;
     if (!el) return;
-    const update = () => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w > 0 && h > 0) {
-        setSize({ w, h });
-      }
-    };
-    update();
-    const ro = new ResizeObserver(update);
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (w > 0 && h > 0) setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+  };
+  // Measured before the browser paints after every render (e.g. the bottom bar being hidden changes this box's height),
+  // so the rotated page never shows one frame at the old size; the observer covers resizes that don't re-render us.
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);

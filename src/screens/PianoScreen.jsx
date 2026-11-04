@@ -477,7 +477,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
           {mode === "chords" && !followingJoystick && (
             <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Chord wheels"} title={joystick ? "Piano keys" : "Chord wheels"} style={{
               border: "none", background: "transparent", padding: "12px 10px", margin: "-12px -10px", cursor: "pointer",
-              color: joystick ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center",
+              color: C.accent, display: "flex", alignItems: "center", justifyContent: "center",
             }}>
               {joystick ? <PianoIcon height={20} color="currentColor" strokeWidth={1.9} /> : <ChordWheelsIcon height={20} color="currentColor" strokeWidth={1.9} />}
             </button>

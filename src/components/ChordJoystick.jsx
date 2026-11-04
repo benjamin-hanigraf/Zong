@@ -1,6 +1,6 @@
 // Joystick chord piano (Chords mode): right stick = scale degree 1-7, left stick = chord quality, key selector below.
 // readOnly (a follower in Stage Mode): shows the leader's key, sticks and chord, plays nothing.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { KEY_TO_SEMITONE, chordToPadSpec, flatify, tokenToChord, transposeKey } from "../lib/chords.js";
 import { KeyStepper, TabSelect } from "./shared.jsx";
@@ -111,13 +111,18 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
   }, [loadKey]);
   const voiceRef = useRef(null);
   const boxRef = useRef(null);
-  const [box, setBox] = useState({ w: 600, h: 300 });
+  const [box, setBox] = useState(null);   // measured before the first paint, so the sticks never flash at a guessed size
+  const measureBox = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const w = el.clientWidth, h = el.clientHeight;
+    setBox((b) => (b && b.w === w && b.h === h ? b : { w, h }));
+  };
+  useLayoutEffect(measureBox);   // after every render too: the page around us may have just changed size
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return undefined;
-    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(measureBox);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -193,6 +198,7 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
   const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
   // Laid out for a phone held sideways. On a bigger screen (Mac / PC) everything is scaled up by the same factor (sticks, key
   // selector, chord name), so it keeps the same proportions as on the iPhone instead of looking small in a large window.
+  if (!box) return <div ref={boxRef} style={{ flex: 1, position: "relative", overflow: "hidden" }} />;
   const scale = Math.max(1, Math.min(box.w / 760, box.h / 380, 2.4));
   const bw = box.w / scale, bh = box.h / scale;
   // Two sticks plus the key selector (about 250px) must fit side by side, and the sticks must fit the height.
