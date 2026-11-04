@@ -7,6 +7,7 @@ import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSamp
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
 import { padLevels, padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
+import { hasOpenLayer, isShown, isTypingTarget } from "../lib/keys.js";
 import { ChordWheelsIcon, PianoIcon } from "../components/shared.jsx";
 
 const WHITE_KEY_BG = "#F2F1EC";
@@ -40,6 +41,20 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   // Chords mode: the joystick chord piano instead of the keyboard — switched on here, or (following a Stage Mode leader) from outside.
   const followingJoystick = mode === "chords" && !!joystickRemote?.on;
   const joystick = mode === "chords" && (joystickOn || followingJoystick);
+  // Esc on a computer leaves the chord wheels for the piano keys (unless a dialog is open, or this page isn't the one showing).
+  const pageRef = useRef(null);
+  const joystickLeaveRef = useRef(null);
+  joystickLeaveRef.current = joystickOn && !followingJoystick ? onJoystickToggle : null;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || hasOpenLayer() || isTypingTarget(e.target)) return;
+      if (!joystickLeaveRef.current || !pageRef.current || !isShown(pageRef.current)) return;
+      e.preventDefault();
+      joystickLeaveRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [chordQuality, setChordQuality] = useState(loadedQuality || "Major");
   const chordQualityRef = useRef(loadedQuality || "Major");
 
@@ -552,7 +567,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
   );
 
   return (
-    <div style={{ height: "100%" }}>
+    <div ref={pageRef} style={{ height: "100%" }}>
       {!isNativePlatform() && <video
         ref={silentVideoRef}
         src={SILENT_VIDEO_SRC}
