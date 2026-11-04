@@ -243,11 +243,6 @@ export function tokenToChord(token, key, quality) {
     const sevenSemitone = semitoneRoot + scaleOffsets[6]; // scale degree 7 (bass)
     return spellNote(fiveSemitone, useFlats) + "/" + spellNote(sevenSemitone, useFlats);
   }
-  // Likewise a bare "3" in a Major key is voiced as 1/3 (the I chord over scale-degree-3 in the bass) instead of the
-  // minor iii. "3m", "3M", "37", "b3", "3/5" … are explicit and stay as written.
-  if (degree === 3 && quality !== "Minor" && !acc && !qualitySuffix && !bassDegreeStr) {
-    return spellNote(semitoneRoot, useFlats) + "/" + spellNote(rootSemitone, useFlats);
-  }
   // Only fall back to the diatonic default when the number is unaltered
   // (no leading b/#) and the user hasn't already written their own quality
   // — an accidental signals a deliberate chromatic/borrowed chord, whose
