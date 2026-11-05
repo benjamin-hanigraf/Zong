@@ -107,12 +107,12 @@ export function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggl
 }
 
 function dotColor(state, lit, C) {
-  if (state === "mute") return "transparent";
+  if (state === "mute") return lit ? "#fff" : "transparent";   // a silent beat is a hollow dot that still blinks
   if (state === "accent") return lit ? C.accent : C.accentDim;
   return lit ? "#fff" : C.surface3;
 }
 
-export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, muted = false, onToggleMuted, C }) {
+export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwardOnly, onToggleMuted, C }) {
   const flashBeat = useFlashBeat();
   const [open, setOpen] = useState(false);
   useKeys({ escape: () => setOpen(false) }, open);
@@ -129,7 +129,7 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
     nextPattern[i] = next;
     onChange(nextPattern);
   };
-  // Long-press toggles mute mode; a normal tap opens the pattern editor (also while muted).
+  // Long-press silences every beat (or brings them back); a normal tap opens the pattern editor, also while silenced, where tapping a dot un-silences it.
   const pressTimer = useRef(null);
   const longPressed = useRef(false);
   const pressOrigin = useRef({ x: 0, y: 0 });
@@ -175,7 +175,7 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
         onContextMenu={(e) => e.preventDefault()}
         style={{ display: "flex", gap: 8, justifyContent: "center", background: "none", border: "none", padding: 6, cursor: "pointer", WebkitTouchCallout: "none", userSelect: "none" }}>
         {pattern.map((state, i) => (
-          <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: muted ? (flashBeat === i ? "#fff" : "transparent") : dotColor(state, flashBeat === i, C), border: muted || state === "mute" ? `1.5px solid ${muted && flashBeat === i ? "#fff" : C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
+          <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: dotColor(state, flashBeat === i, C), border: state === "mute" ? `1.5px solid ${flashBeat === i ? "#fff" : C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
         ))}
       </button>
       {open && (

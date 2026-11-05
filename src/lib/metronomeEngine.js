@@ -66,11 +66,19 @@ export function useMetronomeEngine(settings) {
   });
   const setPlaying = (v) => playingStore.set(v);
   const [loadedSong, setLoadedSong] = useState(null);
-  // Mute mode (long-press the beat dots): every beat goes silent but still flashes. A temporary override —
-  // the saved accent pattern is untouched and comes straight back; not remembered across app launches.
-  const [muted, setMutedState] = useState(false);
-  const mutedRef = useRef(false);
-  const toggleMuted = () => { mutedRef.current = !mutedRef.current; setMutedState(mutedRef.current); };
+  // Silent beats: every beat has three states — normal, accent, silent ("mute": no click, but its dot still blinks in time).
+  // Long-pressing the beat dots silences every beat at once and long-pressing again brings them back as they were: the saved pattern
+  // (`accents`) is never touched by this, it only stays covered while `silenced` lists beats. Tapping a dot in the pop-up changes
+  // that beat for real (it is no longer covered) — also while silenced, which is how a beat is un-silenced by hand. Not remembered
+  // across app launches, song loads or time-signature changes.
+  const [silenced, setSilencedState] = useState([]);
+  const silencedRef = useRef([]);
+  const setSilenced = (list) => { silencedRef.current = list; setSilencedState(list); };
+  const toggleMuted = () => {
+    const beats = timeSigRef.current?.beats || 4;
+    setSilenced(silencedRef.current.length ? [] : Array.from({ length: beats }, (_, i) => i));
+  };
+  const beatState = (i) => (silencedRef.current.includes(i) ? "mute" : (accentsRef.current[i] || "normal"));
 
   useEffect(() => { try { localStorage.setItem("altar_metronome_bpm", bpm); } catch { } }, [bpm]);
   useEffect(() => { try { localStorage.setItem("altar_metronome_time_sig", JSON.stringify(timeSig)); } catch { } }, [timeSig]);
@@ -150,9 +158,23 @@ export function useMetronomeEngine(settings) {
     const effBeats = (ts.beats === 6 && ts.unit === 8) ? 4 : ts.beats;
     const newAccents = defaultAccents(effBeats);
     setAccentsState(newAccents);
+    setSilenced([]);
   };
   const setAccents = (arr) => {
     setAccentsState(arr);
+  };
+  // `next` = the beat pattern as shown (silenced beats appear as "mute") with the user's edit in it. Only the beats that differ from what
+  // was shown are changed for real; the rest of the saved pattern is kept. Returns the pattern to save.
+  const editAccents = (next) => {
+    const merged = accentsRef.current.slice();
+    let covered = silencedRef.current;
+    next.forEach((state, i) => {
+      if (state !== beatState(i)) { merged[i] = state; covered = covered.filter((x) => x !== i); }
+    });
+    if (covered.length !== silencedRef.current.length) setSilenced(covered);
+    accentsRef.current = merged;
+    setAccentsState(merged);
+    return merged;
   };
   const setSubdivision = (n) => {
     setSubdivisionState(n);
@@ -254,9 +276,8 @@ export function useMetronomeEngine(settings) {
 
   const scheduleClick = (beatNum, time) => {
     const ctx = audioCtxRef.current;
-    const state = mutedRef.current ? "silent" : (accentsRef.current[beatNum] || "normal");
-    if (state !== "silent") playClick(state, time);
-    if (state === "mute") return;
+    const state = beatState(beatNum);
+    playClick(state, time);   // a silent beat makes no sound, but still blinks
     const delayMs = Math.max(0, (time - ctx.currentTime) * 1000);
     setTimeout(() => setFlashBeat(beatNum), delayMs);
   };
@@ -266,14 +287,14 @@ export function useMetronomeEngine(settings) {
     if (!ctx) return;
     while (nextNoteTimeRef.current < ctx.currentTime + 0.1) {
       const beatIndex = beatRef.current;
-      const beatState = mutedRef.current ? "silent" : (accentsRef.current[beatIndex] || "normal");
+      const stateNow = beatState(beatIndex);
       const sub = subdivisionRef.current;
       const beatDur = 60 / bpmRef.current;
       const subDur = beatDur / sub;
       for (let k = 0; k < sub; k++) {
         const t = nextNoteTimeRef.current + k * subDur;
         if (k === 0) scheduleClick(beatIndex, t);
-        else if (beatState !== "mute" && beatState !== "silent") playClick("normal", t);
+        else if (stateNow !== "mute") playClick("normal", t);
       }
       nextNoteTimeRef.current += beatDur;
       beatRef.current = (beatIndex + 1) % timeSigRef.current.beats;
@@ -326,10 +347,11 @@ export function useMetronomeEngine(settings) {
       if (!p) setFlashBeat(-1);
     }
   };
+  const shownAccentsNow = () => accentsRef.current.map((_, i) => beatState(i));
   const nativeSettings = () => ({
     bpm: bpmRef.current,
     beatsPerBar: timeSigRef.current.beats,
-    accents: mutedRef.current ? accentsRef.current.map(() => "silent") : accentsRef.current,
+    accents: shownAccentsNow().map((a) => (a === "mute" ? "silent" : a)),   // the engine's "silent" = no click, beat still reported
     subdivision: subdivisionRef.current,
     title: loadedSongRef.current ? stripAltTitle(loadedSongRef.current.title) : "Metronome",
   });
@@ -341,7 +363,7 @@ export function useMetronomeEngine(settings) {
       if (playingStore.value) nativeMetronome.update(nativeSettings()).catch((e) => console.error("[Zong metronome]", e));
     }, 60);
     return () => clearTimeout(t);
-  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong, muted]);
+  }, [isNative, bpm, timeSig, accents, subdivision, loadedSong, silenced]);
 
   const start = async () => {
     if (isNative) {
@@ -427,6 +449,7 @@ export function useMetronomeEngine(settings) {
     setTimeSigState({ beats, unit });
     const effBeats = (beats === 6 && unit === 8) ? 4 : beats;
     setAccentsState(getSongAccents(song.id, effBeats));
+    setSilenced([]);
     // Load per-song on-device subdivision (Requirement 9)
     const songSub = getSongSubdivision(song.id);
     setSubdivisionState(songSub);
@@ -448,6 +471,7 @@ export function useMetronomeEngine(settings) {
     setBpmState(song.tempo || 120);
     setTimeSigState({ beats, unit });
     setAccentsState(pattern);
+    setSilenced([]);
     setSubdivisionState(sub);
     beatRef.current = 0;
     start();
@@ -455,6 +479,7 @@ export function useMetronomeEngine(settings) {
 
   return {
     bpm, setBpm, timeSig, setTimeSig, accents, setAccents, subdivision, setSubdivision,
-    toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay, muted, toggleMuted,
+    shownAccents: accents.map((a, i) => (silenced.includes(i) ? "mute" : (a || "normal"))), editAccents,
+    toggle, start, stop, tapTempo, loadedSong, loadSong, loadSongAndPlay, muted: silenced.length > 0, toggleMuted,
   };
 }

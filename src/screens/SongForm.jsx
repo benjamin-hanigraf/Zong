@@ -1,5 +1,5 @@
 // Add / Edit song form, including the section text boxes and shared-section syncing.
-import { ChevronDown, ChevronLeft, Copy, GripVertical, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Copy, GripVertical, Plus, Trash2, X } from "lucide-react";
 import { normLabel, reconcileAfterEdit, sectionList } from "../sections.js";
 import { applySectionChanges, cleanStructure } from "../lib/structure.js";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -243,6 +243,18 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
     }));
     return out;
   })();
+  // Editing a section's heading (a letter, or only its case) renames the Structure rows that use it, as you type.
+  const followHeadingEdit = (before, after) => {
+    const was = sectionList(before);
+    const now = sectionList(after);
+    if (was.length !== now.length) return;   // a heading was added or removed: handled when the text is synced
+    const renames = was.map((w, i) => ({ from: w.label, to: now[i].label })).filter((r) => r.from !== r.to);
+    if (!renames.length) return;
+    setStructure((rows) => rows.map((r) => {
+      const hit = renames.find((x) => normLabel(x.from) === normLabel(r.s));
+      return hit ? { ...r, s: hit.to } : r;
+    }));
+  };
   const setRow = (id, patch) => setStructure((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const addRow = () => setStructure((rows) => [...rows, { id: `n${nextRowId.current++}`, s: "", n: "" }]);
   const removeRow = (id) => setStructure((rows) => rows.filter((r) => r.id !== id));
@@ -377,7 +389,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
 
           <HighlightedAutoGrowTextarea
             value={activeSectionValue}
-            onChange={(e) => setActiveSectionValue(e.target.value)}
+            onChange={(e) => { followHeadingEdit(activeSectionValue, e.target.value); setActiveSectionValue(e.target.value); }}
             onBlur={() => { if (sectionTab === "chords") setChordsText((t) => autoBracketNumbers(t)); }}
             placeholder={SECTION_TAB_PLACEHOLDERS[sectionTab]}
             accent={C.accent}
@@ -394,7 +406,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
             width: "100%", boxSizing: "border-box", height: 44, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
             fontFamily: FONT, fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between",
           }}>
-            <span>Structure{structure.length ? <span style={{ color: C.textMuted, fontWeight: 500 }}> · {structure.length}</span> : null}</span>
+            <span style={{ color: C.accent }}>Structure</span>
             <ChevronDown size={18} style={{ transform: structureOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease", opacity: 0.7 }} />
           </button>
           {structureOpen && (
@@ -407,7 +419,6 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
                     display: "flex", alignItems: "center", gap: 8, position: "relative", zIndex: held ? 10 : 1, borderRadius: 10,
                     transform: drag ? `translateY(${rowShift(index, row.id)}px)` : "none",
                     transition: held || !drag ? "none" : "transform 150ms ease",
-                    background: held ? C.surface3 : "transparent", boxShadow: held ? "0 8px 24px rgba(0,0,0,0.6)" : "none",
                   }}>
                   <div onPointerDown={(e) => startDrag(e, row.id)}
                     aria-label="Hold and drag to move" title="Hold and drag to move"
@@ -425,7 +436,8 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
                 </div>
                 );
               })}
-              <button type="button" onClick={addRow} style={{ alignSelf: "flex-start", background: "none", border: "none", padding: "8px 4px", color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700 }}>
+              <button type="button" onClick={addRow} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: "8px 0", color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700 }}>
+                <span style={{ width: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={18} /></span>
                 Add section
               </button>
             </div>

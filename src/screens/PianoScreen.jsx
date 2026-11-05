@@ -1,7 +1,7 @@
 // Piano / Chord Piano tab.
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, loadPadSamples, padSamplesReady, findNearestPadSample, PAD_LOOP, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
@@ -453,9 +453,15 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
 
   // The note names on the keys grow with the screen (small on a phone, larger on a laptop) by the same factor as the chord wheels.
   const [keyScale, setKeyScale] = useState(1);
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (!el) return undefined;
+  // The keys' box is measured through a callback ref, not an effect: when the window changes between wide and tall the piano is
+  // rotated into / out of a different wrapper (LandscapeLock) and the box is a brand-new element each time. An observer attached
+  // once to the first element would stay on the old, detached one — and the note names would stay at whatever size they last had.
+  const keysObserver = useRef(null);
+  const setKeysEl = useCallback((el) => {
+    containerRef.current = el;
+    keysObserver.current?.disconnect();
+    keysObserver.current = null;
+    if (!el) return;
     const fit = () => {
       const k = Math.max(1, Math.min(el.clientWidth / 760, el.clientHeight / 330, 2.4));
       setKeyScale((v) => (Math.abs(v - k) < 0.01 ? v : k));
@@ -463,8 +469,8 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [joystick]);
+    keysObserver.current = ro;
+  }, []);
 
   const renderOctaveKeys = () => (
     <>
@@ -594,7 +600,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
         <ChordJoystick C={C} playPad={(spec) => startPadChord(spec.root, spec)} stopPad={stopPadChord} loadKey={joystickKey} onState={onJoystickState} readOnly={followingJoystick} remote={joystickRemote} />
       ) : (
       <div
-        ref={containerRef}
+        ref={setKeysEl}
         onPointerDown={handlePointerDown}
         onContextMenu={(e) => e.preventDefault()}
         style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}

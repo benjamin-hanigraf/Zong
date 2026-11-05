@@ -22,7 +22,7 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
   };
   const clearTitleTouch = () => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } };
 
-  const changeAccents = (next) => { setAccents(next); if (loadedSong) onUpdateSongAccents(loadedSong.id, next); };
+  const changeAccents = (next) => { const merged = engine.editAccents(next); if (loadedSong) onUpdateSongAccents(loadedSong.id, merged); };
   const cycleSubdivision = () => {
     const next = (subdivision % 3) + 1;
     setSubdivision(next);
@@ -60,7 +60,7 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", maxWidth: 320 }}>
-        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={accents} onChange={changeAccents} muted={engine.muted} onToggleMuted={engine.toggleMuted} C={C} />
+        <BeatAccentControl count={(timeSig.beats === 6 && timeSig.unit === 8) ? 4 : timeSig.beats} accents={engine.shownAccents} onChange={changeAccents} onToggleMuted={engine.toggleMuted} C={C} />
       </div>
 
       <Knob value={bpm} onChange={(v) => setBpm(v, true)} size={268} onToggle={toggle} C={C} />

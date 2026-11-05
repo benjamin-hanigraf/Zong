@@ -1,6 +1,6 @@
 // Shared form controls (Field, ClearableInput, pickers, switches) and small icons.
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isShown, useKeys } from "../lib/keys.js";
 import { FONT, TIME_SIGS } from "../lib/constants.js";
 
@@ -37,6 +37,38 @@ export function OptionDropdown({ options, value, onChange, placeholder = "Select
     setOpen((o) => !o);
   };
   const current = options.find((o) => o.id === value);
+  // Type-ahead (a physical keyboard): while the list is open, typing narrows it to the options containing the letters typed, in any
+  // case; Backspace takes a letter back and Enter picks the first one left. Nothing is shown for it — the list just gets shorter.
+  // A letter that would leave nothing is ignored.
+  const [typed, setTyped] = useState("");
+  const typedRef = useRef("");
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const pickRef = useRef(null);
+  pickRef.current = (id) => { onChange(id); setOpen(false); };
+  useEffect(() => {
+    typedRef.current = ""; setTyped("");
+    if (!open) return undefined;
+    const matches = (text) => optionsRef.current.filter((o) => o.label.toLowerCase().includes(text.toLowerCase()));
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      let next = typedRef.current;
+      if (e.key === "Backspace") next = next.slice(0, -1);
+      else if (e.key === "Enter") {
+        const first = matches(next)[0];
+        if (first && next) { e.preventDefault(); e.stopPropagation(); pickRef.current(first.id); }
+        return;
+      } else if (e.key.length === 1) {
+        if (!matches(next + e.key).length) { e.preventDefault(); return; }
+        next += e.key;
+      } else return;
+      e.preventDefault();
+      typedRef.current = next; setTyped(next);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
+  const shown = typed ? options.filter((o) => o.label.toLowerCase().includes(typed.toLowerCase())) : options;
   return (
     <div style={{ position: "relative", minWidth: 0 }}>
       <button ref={btnRef} type="button" onClick={toggle} style={{
@@ -54,7 +86,7 @@ export function OptionDropdown({ options, value, onChange, placeholder = "Select
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
             {options.length === 0 && <div style={{ padding: "12px 14px", fontFamily: FONT, fontSize: 14, color: C.textMuted }}>No sections yet</div>}
-            {options.map(({ id, label }) => {
+            {shown.map(({ id, label }) => {
               const active = id === value;
               return (
                 <div key={id} onClick={() => { onChange(id); setOpen(false); }} style={{

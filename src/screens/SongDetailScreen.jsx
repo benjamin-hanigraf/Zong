@@ -278,7 +278,7 @@ export function SongDetailScreen({
             </button>
           </div>
           <div style={{ justifySelf: "center" }}>
-            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} accents={engine.accents} onChange={engine.setAccents} size={7} muted={engine.muted} C={C} />
+            <BeatAccentControl count={(engine.timeSig.beats === 6 && engine.timeSig.unit === 8) ? 4 : engine.timeSig.beats} accents={engine.shownAccents} onChange={engine.editAccents} size={7} C={C} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, justifySelf: "end", position: "relative", zIndex: 1 }}>
             {hasTempoChanged && (

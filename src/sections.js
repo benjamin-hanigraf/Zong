@@ -174,7 +174,13 @@ export function reconcileAfterEdit(base, texts, edited) {
   others.forEach((k) => {
     const p = parsedOthers[k];
     const at = new Array(newList.length).fill(null);          // new-list index -> this text's section object
-    matched.forEach(({ oi, ni }) => { at[ni] = lookup[k].get(oldList[oi].key) || null; });
+    matched.forEach(({ oi, ni }) => {
+      const sec = lookup[k].get(oldList[oi].key) || null;
+      at[ni] = sec;
+      // Same section, written differently ("chorus" -> "Chorus"): the other texts take the new spelling too.
+      const head = newList[ni].section.head;
+      if (sec && oldList[oi].section.label !== newList[ni].section.label) { sec.head = head; sec.label = labelOf(head); }
+    });
     renames.forEach(({ oi, ni }) => {
       const sec = lookup[k].get(oldList[oi].key);
       if (!sec) return;
@@ -198,7 +204,7 @@ export function reconcileAfterEdit(base, texts, edited) {
   const tidy = tidySections(out);
   // What the edit did to the sections (by label), so the song's Structure can follow: renamed ones, and removed ones.
   const changes = {
-    renames: renames.map(({ oi, ni }) => ({ from: oldList[oi].section.label, to: newList[ni].section.label })),
+    renames: [...renames, ...matched.filter(({ oi, ni }) => oldList[oi].section.label !== newList[ni].section.label)].map(({ oi, ni }) => ({ from: oldList[oi].section.label, to: newList[ni].section.label })),
     removes: removes.map((oi) => oldList[oi].section.label),
   };
   return { texts: tidy.texts, changes };
