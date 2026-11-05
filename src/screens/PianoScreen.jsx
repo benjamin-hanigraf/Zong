@@ -487,7 +487,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>
-            {isVocals ? "Chord Piano" : "Piano"}
+            {isVocals || joystick ? "Chords" : "Piano"}
           </div>
           {mode === "chords" && !followingJoystick && (
             <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Chord wheels"} title={joystick ? "Piano keys" : "Chord wheels"} style={{

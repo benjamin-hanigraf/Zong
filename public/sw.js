@@ -17,7 +17,7 @@
  * Bump CACHE_VERSION when you deploy a new build to force cache refresh.
  */
 
-const CACHE_VERSION = 'zong-v3';
+const CACHE_VERSION = 'zong-v4';
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE   = `${CACHE_VERSION}-assets`;
 
