@@ -1,5 +1,5 @@
 // Shared form controls (Field, ClearableInput, pickers, switches) and small icons.
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { isShown, useKeys } from "../lib/keys.js";
 import { FONT, TIME_SIGS } from "../lib/constants.js";
@@ -19,6 +19,56 @@ export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, 
       <button onClick={onKeyClick} disabled={disabled} style={keyButtonStyle}>{label}</button>
       <button onClick={onNext} disabled={disabled} aria-label="Next key" style={chevronBtn}><ChevronRight size={large ? 18 : 15} /></button>
     </>
+  );
+}
+
+// A drop-down list of plain choices ([{ id, label }]), styled like the key dropdown. `value` is an id; `placeholder` shows when it is empty.
+export function OptionDropdown({ options, value, onChange, placeholder = "Select", C }) {
+  const [open, setOpen] = useState(false);
+  useKeys({ escape: () => setOpen(false) }, open);
+  const [openUpward, setOpenUpward] = useState(false);
+  const btnRef = useRef(null);
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      const below = window.innerHeight - rect.bottom;
+      setOpenUpward(below < 260 && rect.top > below);
+    }
+    setOpen((o) => !o);
+  };
+  const current = options.find((o) => o.id === value);
+  return (
+    <div style={{ position: "relative", minWidth: 0 }}>
+      <button ref={btnRef} type="button" onClick={toggle} style={{
+        width: "100%", boxSizing: "border-box", height: 44, padding: "0 10px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2,
+        color: current || value ? C.text : C.textFaint, fontFamily: FONT, fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+      }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{current ? current.label : (value || placeholder)}</span>
+        <ChevronDown size={15} style={{ flexShrink: 0, opacity: 0.6 }} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
+          <div style={{
+            position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }), left: 0, minWidth: "100%", maxWidth: 260, maxHeight: 240, overflowY: "auto", zIndex: 150,
+            background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+          }}>
+            {options.length === 0 && <div style={{ padding: "12px 14px", fontFamily: FONT, fontSize: 14, color: C.textMuted }}>No sections yet</div>}
+            {options.map(({ id, label }) => {
+              const active = id === value;
+              return (
+                <div key={id} onClick={() => { onChange(id); setOpen(false); }} style={{
+                  padding: "12px 14px", fontFamily: FONT, fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent", cursor: "pointer",
+                }}>
+                  {label}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -16,7 +16,7 @@ export const SECTION_TEXT_KEYS = ["lyrics", "chords", "chart", "drums"];
 export const SECTION_TEXT_NAMES = { lyrics: "Lyrics", chords: "Chords", chart: "Chart", drums: "Drums" };
 
 // Case, spacing and brackets are ignored when matching ("Verse [1]" — written by an older version that bracketed the number — is "Verse 1").
-const normLabel = (label) => String(label || "").toLowerCase().replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
+export const normLabel = (label) => String(label || "").toLowerCase().replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
 const isHeader = (line) => line.trimStart().startsWith("-");
 const labelOf = (line) => line.trimStart().slice(1).trim();
 
@@ -101,6 +101,35 @@ export function tidySections(texts) {
     if (touched) { out[k] = serialize(parsed[k]); changed = true; }
   });
   return { texts: out, changed };
+}
+
+/**
+ * ONE-TIME TIDY-UP (remove this function, and its caller in App.jsx, after it has run on every device):
+ * a song that wrote the same section several times ("-Chorus" after every verse) is cut down to one copy of each, and the
+ * order it was written in becomes the song's Structure. In every text the first copy that has anything in it is kept
+ * (the first copy when all are empty); the other copies are dropped. Returns { changed, texts, structure }.
+ */
+export function collapseRepeats(texts) {
+  const tidy = tidySections(texts);
+  const parsed = {};
+  SECTION_TEXT_KEYS.forEach((k) => { parsed[k] = parse(tidy.texts[k]); });
+  const order = keyed(parsed.lyrics);
+  const counts = {};
+  order.forEach(({ section }) => { counts[section.norm] = (counts[section.norm] || 0) + 1; });
+  if (!Object.values(counts).some((n) => n > 1)) return { changed: false, texts, structure: [] };
+  const structure = order.map(({ section }) => ({ s: section.label, n: "" }));
+  const out = { ...tidy.texts };
+  SECTION_TEXT_KEYS.forEach((k) => {
+    const copies = {};
+    keyed(parsed[k]).forEach(({ section }) => { (copies[section.norm] ||= []).push(section); });
+    Object.values(copies).forEach((list) => {
+      if (list.length < 2) return;
+      const keep = list.find(hasContent) || list[0];
+      list.forEach((sec) => { if (sec !== keep) parsed[k].sections.splice(parsed[k].sections.indexOf(sec), 1); });
+    });
+    out[k] = serialize(parsed[k]);
+  });
+  return { changed: true, texts: out, structure };
 }
 
 // Longest-common-subsequence alignment of two label lists -> pairs of matching indexes.
@@ -196,7 +225,12 @@ export function reconcileAfterEdit(base, texts, edited) {
     out[k] = serialize(p);
   });
   const tidy = tidySections(out);
-  return { texts: tidy.texts };
+  // What the edit did to the sections (by label), so the song's Structure can follow: renamed ones, and removed ones.
+  const changes = {
+    renames: renames.map(({ oi, ni }) => ({ from: oldList[oi].section.label, to: newList[ni].section.label })),
+    removes: removes.map((oi) => oldList[oi].section.label),
+  };
+  return { texts: tidy.texts, changes };
 }
 
 /** Section keys + labels of one text, in order (what Stage Mode jumps between). */

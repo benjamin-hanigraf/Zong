@@ -1,6 +1,7 @@
 // Add / Edit song form, including the section text boxes and shared-section syncing.
-import { ChevronLeft, Copy, Trash2 } from "lucide-react";
-import { reconcileAfterEdit } from "../sections.js";
+import { ChevronDown, ChevronLeft, Copy, GripVertical, Trash2, X } from "lucide-react";
+import { normLabel, reconcileAfterEdit, sectionList } from "../sections.js";
+import { applySectionChanges, cleanStructure } from "../lib/structure.js";
 import { useMemo, useRef, useState } from "react";
 import { useKeys } from "../lib/keys.js";
 import { FONT, LANGUAGES } from "../lib/constants.js";
@@ -11,7 +12,7 @@ import { SECTION_TABS, drumsFromEditor, drumsToEditor, migrateSongShape } from "
 import { autoBracketNumbers, chordsTaggedToNumbersTagged } from "../lib/chords.js";
 import { scrollFieldIntoView, uiFrame, useKeyboardInset } from "../lib/viewport.js";
 import { useEdgeSwipeBack } from "../lib/swipe.js";
-import { AccidentalButton, ClearableInput, Field, NaturalDropdown, TabSelect, TimeSigPicker } from "../components/shared.jsx";
+import { AccidentalButton, ClearableInput, Field, NaturalDropdown, OptionDropdown, TabSelect, TimeSigPicker } from "../components/shared.jsx";
 import { ConfirmDialog, NoticeDialog } from "../components/dialogs.jsx";
 
 // Where the caret sits inside a textarea, measured on an off-screen copy of it (the only
@@ -142,10 +143,17 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
   // of the last such sync, which is what the edit is measured against.
   const sectionBase = useRef({ lyrics: lyricsText, chords: chordsText, chart: chartText, drums: drumsText });
   const [sectionNotice, setSectionNotice] = useState(null);
+  // Structure: the order the sections are played in, each step with an MD note (collapsed until opened).
+  const [structure, setStructure] = useState(() => cleanStructure(initial?.structure).map((r, i) => ({ ...r, id: `r${i}` })));
+  const [structureOpen, setStructureOpen] = useState(false);
+  const nextRowId = useRef(1000);
   const syncSections = (editedKey) => {
     const now = { lyrics: lyricsText, chords: chordsText, chart: chartText, drums: drumsText };
     const res = reconcileAfterEdit(sectionBase.current, now, editedKey);
     if (res.error) { setSectionNotice(res.error); return null; }
+    // A renamed section keeps its Structure rows; a removed one loses them.
+    const present = new Set(sectionList(res.texts.lyrics).map((e) => normLabel(e.label)));
+    setStructure((rows) => applySectionChanges(rows, res.changes, present));
     if (res.texts.lyrics !== lyricsText) setLyricsText(res.texts.lyrics);
     if (res.texts.chords !== chordsText) setChordsText(res.texts.chords);
     if (res.texts.chart !== chartText) setChartText(res.texts.chart);
@@ -203,10 +211,11 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
       title: cleanTitle, artist: cleanArtist, tempo: tempo === "" ? "" : Number(tempo), timeSignature: formatTimeSig(timeSig),
       key: savedKey, keyQuality, language, description, accents, subdivision,
       lyricsText: synced.lyrics, chordsText: normalizedChordsText, chartText: synced.chart, drumsText: drumsFromEditor(synced.drums),
+      structure: cleanStructure(structure),
     });
   };
   // Save only lights up once something differs from the values the form opened with.
-  const formSnapshot = JSON.stringify([title, artist, tempo, timeSig, keyNatural, keyAccidental, keyQuality, language, description, lyricsText, chordsText, chartText, drumsText, accents, subdivision]);
+  const formSnapshot = JSON.stringify([title, artist, tempo, timeSig, keyNatural, keyAccidental, keyQuality, language, description, lyricsText, chordsText, chartText, drumsText, accents, subdivision, structure.map((r) => [r.s, r.n])]);
   const openedSnapshot = useRef(formSnapshot);
   const canSave = title.trim().length > 0 && formSnapshot !== openedSnapshot.current;
   // Esc leaves (asking first when there are unsaved changes); Enter / Ctrl+S saves; Tab stays in the form.
@@ -223,6 +232,37 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
     chart: "-Verse\n[C]First line [G]of lyrics\n-Chorus\n…",
     drums: "-Verse\nKick [First line of lyrics]\nSnare [Second line]\n-Chorus\n…",
   };
+
+  // The sections a Structure row can pick: every section named in any of the texts (the one being typed in included).
+  const sectionOptions = (() => {
+    const seen = new Set();
+    const out = [];
+    [activeSectionValue, lyricsText, chordsText, chartText, drumsText].forEach((t) => sectionList(t).forEach(({ label }) => {
+      const n = normLabel(label);
+      if (n && !seen.has(n)) { seen.add(n); out.push({ id: label, label }); }
+    }));
+    return out;
+  })();
+  const setRow = (id, patch) => setStructure((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const addRow = () => setStructure((rows) => [...rows, { id: `n${nextRowId.current++}`, s: "", n: "" }]);
+  const removeRow = (id) => setStructure((rows) => rows.filter((r) => r.id !== id));
+  // Rows are moved by holding the dots at their left edge and dragging up or down.
+  const rowRefs = useRef({});
+  const [dragId, setDragId] = useState(null);
+  const dragIdRef = useRef(null);
+  const startDrag = (e, id) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); dragIdRef.current = id; setDragId(id); };
+  const moveDrag = (e) => {
+    const id = dragIdRef.current;
+    if (!id) return;
+    const ids = structure.map((r) => r.id);
+    const rects = ids.map((rid) => rowRefs.current[rid]?.getBoundingClientRect());
+    if (rects.some((r) => !r)) return;
+    let to = rects.findIndex((r) => e.clientY >= r.top && e.clientY <= r.bottom);
+    if (to < 0) to = e.clientY < rects[0].top ? 0 : ids.length - 1;
+    const from = ids.indexOf(id);
+    if (to !== from) setStructure((rows) => { const next = [...rows]; const [m] = next.splice(from, 1); next.splice(to, 0, m); return next; });
+  };
+  const endDrag = () => { dragIdRef.current = null; setDragId(null); };
 
   return (
     <div ref={formRoot} className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
@@ -294,6 +334,42 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
             wrapperStyle={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, minHeight: 140 }}
             textStyle={{ fontFamily: FONT, fontSize: 16, fontWeight: lyricsBold ? 700 : 400, lineHeight: 1.4, textAlign: "left", padding: "12px 14px", whiteSpace: "pre-wrap", wordBreak: "keep-all", overflowWrap: "normal", hyphens: "none" }} />
         </Field>
+
+        {/* Structure: the order the sections are played in (a section is written once above, then used as often as needed here). */}
+        <div>
+          <button type="button" onClick={() => setStructureOpen((o) => !o)} aria-expanded={structureOpen} style={{
+            width: "100%", boxSizing: "border-box", height: 44, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
+            fontFamily: FONT, fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <span>Structure{structure.length ? <span style={{ color: C.textMuted, fontWeight: 500 }}> · {structure.length}</span> : null}</span>
+            <ChevronDown size={18} style={{ transform: structureOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease", opacity: 0.7 }} />
+          </button>
+          {structureOpen && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {structure.map((row) => (
+                <div key={row.id} ref={(el) => { if (el) rowRefs.current[row.id] = el; else delete rowRefs.current[row.id]; }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, opacity: dragId === row.id ? 0.6 : 1 }}>
+                  <div onPointerDown={(e) => startDrag(e, row.id)} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}
+                    aria-label="Hold and drag to move" title="Hold and drag to move"
+                    style={{ width: 22, height: 44, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, touchAction: "none", cursor: "grab", flexShrink: 0 }}>
+                    <GripVertical size={18} />
+                  </div>
+                  <div style={{ width: "36%", minWidth: 110, flexShrink: 0 }}>
+                    <OptionDropdown options={sectionOptions} value={row.s} onChange={(v) => setRow(row.id, { s: v })} placeholder="Section" C={C} />
+                  </div>
+                  <input value={row.n} onChange={(e) => setRow(row.id, { n: e.target.value })} onFocus={scrollFieldIntoView} placeholder="MD notes" maxLength={400}
+                    style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, fontFamily: FONT, fontSize: 16, padding: "0 12px" }} />
+                  <button type="button" onClick={() => removeRow(row.id)} aria-label="Remove this section" title="Remove" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 44, padding: 0, flexShrink: 0 }}>
+                    <X size={18} />
+                  </button>
+                </div>
+              ))}
+              <button type="button" onClick={addRow} style={{ alignSelf: "flex-start", background: "none", border: "none", padding: "8px 4px", color: C.accent, fontFamily: FONT, fontSize: 15, fontWeight: 700 }}>
+                Add section
+              </button>
+            </div>
+          )}
+        </div>
 
         {initial ? (
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>

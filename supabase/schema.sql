@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS public.zong_songs (
 
 -- Ensure all columns exist on zong_songs
 ALTER TABLE public.zong_songs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+-- The song's Structure (section order + MD notes) as a small JSON text. Until this column exists the app still syncs,
+-- but a Structure stays on the device that made it.
+ALTER TABLE public.zong_songs ADD COLUMN IF NOT EXISTS structure TEXT DEFAULT '';
 
 -- 1B. Spelling Chart table
 CREATE TABLE IF NOT EXISTS public.zong_spelling_chart (

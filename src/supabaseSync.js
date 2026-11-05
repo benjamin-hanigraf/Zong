@@ -23,6 +23,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { cleanStructure, structureToJson } from "./lib/structure.js";
 
 const SUPABASE_URL      = import.meta.env?.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env?.VITE_SUPABASE_ANON_KEY;
@@ -128,7 +129,15 @@ function writeKnownSpelling(set) {
 //  Row mapping
 // ---------------------------------------------------------------------------
 
-const SONG_COLUMNS = "id, title, artist, key, tempo, time_signature, language, lyrics_text, chords_text, chart_text, drums_text, key_quality, description, updated_at";
+const SONG_COLUMNS_BASE = "id, title, artist, key, tempo, time_signature, language, lyrics_text, chords_text, chart_text, drums_text, key_quality, description, updated_at";
+// `structure` (the song's section order + MD notes) is a newer column. Until it has been added to the Supabase table
+// (see supabase/schema.sql), syncing carries on without it — the structure then stays on this device only — and the
+// answer is remembered so the failed attempt is not repeated on every sync.
+const STRUCTURE_FLAG_KEY = "zong:no-structure-column";
+let structureColumn = (() => { try { return localStorage.getItem(STRUCTURE_FLAG_KEY) !== "1"; } catch { return true; } })();
+const songColumns = () => (structureColumn ? `${SONG_COLUMNS_BASE}, structure` : SONG_COLUMNS_BASE);
+const isMissingStructureColumn = (err) => !!err && /structure/i.test(String(err.message || err));
+const dropStructureColumn = () => { structureColumn = false; try { localStorage.setItem(STRUCTURE_FLAG_KEY, "1"); } catch { /* ignore */ } };
 
 function rowToSong(row) {
   return {
@@ -146,6 +155,8 @@ function rowToSong(row) {
     // accents and subdivision are device-local; not stored in Supabase.
     keyQuality:    row.key_quality || "Major",
     description:   row.description || "",
+    // Only when the server sent it, so a server without the column never wipes a structure kept on this device.
+    ...("structure" in row ? { structure: cleanStructure(row.structure) } : {}),
     updatedAt:     row.updated_at ? new Date(row.updated_at).getTime() : Date.now()
   };
 }
@@ -166,6 +177,7 @@ function songToRow(song) {
     // accents and subdivision are device-local; never written to Supabase.
     key_quality:    song.keyQuality || "Major",
     description:    song.description || "",
+    ...(structureColumn ? { structure: structureToJson(song.structure) } : {}),
     updated_at:     new Date().toISOString()
   };
 }
@@ -190,8 +202,25 @@ async function selectAll(table, columns, orderBy, sinceIso) {
 }
 
 async function pullSongs(cursorIso) {
-  const rows = await selectAll("zong_songs", SONG_COLUMNS, "id", cursorToFilter(cursorIso));
+  let rows;
+  try {
+    rows = await selectAll("zong_songs", songColumns(), "id", cursorToFilter(cursorIso));
+  } catch (e) {
+    if (!structureColumn || !isMissingStructureColumn(e)) throw e;
+    dropStructureColumn();
+    rows = await selectAll("zong_songs", songColumns(), "id", cursorToFilter(cursorIso));
+  }
   return { songs: rows.map(rowToSong), cursor: maxIso(rows, cursorIso) };
+}
+
+// Upserts song rows; if the server has no `structure` column yet, retries once without it.
+async function upsertSongRows(songs) {
+  let { error } = await client().from("zong_songs").upsert(songs.map(songToRow), { onConflict: "id" });
+  if (error && structureColumn && isMissingStructureColumn(error)) {
+    dropStructureColumn();
+    ({ error } = await client().from("zong_songs").upsert(songs.map(songToRow), { onConflict: "id" }));
+  }
+  return error;
 }
 
 // Hard deletes leave no trace to pull, so each sync lists the ids that still exist
@@ -227,9 +256,9 @@ async function pushSongs(songs) {
   const dirtyIds = dirtySongs.ids();
   if (dirtyIds.length) {
     const byId = new Map((songs || []).map((s) => [s.id, s]));
-    const rows = dirtyIds.map((id) => byId.get(id)).filter(Boolean).map(songToRow);
-    if (rows.length) {
-      const { error } = await client().from("zong_songs").upsert(rows, { onConflict: "id" });
+    const dirty = dirtyIds.map((id) => byId.get(id)).filter(Boolean);
+    if (dirty.length) {
+      const error = await upsertSongRows(dirty);
       if (error) throw new Error(`Song push failed: ${error.message}`);
     }
     dirtySongs.clearUpTo(dirtyIds, snapshotTs);
@@ -432,7 +461,7 @@ export async function syncLibrary({ teamKey, deviceId, songs, spellingChart, sha
   const deletedSongIds = (isFirstSongSync || remoteLooksWiped) ? [] :
     (songs || []).filter((s) => !remoteSongIds.has(s.id) && !dirtySongIds.has(s.id)).map((s) => s.id);
   if (remoteLooksWiped) {
-    const { error } = await client().from("zong_songs").upsert(songs.map(songToRow), { onConflict: "id" });
+    const error = await upsertSongRows(songs);
     if (error) throw new Error(`Song restore failed: ${error.message}`);
   }
 
@@ -444,7 +473,7 @@ export async function syncLibrary({ teamKey, deviceId, songs, spellingChart, sha
   const pendingDeletes = new Set(deletedSongs.ids());
   const missingSongIds = songIds.filter((id) => !localSongIds.has(id) && !pulledSongIds.has(id) && !pendingDeletes.has(id));
   if (missingSongIds.length) {
-    const rows = await fetchByKeys("zong_songs", SONG_COLUMNS, "id", missingSongIds);
+    const rows = await fetchByKeys("zong_songs", songColumns(), "id", missingSongIds);
     songPull.songs.push(...rows.map(rowToSong));
   }
   const localSpelling = spellingChart || {};
@@ -462,7 +491,7 @@ export async function syncLibrary({ teamKey, deviceId, songs, spellingChart, sha
   if (isFirstSongSync) {
     const localOnly = (songs || []).filter((s) => !remoteSongIds.has(s.id));
     if (localOnly.length) {
-      const { error } = await client().from("zong_songs").upsert(localOnly.map(songToRow), { onConflict: "id" });
+      const error = await upsertSongRows(localOnly);
       if (error) throw new Error(`Song push failed: ${error.message}`);
     }
   }

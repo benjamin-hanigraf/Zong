@@ -1,7 +1,8 @@
 // App shell: state, sync, routing between tabs and overlays. Screens live in ./screens, shared pieces in ./components and ./lib.
 import { clearSharedQueues, ensureTeamRow, getDeletedSharedIds, getDirtySongIds, getDirtySpellingKeys, getPendingSharedIds, isSupabaseConfigured, leaveTeam, markSharedDeleted, markSharedPending, markSongsDirty, markSpellingDirty, recordDeletedSongId, recordDeletedSpellingKey, subscribeToChanges, syncLibrary } from "./supabaseSync";
 import { isNativePlatform } from "./nativeMetronome";
-import { tidySections } from "./sections.js";
+import { collapseRepeats, tidySections } from "./sections.js";
+import { cleanStructure } from "./lib/structure.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getDeviceId } from "./lib/device.js";
 import { hasOpenLayer, isShown, isTypingTarget } from "./lib/keys.js";
@@ -279,7 +280,7 @@ function AppInner() {
             if (idx === -1) { next = [...next, rs]; changed = true; return; }
             const local = next[idx];
             if ((rs.updatedAt || 0) >= (local.updatedAt || 0) && (local.id !== rs.id || rs.updatedAt !== local.updatedAt)) {
-              next = [...next]; next[idx] = { ...rs, subdivision: local.subdivision ?? rs.subdivision }; changed = true;
+              next = [...next]; next[idx] = { ...rs, structure: rs.structure ?? local.structure, subdivision: local.subdivision ?? rs.subdivision }; changed = true;
             }
           });
           return changed ? next : prev;
@@ -355,7 +356,7 @@ function AppInner() {
             if (idx === -1) return [...prev, song];
             const existing = prev[idx];
             if (song.updatedAt >= (existing.updatedAt ?? 0)) {
-              const next = [...prev]; next[idx] = { ...song, subdivision: existing.subdivision ?? song.subdivision }; return next;
+              const next = [...prev]; next[idx] = { ...song, structure: song.structure ?? existing.structure, subdivision: existing.subdivision ?? song.subdivision }; return next;
             }
             return prev;
           });
@@ -413,6 +414,30 @@ function AppInner() {
     if (songsRef.current.every((s) => tidied(s) === s)) return;
     saveSongs((prev) => prev.map(tidied));
   }, [songsReady, songs, firstSyncDone, bandKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ONE-TIME TIDY-UP — to be removed in a later update: songs that wrote a section several times (-Chorus after every verse) are
+  // reduced to one copy per section, and the order they were written in becomes the song's Structure. The original texts of
+  // every song it changes are first saved under "zong:repeats-backup" on this device. Runs once per device.
+  useEffect(() => {
+    if (!songsReady || (bandKey && !firstSyncDone)) return;
+    try { if (localStorage.getItem("zong:repeats-merged") === "1") return; } catch { return; }
+    const backup = {};
+    const next = songsRef.current.map((s) => {
+      if (cleanStructure(s.structure).length) return s;
+      const m = migrateSongShape(s);
+      const res = collapseRepeats({ lyrics: m.lyricsText || "", chords: m.chordsText || "", chart: m.chartText || "", drums: drumsToEditor(m.drumsText || "") });
+      if (!res.changed) return s;
+      backup[s.id] = { title: s.title, lyricsText: m.lyricsText, chordsText: m.chordsText, chartText: m.chartText, drumsText: m.drumsText };
+      return { ...s, lyricsText: res.texts.lyrics, chordsText: res.texts.chords, chartText: res.texts.chart, drumsText: drumsFromEditor(res.texts.drums), structure: res.structure };
+    });
+    const changed = Object.keys(backup).length;
+    if (changed) {
+      try { localStorage.setItem("zong:repeats-backup", JSON.stringify(backup)); } catch { /* too big: carry on without a copy */ }
+      saveSongs(next);
+      flash(`Repeated sections merged into a Structure in ${changed} song${changed === 1 ? "" : "s"}`);
+    }
+    try { localStorage.setItem("zong:repeats-merged", "1"); } catch { /* ignore */ }
+  }, [songsReady, firstSyncDone, bandKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local data finished loading: run the sync that was skipped while it was loading.
   useEffect(() => {
@@ -655,7 +680,7 @@ function AppInner() {
         title: str(r.title).trim(), artist: str(r.artist), key: str(r.key).slice(0, 3), keyQuality: r.keyQuality === "Minor" ? "Minor" : "Major",
         tempo: Number.isFinite(Number(r.tempo)) && r.tempo !== "" && r.tempo != null ? Math.min(300, Math.max(30, Number(r.tempo))) : "",
         timeSignature: /^\d{1,2}\/\d{1,2}$/.test(str(r.timeSignature)) ? r.timeSignature : "4/4", language: str(r.language),
-        description: str(r.description), lyricsText: str(r.lyricsText), chordsText: str(r.chordsText), chartText: str(r.chartText), drumsText: str(r.drumsText),
+        description: str(r.description), lyricsText: str(r.lyricsText), chordsText: str(r.chordsText), chartText: str(r.chartText), drumsText: str(r.drumsText), structure: cleanStructure(r.structure),
         updatedAt: Number.isFinite(Number(r.updatedAt)) ? Number(r.updatedAt) : 0,
         accents: Array.isArray(r.accents) ? r.accents.map((a) => (["normal", "accent", "mute"].includes(a) ? a : "normal")).slice(0, 16) : undefined,
         subdivision: [1, 2, 3, 4].includes(Number(r.subdivision)) ? Number(r.subdivision) : undefined,

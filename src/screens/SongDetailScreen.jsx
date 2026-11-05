@@ -1,6 +1,7 @@
 // Song viewer, including Stage Mode controls.
 import { ChevronDown, ChevronLeft, ChevronRight, Maximize, Minimize, Save, X } from "lucide-react";
 import { sectionList } from "../sections.js";
+import { playSteps } from "../lib/structure.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isTopLayer, isTypingTarget, useKeys } from "../lib/keys.js";
 import { useLocalStorageState } from "../lib/storage.js";
@@ -109,8 +110,27 @@ export function SongDetailScreen({
   // Every song's texts share the same sections, so a section KEY (label + occurrence) means the same place
   // in every mode. liveSync = { role: "lead" | "follow", status, target, onSection } or null when off.
   const syncRole = liveSync?.role || null;
-  const sectionEntries = useMemo(() => sectionList(activeRawText), [activeRawText]);
-  const keyedBlocks = (blocks) => { let c = 0; return blocks.map((block) => ({ block, key: block.label ? sectionEntries[c++]?.key : null })); };
+  // With a Structure the song is shown (and Stage Mode steps through it) in that order, a section as often as it is used; without one,
+  // the sections are shown as written.
+  const steps = useMemo(() => playSteps(song.structure, parseTextIntoBlocks(activeRawText, true)), [song.structure, activeRawText]);
+  const sectionEntries = useMemo(() => (steps ? steps.map(({ key, label }) => ({ key, label })) : sectionList(activeRawText)), [steps, activeRawText]);
+  const keyedBlocks = (blocks) => {
+    if (steps) {
+      const items = steps.map((st) => ({ block: blocks[st.blockIdx], key: st.key, note: st.note })).filter((it) => it.block);
+      const pre = blocks[0] && blocks[0].label == null && blocks[0].lines.some((l) => l.trim()) ? [{ block: blocks[0], key: null, note: "" }] : [];
+      return [...pre, ...items];
+    }
+    let c = 0;
+    return blocks.map((block) => ({ block, key: block.label ? sectionEntries[c++]?.key : null, note: "" }));
+  };
+  // The MD note between a section's heading and its content: tinted a darker shade of the accent, aligned like the text.
+  const mdNote = (note) => (note ? (
+    <div style={{
+      width: "fit-content", maxWidth: "100%", boxSizing: "border-box", marginBottom: 10, padding: "6px 11px", borderRadius: 8, background: C.accentDim, color: C.text,
+      fontSize: Math.max(13, Math.min(18, Math.round(fontSize * 0.62))), fontWeight: 600, lineHeight: 1.35, whiteSpace: "pre-wrap", textAlign,
+      marginLeft: textAlign === "center" || textAlign === "right" ? "auto" : 0, marginRight: textAlign === "center" ? "auto" : 0,
+    }}>{maybeTanglish(note, tanglishMode)}</div>
+  ) : null);
   const [activeSection, setActiveSection] = useState(0);
   const activeKey = syncRole ? sectionEntries[activeSection]?.key : null;
   const syncMarker = (key) => (syncRole && key && key === activeKey
@@ -290,10 +310,11 @@ export function SongDetailScreen({
         {(() => {
           if (mode === "chords" && chordsView === "chords") {
             const rawText = ms.chordsText;
-            return keyedBlocks(parseTextIntoBlocks(rawText, true)).map(({ block, key }, idx) => (
+            return keyedBlocks(parseTextIntoBlocks(rawText, true)).map(({ block, key, note }, idx) => (
               <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 {syncMarker(key)}
                 {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
+                {mdNote(note)}
                 <ChordsOnlyBlock
                   lines={block.lines}
                   viewKey={viewKey}
@@ -316,10 +337,11 @@ export function SongDetailScreen({
           if (mode === "chords" && !nashvilleMode) displayText = numbersTaggedToChordsTagged(displayText, viewKey, song.keyQuality);
           const letterSpacing = tanglishLetterSpacing(displayText, tanglishMode);
           displayText = maybeTanglish(displayText, tanglishMode);
-          return keyedBlocks(parseTextIntoBlocks(displayText, true)).map(({ block, key }, idx) => (
+          return keyedBlocks(parseTextIntoBlocks(displayText, true)).map(({ block, key, note }, idx) => (
             <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {syncMarker(key)}
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
+                {mdNote(note)}
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
               ) : (
