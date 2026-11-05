@@ -1,12 +1,12 @@
 // Piano / Chord Piano tab.
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { isNativePlatform, nativePiano } from "../nativeMetronome";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FONT } from "../lib/constants.js";
 import { SILENT_VIDEO_SRC, _pianoBuffers, nextNativeNoteId, findNearestPianoSample, getSharedAudioContext, loadAudioSamples, loadPadSamples, padSamplesReady, findNearestPadSample, PAD_LOOP, unlockAudioPlayback } from "../lib/audio.js";
 import { LandscapeLock } from "../components/LandscapeLock.jsx";
 import { ChordJoystick } from "../components/ChordJoystick.jsx";
-import { padLevels, padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
+import { ALL_KEYS, padLevels, padSampleNotes, padVoicing, plainPadSpec } from "../lib/chords.js";
 import { hasOpenLayer, isShown, isTypingTarget } from "../lib/keys.js";
 import { ChordWheelsIcon, PianoIcon } from "../components/shared.jsx";
 
@@ -451,15 +451,30 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     ? <div aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "33%", borderRadius: "inherit", pointerEvents: "none", background: `linear-gradient(to top, ${C.accent}59, ${C.accent}00)` }} />
     : null);
 
+  // The note names on the keys grow with the screen (small on a phone, larger on a laptop) by the same factor as the chord wheels.
+  const [keyScale, setKeyScale] = useState(1);
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    const fit = () => {
+      const k = Math.max(1, Math.min(el.clientWidth / 760, el.clientHeight / 330, 2.4));
+      setKeyScale((v) => (Math.abs(v - k) < 0.01 ? v : k));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [joystick]);
+
   const renderOctaveKeys = () => (
     <>
       <div style={{ position: "absolute", inset: 0, display: "flex" }}>
         {WHITE_KEYS.map((k) => (
           <div key={k.semitone} data-semitone={k.semitone} data-black="0" style={{
             position: "relative", flex: 1, background: WHITE_KEY_BG, borderRight: "1px solid rgba(0,0,0,0.25)",
-            display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 12, boxSizing: "border-box",
+            display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 12 * keyScale, boxSizing: "border-box",
           }}>
-            <span style={{ fontSize: isVocals ? 14 : 12, fontWeight: 700, color: "rgba(0,0,0,0.42)" }}>{k.name}</span>{keyGlow(k.semitone)}
+            <span style={{ fontSize: (isVocals ? 14 : 12) * keyScale, fontWeight: 700, color: "rgba(0,0,0,0.42)" }}>{k.name}</span>{keyGlow(k.semitone)}
           </div>
         ))}
       </div>
@@ -472,9 +487,9 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
             <div key={k.semitone} data-semitone={k.semitone} data-black="1" style={{
               position: "absolute", top: 0, height: "58%", left: `${leftPct}%`, width: `${widthPct}%`,
               background: BLACK_KEY_BG, borderRadius: "0 0 4px 4px", pointerEvents: "auto", boxShadow: "0 3px 6px rgba(0,0,0,0.5)",
-              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10, boxSizing: "border-box",
+              display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 10 * keyScale, boxSizing: "border-box",
             }}>
-              <span style={{ fontSize: isVocals ? 11.5 : 10, fontWeight: 700, color: "rgba(255,255,255,0.70)" }}>{k.name}</span>{keyGlow(k.semitone)}
+              <span style={{ fontSize: (isVocals ? 11.5 : 10) * keyScale, fontWeight: 700, color: "rgba(255,255,255,0.70)" }}>{k.name}</span>{keyGlow(k.semitone)}
             </div>
           );
         })}
@@ -482,15 +497,31 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     </>
   );
 
+  // The title bar's toggle. Going to the chord wheels while a key is held down with another finger: that key (Major) is loaded
+  // into the wheels, and the held note stops (the keys are about to go away).
+  const toggleChordWheels = () => {
+    if (joystick) { onJoystickToggle?.(); return; }
+    let held = null;
+    activeRef.current.forEach((entry) => {
+      if (entry.semitone != null) held = entry.semitone;
+      if (entry.padVoice) stopPadChord(entry.padVoice);
+      else if (entry.voice) releaseVoice(entry.voice);
+      paintKeyRef.current?.(entry.keyEl, false);
+    });
+    activeRef.current.clear();
+    onJoystickToggle?.(held == null ? null : { key: ALL_KEYS[held], quality: "Major" });
+  };
+
   const pianoBody = (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", fontFamily: FONT, color: C.text }}>
       <div style={{ height: 56, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", gap: 10, boxSizing: "border-box", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>
+          {/* a fixed width, so the button after it stays put when the title switches between "Piano" and "Chords" */}
+          <div style={{ fontSize: 16, fontWeight: 700, minWidth: mode === "chords" ? 64 : 0 }}>
             {isVocals || joystick ? "Chords" : "Piano"}
           </div>
           {mode === "chords" && !followingJoystick && (
-            <button onClick={() => onJoystickToggle?.()} aria-label={joystick ? "Back to the piano keys" : "Chord wheels"} title={joystick ? "Piano keys" : "Chord wheels"} style={{
+            <button onClick={toggleChordWheels} aria-label={joystick ? "Back to the piano keys" : "Chord wheels"} title={joystick ? "Piano keys" : "Chord wheels"} style={{
               border: "none", background: "transparent", padding: "12px 10px", margin: "-12px -10px", cursor: "pointer",
               color: C.accent, display: "flex", alignItems: "center", justifyContent: "center",
             }}>
@@ -533,6 +564,13 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
                 <X size={16} />
               </button>
             )}
+            {joystick && !followingJoystick && (
+              <button onClick={() => onJoystickToggle?.()} aria-label="Close the chord wheels" title="Close" style={{
+                width: 34, height: 34, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+              }}>
+                <X size={17} />
+              </button>
+            )}
             {!joystick && <>
             <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
@@ -558,6 +596,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       <div
         ref={containerRef}
         onPointerDown={handlePointerDown}
+        onContextMenu={(e) => e.preventDefault()}
         style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}
       >
         {renderOctaveKeys()}

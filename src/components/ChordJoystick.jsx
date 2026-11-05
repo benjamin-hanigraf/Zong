@@ -46,6 +46,32 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, hl = null, C }) {
   const release = () => {
     if (ownRef.current !== null) { ownRef.current = null; setOwn(null); onChange(null); }
   };
+  // Safety net: if the finger's own "up" never reaches the stick (a lost touch, the system taking the gesture, switching apps),
+  // the stick is still let go — otherwise the chord would ring on, looping, until the app is restarted.
+  const pidRef = useRef(null);
+  const releaseRef = useRef(release);
+  releaseRef.current = release;
+  useEffect(() => {
+    if (readOnly) return undefined;
+    const up = (e) => { if (e.pointerId === pidRef.current) releaseRef.current(); };
+    const touchEnd = (e) => { if (e.touches && e.touches.length === 0) releaseRef.current(); };
+    const away = () => releaseRef.current();
+    const hidden = () => { if (document.visibilityState === "hidden") releaseRef.current(); };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("touchend", touchEnd);
+    window.addEventListener("touchcancel", touchEnd);
+    window.addEventListener("blur", away);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("touchend", touchEnd);
+      window.removeEventListener("touchcancel", touchEnd);
+      window.removeEventListener("blur", away);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [readOnly]);
   // Annular wedge path (viewBox -100..100).
   const wedgePath = (i) => {
     const a0 = ((i * step - 90 - step / 2) * Math.PI) / 180, a1 = ((i * step - 90 + step / 2) * Math.PI) / 180;
@@ -55,7 +81,7 @@ function Stick({ size, wedges, centreLabel, onChange, mirror, hl = null, C }) {
   };
   return (
     <div
-      onPointerDown={readOnly ? undefined : (e) => { e.currentTarget.setPointerCapture(e.pointerId); pick(e); }}
+      onPointerDown={readOnly ? undefined : (e) => { pidRef.current = e.pointerId; e.currentTarget.setPointerCapture(e.pointerId); pick(e); }}
       onPointerMove={readOnly ? undefined : (e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) pick(e); }}
       onPointerUp={readOnly ? undefined : release}
       onPointerCancel={readOnly ? undefined : release}
@@ -128,19 +154,35 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
   }, []);
 
   // What is shown: the leader's state when read-only, otherwise our own.
-  const v = readOnly && remote ? remote : { keyName, keyQuality, degree, quality, chord: joystickChord(keyName, keyQuality, degree, quality) };
+  // A Stage Mode follower can pick their own key (a capo / transpose): `shift` semitones from the leader's key. The leader's
+  // degree and sticks are the same; only the letters change, and a leader's key change moves the follower's key with it.
+  const [shift, setShift] = useState(0);
+  const followKey = readOnly && remote ? transposeKey(remote.keyName, shift) : null;
+  const v = readOnly && remote
+    ? { ...remote, keyName: followKey, chord: shift === 0 ? remote.chord : joystickChord(followKey, remote.keyQuality, remote.degree, remote.quality) }
+    : { keyName, keyQuality, degree, quality, chord: joystickChord(keyName, keyQuality, degree, quality) };
   const chordName = v.chord || null;
 
-  // Own chord: play it while the right stick is held; a change of chord / key restarts it.
+  // Own chord: play it while the right stick is held; a change of chord / key restarts it. A fast sweep across the wedges
+  // would otherwise start and stop a chord dozens of times a second (every start is several notes to the audio engine), so
+  // a new chord waits until at least 70 ms after the last one started — only the latest is played; letting go is instant.
+  const startedAt = useRef(0);
+  const restartTimer = useRef(null);
   useEffect(() => {
     if (readOnly) return undefined;
-    if (voiceRef.current) { stopPad(voiceRef.current); voiceRef.current = null; }
-    if (!chordName) return undefined;
-    const spec = chordToPadSpec(chordName);
-    if (spec) voiceRef.current = playPad(spec);
+    clearTimeout(restartTimer.current);
+    const go = () => {
+      restartTimer.current = null;
+      if (voiceRef.current) { stopPad(voiceRef.current); voiceRef.current = null; }
+      if (!chordName) return;
+      const spec = chordToPadSpec(chordName);
+      if (spec) { voiceRef.current = playPad(spec); startedAt.current = Date.now(); }
+    };
+    const wait = chordName ? 70 - (Date.now() - startedAt.current) : 0;
+    if (wait <= 0) go(); else restartTimer.current = setTimeout(go, wait);
     return undefined;
   }, [chordName, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => { if (voiceRef.current) { stopPad(voiceRef.current); voiceRef.current = null; } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { clearTimeout(restartTimer.current); if (voiceRef.current) { stopPad(voiceRef.current); voiceRef.current = null; } }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tell Stage Mode followers what is happening (key, sticks, chord).
   // Kept tiny (a few bytes: key, scale, degree, quality — the chord is worked out again on the other side) and at most
@@ -195,7 +237,7 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
     return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseAll); };
   }, [readOnly]);
 
-  const stepKey = (d) => setKeyName((k) => transposeKey(k, d));
+  const stepKey = (d) => (readOnly ? setShift((x) => (((x + d) % 12) + 12) % 12) : setKeyName((k) => transposeKey(k, d)));
   // Laid out for a phone held sideways. On a bigger screen (Mac / PC) everything is scaled up by the same factor (sticks, key
   // selector, chord name), so it keeps the same proportions as on the iPhone instead of looking small in a large window.
   if (!box) return <div ref={boxRef} style={{ flex: 1, position: "relative", overflow: "hidden" }} />;
@@ -224,7 +266,7 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
       {/* key selector (same element as the song view, a little bigger) with the scale switch below it, same width */}
       <div style={{ position: "absolute", bottom: 12 * scale, left: "50%", transform: `translateX(-50%) scale(${scale})`, transformOrigin: "50% 100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <KeyStepper label={keyLabel} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} disabled={readOnly} large C={C} />
+          <KeyStepper label={keyLabel} onPrev={() => stepKey(-1)} onNext={() => stepKey(1)} large C={C} />
         </div>
         <div style={{ width: 144, opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
           <TabSelect options={[{ id: "Major", label: "Major" }, { id: "Minor", label: "Minor" }]} value={v.keyQuality} onChange={setKeyQuality} buttonPadding="8px 0" C={C} />

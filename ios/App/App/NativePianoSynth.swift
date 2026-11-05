@@ -55,7 +55,7 @@ private struct SynthVoice {
 
 private final class SynthCore {
     static let maxVoices = 24
-    static let maxCommands = 64
+    static let maxCommands = 256
     static let maxOsc = 16
     static let maxBank = 32      // 12 piano samples + 12 warm-pad samples (+ spare)
     static let tableSlots = 32   // 0..23 = the 12 roots x major/minor pads, 24..31 = spare slots for the joystick's chords
@@ -147,6 +147,12 @@ private final class SynthCore {
         if queued < SynthCore.maxCommands {
             queue[queued] = command
             queued += 1
+        } else if command.type == 2 || command.type == 3 {
+            // A "release" must never be lost (the looping pad would ring on for ever): if the queue is full, it takes the
+            // place of the oldest queued note-on instead.
+            var i = 0
+            while i < queued && (queue[i].type == 2 || queue[i].type == 3) { i += 1 }
+            if i < queued { queue[i] = command }
         }
         os_unfair_lock_unlock(lock)
     }

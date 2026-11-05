@@ -882,7 +882,7 @@ function AppInner() {
           </div>
           <div style={{ display: mode !== "drums" ? "block" : "none", height: "100%", position: "relative" }}>
             <PianoScreen C={C} mode={mode} loadedQuality={pianoQuality} onQualityChange={setPianoQuality} highlightSemitone={tab === "practice" ? pianoHighlight : null}
-              joystickOn={joystickOn} onJoystickToggle={() => setJoystickOn((v) => !v)} joystickKey={joystickKey} joystickRemote={joyRemote} onJoystickState={publishJoystick} onLeaveStage={live.close} />
+              joystickOn={joystickOn} onJoystickToggle={(held) => { if (held && !joystickOn) setJoystickKey({ key: held.key, quality: held.quality, nonce: Math.random() }); setJoystickOn((v) => !v); }} joystickKey={joystickKey} joystickRemote={joyRemote} onJoystickState={publishJoystick} onLeaveStage={live.close} />
           </div>
         </div>
         <div style={{ display: tab === "songs" ? "block" : "none", height: "100%", position: "relative" }}>
