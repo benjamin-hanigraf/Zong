@@ -201,7 +201,7 @@ export function SongDetailScreen({
     {/* Solid backdrop so the setlist page never shows through while the song card slides. */}
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
     <div ref={detailRoot} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
-      <div style={{ flex: "0 0 auto", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
+      <div style={{ flex: "0 0 auto", padding: "16px 14px 16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
         <div
@@ -212,11 +212,6 @@ export function SongDetailScreen({
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
           {song.artist && <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode)}</Tamil></div>}
         </div>
-        {canFullscreen && (
-          <button onClick={toggleFullscreen} aria-label={isFull ? "Exit full screen" : "Full screen"} title={isFull ? "Exit full screen (Esc)" : "Full screen (`)"} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1 }}>
-            {isFull ? <Minimize size={15} /> : <Maximize size={15} />}
-          </button>
-        )}
         {mode === "drums" && !!engine && song.description && (
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
@@ -230,8 +225,12 @@ export function SongDetailScreen({
           <button onClick={() => setMetroBarVisible((v) => !v)} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1, border: `1px solid ${metroBarVisible ? C.accentDim : C.border}`, background: metroBarVisible ? C.accentSoft : C.surface2, color: metroBarVisible ? C.accent : C.text }}>
             <MetronomeIcon size={16} color={metroBarVisible ? C.accent : C.text} />
           </button>
-        ) : (
-          <div style={{ width: 30, height: 30, flexShrink: 0 }} />
+        ) : null}
+        {/* the full-screen button is last, so its right edge lines up with the next-key button of the row below */}
+        {canFullscreen && (
+          <button onClick={toggleFullscreen} aria-label={isFull ? "Exit full screen" : "Full screen"} title={isFull ? "Exit full screen (Esc)" : "Full screen (`)"} style={{ ...chevronBtn, width: 30, height: 30, position: "relative", zIndex: 1 }}>
+            {isFull ? <Minimize size={15} /> : <Maximize size={15} />}
+          </button>
         )}
       </div>
 
