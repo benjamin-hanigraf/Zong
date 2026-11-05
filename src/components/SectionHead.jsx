@@ -5,7 +5,7 @@ export function SectionHead({ label, size, textAlign, C }) {
     <div style={{ textAlign, marginBottom: Math.max(6, size * 0.7) }}>
       <span style={{
         display: "inline-block", maxWidth: "100%", boxSizing: "border-box", padding: `${Math.max(2, size * 0.2)}px ${Math.max(8, size * 0.7)}px`, borderRadius: Math.max(6, size * 0.45),
-        border: `1.5px solid ${C.accent}`, color: C.accent, fontSize: size, letterSpacing: 1.5, textTransform: "uppercase", lineHeight: 1.25, textAlign: "left",
+        border: `1px solid ${C.accent}`, color: C.accent, fontSize: size, letterSpacing: 1.5, textTransform: "uppercase", lineHeight: 1.25, textAlign: "left",
       }}>{label}</span>
     </div>
   );
