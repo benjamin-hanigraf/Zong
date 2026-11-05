@@ -17,6 +17,7 @@ import { KeyStepper, MetronomeIcon, TimeSigPicker } from "../components/shared.j
 import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
 import { MdNote } from "../components/MdNote.jsx";
+import { SectionHead } from "../components/SectionHead.jsx";
 import { ConfirmDialog } from "../components/dialogs.jsx";
 
 /* =========================================================================
@@ -306,7 +307,7 @@ export function SongDetailScreen({
             return keyedBlocks(parseTextIntoBlocks(rawText, true)).map(({ block, key, note }, idx) => (
               <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 {syncMarker(key)}
-                {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
+                {block.label && <SectionHead label={block.label} size={labelFontSize} textAlign={textAlign} C={C} />}
                 <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
                 <ChordsOnlyBlock
                   lines={block.lines}
@@ -333,7 +334,7 @@ export function SongDetailScreen({
           return keyedBlocks(parseTextIntoBlocks(displayText, true)).map(({ block, key, note }, idx) => (
             <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {syncMarker(key)}
-              {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
+              {block.label && <SectionHead label={block.label} size={labelFontSize} textAlign={textAlign} C={C} />}
                 <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />

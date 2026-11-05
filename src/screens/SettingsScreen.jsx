@@ -8,6 +8,7 @@ import { Field, IosSwitch, SectionLabel } from "../components/shared.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
 import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
 import { MdNote } from "../components/MdNote.jsx";
+import { SectionHead } from "../components/SectionHead.jsx";
 
 // Display settings. One − / + control (10–100 px) sets the lyrics size; notes and section headers
 // follow in fixed ratios. The three spacing presets set line spacing and note gap together.
@@ -145,7 +146,7 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
             <Field label="PREVIEW">
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
                 {/* Drawn with the same pieces and settings as the song view, so what is shown here is what the song looks like. */}
-                <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>Chorus</div>
+                <SectionHead label="Chorus" size={labelFontSize} textAlign={textAlign} C={C} />
                 {mode !== "vocals" && <MdNote note="Soft, then build to big" fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />}
                 {mode === "vocals" ? (
                   <LyricsText
