@@ -2,11 +2,10 @@
 import { AlignCenter, AlignLeft, AlignRight, ChevronLeft, ChevronRight, Download, Minus, Plus, RefreshCw, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { CLICK_TONES, FONT, MODES, MODE_META, PAN_OPTIONS } from "../lib/constants.js";
-import { useLocalStorageState } from "../lib/storage.js";
+import { numbersTaggedToChordsTagged } from "../lib/chords.js";
 import { useHoldRepeat } from "../components/metronome.jsx";
 import { Field, IosSwitch, SectionLabel } from "../components/shared.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
-import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
 import { MdNote } from "../components/MdNote.jsx";
 import { SectionHead } from "../components/SectionHead.jsx";
 
@@ -39,7 +38,6 @@ function SpacingIcon({ gap, size = 18 }) {
 
 export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, live, onOpenStageMode, onExportLibrary, onImportLibrary, C }) {
   const importInputRef = useRef(null);
-  const [chordsView] = useLocalStorageState("altar:song-view-chords-mode", "chords");   // the Chords-mode song view the preview imitates
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
@@ -161,16 +159,10 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
                     hyphenateOverlaps={false} padWordForTag
                   />
-                ) : chordsView === "chords" ? (
-                  <ChordsOnlyBlock
-                    lines={["[1] [4] [6] [5]", "[1] [4] [5] [1]"]} viewKey="E" keyQuality="Major" nashvilleMode
-                    textAlign={textAlign} fontSize={fontSize} chordFontSize={chordFontSize} lineSpacing={lineSpacing}
-                    lyricsBold={lyricsBold} notesBold={notesBold} tanglishMode={tanglishMode} C={C}
-                  />
                 ) : (
                   <ChordText
-                    text={"[1]Way maker, [4]miracle worker,\n[6]promise keeper, [5]light in the [1]darkness"}
-                    editable={false} dim showLyrics brightTags
+                    text={numbersTaggedToChordsTagged("[1]Way maker, [4]miracle worker,\n[6]promise keeper, [5]light in the [1]darkness", "E", "Major")}
+                    editable={false} dim showLyrics brightTags flattenTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
                     hyphenateOverlaps padWordForTag
