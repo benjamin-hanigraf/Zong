@@ -2,7 +2,7 @@
 import { ChevronDown, ChevronLeft, Copy, GripVertical, Trash2, X } from "lucide-react";
 import { normLabel, reconcileAfterEdit, sectionList } from "../sections.js";
 import { applySectionChanges, cleanStructure } from "../lib/structure.js";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useKeys } from "../lib/keys.js";
 import { FONT, LANGUAGES } from "../lib/constants.js";
 import { defaultAccents, getSongAccents, getSongSubdivision, setSongAccentsLocal, setSongSubdivision } from "../lib/songDevice.js";
@@ -250,11 +250,13 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
   const rowRefs = useRef({});
   const [dragId, setDragId] = useState(null);
   const dragIdRef = useRef(null);
-  const startDrag = (e, id) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); dragIdRef.current = id; setDragId(id); };
+  const structureRef = useRef(structure);
+  structureRef.current = structure;
+  const startDrag = (e, id) => { e.preventDefault(); dragIdRef.current = id; setDragId(id); };
   const moveDrag = (e) => {
     const id = dragIdRef.current;
     if (!id) return;
-    const ids = structure.map((r) => r.id);
+    const ids = structureRef.current.map((r) => r.id);
     const rects = ids.map((rid) => rowRefs.current[rid]?.getBoundingClientRect());
     if (rects.some((r) => !r)) return;
     let to = rects.findIndex((r) => e.clientY >= r.top && e.clientY <= r.bottom);
@@ -263,6 +265,14 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
     if (to !== from) setStructure((rows) => { const next = [...rows]; const [m] = next.splice(from, 1); next.splice(to, 0, m); return next; });
   };
   const endDrag = () => { dragIdRef.current = null; setDragId(null); };
+  // While a row is held, the whole window follows the pointer (moving a row in the list would otherwise lose a pointer capture on the handle).
+  useEffect(() => {
+    if (!dragId) return undefined;
+    window.addEventListener("pointermove", moveDrag);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    return () => { window.removeEventListener("pointermove", moveDrag); window.removeEventListener("pointerup", endDrag); window.removeEventListener("pointercancel", endDrag); };
+  }, [dragId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={formRoot} className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
@@ -349,7 +359,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
               {structure.map((row) => (
                 <div key={row.id} ref={(el) => { if (el) rowRefs.current[row.id] = el; else delete rowRefs.current[row.id]; }}
                   style={{ display: "flex", alignItems: "center", gap: 8, opacity: dragId === row.id ? 0.6 : 1 }}>
-                  <div onPointerDown={(e) => startDrag(e, row.id)} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}
+                  <div onPointerDown={(e) => startDrag(e, row.id)}
                     aria-label="Hold and drag to move" title="Hold and drag to move"
                     style={{ width: 22, height: 44, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, touchAction: "none", cursor: "grab", flexShrink: 0 }}>
                     <GripVertical size={18} />
