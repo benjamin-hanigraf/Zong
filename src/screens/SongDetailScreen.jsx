@@ -16,6 +16,7 @@ import { Tamil } from "../components/Tamil.jsx";
 import { KeyStepper, MetronomeIcon, TimeSigPicker } from "../components/shared.jsx";
 import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
+import { MdNote } from "../components/MdNote.jsx";
 import { ConfirmDialog } from "../components/dialogs.jsx";
 
 /* =========================================================================
@@ -123,14 +124,6 @@ export function SongDetailScreen({
     let c = 0;
     return blocks.map((block) => ({ block, key: block.label ? sectionEntries[c++]?.key : null, note: "" }));
   };
-  // The MD note between a section's heading and its content: tinted a darker shade of the accent, aligned like the text.
-  const mdNote = (note) => (note ? (
-    <div style={{
-      width: "fit-content", maxWidth: "100%", boxSizing: "border-box", marginBottom: 10, padding: "6px 11px", borderRadius: 8, background: C.accentDim, color: C.text,
-      fontSize: Math.max(13, Math.min(18, Math.round(fontSize * 0.62))), fontWeight: 600, lineHeight: 1.35, whiteSpace: "pre-wrap", textAlign,
-      marginLeft: textAlign === "center" || textAlign === "right" ? "auto" : 0, marginRight: textAlign === "center" ? "auto" : 0,
-    }}>{maybeTanglish(note, tanglishMode)}</div>
-  ) : null);
   const [activeSection, setActiveSection] = useState(0);
   const activeKey = syncRole ? sectionEntries[activeSection]?.key : null;
   const syncMarker = (key) => (syncRole && key && key === activeKey
@@ -314,7 +307,7 @@ export function SongDetailScreen({
               <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 {syncMarker(key)}
                 {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
-                {mdNote(note)}
+                <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
                 <ChordsOnlyBlock
                   lines={block.lines}
                   viewKey={viewKey}
@@ -341,7 +334,7 @@ export function SongDetailScreen({
             <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {syncMarker(key)}
               {block.label && <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>{block.label}</div>}
-                {mdNote(note)}
+                <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
               ) : (

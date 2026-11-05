@@ -103,35 +103,6 @@ export function tidySections(texts) {
   return { texts: out, changed };
 }
 
-/**
- * ONE-TIME TIDY-UP (remove this function, and its caller in App.jsx, after it has run on every device):
- * a song that wrote the same section several times ("-Chorus" after every verse) is cut down to one copy of each, and the
- * order it was written in becomes the song's Structure. In every text the first copy that has anything in it is kept
- * (the first copy when all are empty); the other copies are dropped. Returns { changed, texts, structure }.
- */
-export function collapseRepeats(texts) {
-  const tidy = tidySections(texts);
-  const parsed = {};
-  SECTION_TEXT_KEYS.forEach((k) => { parsed[k] = parse(tidy.texts[k]); });
-  const order = keyed(parsed.lyrics);
-  const counts = {};
-  order.forEach(({ section }) => { counts[section.norm] = (counts[section.norm] || 0) + 1; });
-  if (!Object.values(counts).some((n) => n > 1)) return { changed: false, texts, structure: [] };
-  const structure = order.map(({ section }) => ({ s: section.label, n: "" }));
-  const out = { ...tidy.texts };
-  SECTION_TEXT_KEYS.forEach((k) => {
-    const copies = {};
-    keyed(parsed[k]).forEach(({ section }) => { (copies[section.norm] ||= []).push(section); });
-    Object.values(copies).forEach((list) => {
-      if (list.length < 2) return;
-      const keep = list.find(hasContent) || list[0];
-      list.forEach((sec) => { if (sec !== keep) parsed[k].sections.splice(parsed[k].sections.indexOf(sec), 1); });
-    });
-    out[k] = serialize(parsed[k]);
-  });
-  return { changed: true, texts: out, structure };
-}
-
 // Longest-common-subsequence alignment of two label lists -> pairs of matching indexes.
 function lcs(a, b) {
   const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));

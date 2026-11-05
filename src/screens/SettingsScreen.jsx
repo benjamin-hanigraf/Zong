@@ -2,10 +2,12 @@
 import { AlignCenter, AlignLeft, AlignRight, ChevronLeft, ChevronRight, Download, Minus, Plus, RefreshCw, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { CLICK_TONES, FONT, MODES, MODE_META, PAN_OPTIONS } from "../lib/constants.js";
-import { numbersTaggedToChordsTagged } from "../lib/chords.js";
+import { useLocalStorageState } from "../lib/storage.js";
 import { useHoldRepeat } from "../components/metronome.jsx";
 import { Field, IosSwitch, SectionLabel } from "../components/shared.jsx";
 import { ChordText, LyricsText } from "../components/ChordText.jsx";
+import { ChordsOnlyBlock } from "../components/ChordsOnly.jsx";
+import { MdNote } from "../components/MdNote.jsx";
 
 // Display settings. One − / + control (10–100 px) sets the lyrics size; notes and section headers
 // follow in fixed ratios. The three spacing presets set line spacing and note gap together.
@@ -36,6 +38,7 @@ function SpacingIcon({ gap, size = 18 }) {
 
 export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFontSize, setChordFontSize, sectionFontSize, setSectionFontSize, textAlign, setTextAlign, lyricsBold, setLyricsBold, notesBold, setNotesBold, lineSpacing, setLineSpacing, noteSpacing = 1, setNoteSpacing, clickSettings, setClickSettings, tanglishMode, setTanglishMode, onOpenSpellingChart, onConfigureSync, onForceSync, bandKey, syncStatus, live, onOpenStageMode, onExportLibrary, onImportLibrary, C }) {
   const importInputRef = useRef(null);
+  const [chordsView] = useLocalStorageState("altar:song-view-chords-mode", "chords");   // the Chords-mode song view the preview imitates
   const [toneIndex, setToneIndex] = useState(() => Math.max(0, CLICK_TONES.findIndex((t) => t.id === clickSettings.clickTone)));
   const alignOptions = [{ id: "left", Icon: AlignLeft }, { id: "center", Icon: AlignCenter }, { id: "right", Icon: AlignRight }];
   const labelFontSize = sectionFontSize;
@@ -141,7 +144,9 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
             </Field>
             <Field label="PREVIEW">
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
-                <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: 8, textAlign }}>Chorus</div>
+                {/* Drawn with the same pieces and settings as the song view, so what is shown here is what the song looks like. */}
+                <div style={{ fontSize: labelFontSize, letterSpacing: 1.5, textTransform: "uppercase", color: C.accent, marginBottom: Math.max(6, labelFontSize * 0.7), textAlign }}>Chorus</div>
+                {mode !== "vocals" && <MdNote note="Soft, then build to big" fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />}
                 {mode === "vocals" ? (
                   <LyricsText
                     text={"Way maker, miracle worker,\npromise keeper, light in the darkness"}
@@ -150,17 +155,24 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
                 ) : mode === "drums" ? (
                   <ChordText
                     text={"[Half-time]Way maker, miracle worker,\npromise keeper, [Double Kick]light in the darkness"}
-                    editable={false} dim={true} showLyrics={true} brightTags={true}
+                    editable={false} dim showLyrics brightTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
-                    padWordForTag={false}
+                    hyphenateOverlaps={false} padWordForTag
+                  />
+                ) : chordsView === "chords" ? (
+                  <ChordsOnlyBlock
+                    lines={["[1] [4] [6] [5]", "[1] [4] [5] [1]"]} viewKey="E" keyQuality="Major" nashvilleMode
+                    textAlign={textAlign} fontSize={fontSize} chordFontSize={chordFontSize} lineSpacing={lineSpacing}
+                    lyricsBold={lyricsBold} notesBold={notesBold} tanglishMode={tanglishMode} C={C}
                   />
                 ) : (
                   <ChordText
-                    text={numbersTaggedToChordsTagged("[1]Way maker, [4]miracle worker,\n[6]promise keeper, [5]light in the [1]darkness", "E", "Major")}
-                    editable={false} dim={true} showLyrics={true} brightTags={true} flattenTags
+                    text={"[1]Way maker, [4]miracle worker,\n[6]promise keeper, [5]light in the [1]darkness"}
+                    editable={false} dim showLyrics brightTags
                     textAlign={textAlign} fontSize={fontSize} tagFontSize={chordFontSize} lineHeightMult={lineSpacing}
                     accent={C.accent} lyricsBold={lyricsBold} notesBold={notesBold} C={C} tagGapMult={noteSpacing}
+                    hyphenateOverlaps padWordForTag
                   />
                 )}
               </div>

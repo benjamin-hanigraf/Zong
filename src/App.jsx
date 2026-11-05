@@ -1,7 +1,7 @@
 // App shell: state, sync, routing between tabs and overlays. Screens live in ./screens, shared pieces in ./components and ./lib.
 import { clearSharedQueues, ensureTeamRow, getDeletedSharedIds, getDirtySongIds, getDirtySpellingKeys, getPendingSharedIds, isSupabaseConfigured, leaveTeam, markSharedDeleted, markSharedPending, markSongsDirty, markSpellingDirty, recordDeletedSongId, recordDeletedSpellingKey, subscribeToChanges, syncLibrary } from "./supabaseSync";
 import { isNativePlatform } from "./nativeMetronome";
-import { collapseRepeats, tidySections } from "./sections.js";
+import { tidySections } from "./sections.js";
 import { cleanStructure } from "./lib/structure.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getDeviceId } from "./lib/device.js";
@@ -414,30 +414,6 @@ function AppInner() {
     if (songsRef.current.every((s) => tidied(s) === s)) return;
     saveSongs((prev) => prev.map(tidied));
   }, [songsReady, songs, firstSyncDone, bandKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ONE-TIME TIDY-UP — to be removed in a later update: songs that wrote a section several times (-Chorus after every verse) are
-  // reduced to one copy per section, and the order they were written in becomes the song's Structure. The original texts of
-  // every song it changes are first saved under "zong:repeats-backup" on this device. Runs once per device.
-  useEffect(() => {
-    if (!songsReady || (bandKey && !firstSyncDone)) return;
-    try { if (localStorage.getItem("zong:repeats-merged") === "1") return; } catch { return; }
-    const backup = {};
-    const next = songsRef.current.map((s) => {
-      if (cleanStructure(s.structure).length) return s;
-      const m = migrateSongShape(s);
-      const res = collapseRepeats({ lyrics: m.lyricsText || "", chords: m.chordsText || "", chart: m.chartText || "", drums: drumsToEditor(m.drumsText || "") });
-      if (!res.changed) return s;
-      backup[s.id] = { title: s.title, lyricsText: m.lyricsText, chordsText: m.chordsText, chartText: m.chartText, drumsText: m.drumsText };
-      return { ...s, lyricsText: res.texts.lyrics, chordsText: res.texts.chords, chartText: res.texts.chart, drumsText: drumsFromEditor(res.texts.drums), structure: res.structure };
-    });
-    const changed = Object.keys(backup).length;
-    if (changed) {
-      try { localStorage.setItem("zong:repeats-backup", JSON.stringify(backup)); } catch { /* too big: carry on without a copy */ }
-      saveSongs(next);
-      flash(`Repeated sections merged into a Structure in ${changed} song${changed === 1 ? "" : "s"}`);
-    }
-    try { localStorage.setItem("zong:repeats-merged", "1"); } catch { /* ignore */ }
-  }, [songsReady, firstSyncDone, bandKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Local data finished loading: run the sync that was skipped while it was loading.
   useEffect(() => {

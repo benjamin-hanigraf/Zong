@@ -155,8 +155,11 @@ export function ChordJoystick({ C: theme, playPad, stopPad, onState, readOnly = 
 
   // What is shown: the leader's state when read-only, otherwise our own.
   // A Stage Mode follower can pick their own key (a capo / transpose): `shift` semitones from the leader's key. The leader's
-  // degree and sticks are the same; only the letters change, and a leader's key change moves the follower's key with it.
+  // degree and sticks are the same; only the letters change, and a leader's key change puts the follower back on the leader's key.
   const [shift, setShift] = useState(0);
+  // Whenever the leader sets a key (or scale), the follower snaps back to it; from then on the follower's own change holds
+  // (the same distance from the leader's key) until the leader changes the key again.
+  useEffect(() => { setShift(0); }, [remote?.keyName, remote?.keyQuality]);
   const followKey = readOnly && remote ? transposeKey(remote.keyName, shift) : null;
   const v = readOnly && remote
     ? { ...remote, keyName: followKey, chord: shift === 0 ? remote.chord : joystickChord(followKey, remote.keyQuality, remote.degree, remote.quality) }
