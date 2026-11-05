@@ -147,7 +147,7 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
               <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, overflowX: "hidden" }}>
                 {/* Drawn with the same pieces and settings as the song view, so what is shown here is what the song looks like. */}
                 <SectionHead label="Chorus" size={labelFontSize} textAlign={textAlign} C={C} />
-                {mode !== "vocals" && <MdNote note="Soft, then build to big" fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />}
+                {mode !== "vocals" && <MdNote note="Soft, then build to big" size={labelFontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />}
                 {mode === "vocals" ? (
                   <LyricsText
                     text={"Way maker, miracle worker,\npromise keeper, light in the darkness"}

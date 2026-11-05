@@ -308,7 +308,7 @@ export function SongDetailScreen({
               <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
                 {syncMarker(key)}
                 {block.label && <SectionHead label={block.label} size={labelFontSize} textAlign={textAlign} C={C} />}
-                <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
+                <MdNote note={isVocals ? "" : note} size={labelFontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
                 <ChordsOnlyBlock
                   lines={block.lines}
                   viewKey={viewKey}
@@ -335,7 +335,7 @@ export function SongDetailScreen({
             <div key={idx} data-section-key={key || undefined} onClick={sectionTap(key)} style={{ position: "relative", cursor: syncRole === "lead" && key ? "pointer" : undefined, marginBottom: 20, paddingTop: idx > 0 ? 16 : 0, borderTop: idx > 0 ? `1px solid ${C.border}` : "none" }}>
               {syncMarker(key)}
               {block.label && <SectionHead label={block.label} size={labelFontSize} textAlign={textAlign} C={C} />}
-                <MdNote note={isVocals ? "" : note} fontSize={fontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
+                <MdNote note={isVocals ? "" : note} size={labelFontSize} textAlign={textAlign} tanglishMode={tanglishMode} C={C} />
               {isVocals ? (
                 <LyricsText text={block.lines.join("\n")} textAlign={textAlign} fontSize={fontSize} lineHeightMult={lineSpacing} bold={lyricsBold} letterSpacing={letterSpacing} />
               ) : (
