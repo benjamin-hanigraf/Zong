@@ -628,14 +628,14 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
               </button>
             )}
             {!joystick && <>
-            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} aria-label="Lower octave" title="Lower octave (Z)" style={{
+            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} aria-label="Lower octave" style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
               color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
             }}>
               <ChevronLeft size={15} />
             </button>
             <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
-            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} aria-label="Higher octave" title="Higher octave (X)" style={{
+            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} aria-label="Higher octave" style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
               color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
             }}>
@@ -651,7 +651,6 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       ) : (
       <div
         ref={setKeysEl}
-        title="Computer keyboard: A W S E D F T G Y H U J play C to B (Z / X change octave)"
         onPointerDown={handlePointerDown}
         onContextMenu={(e) => e.preventDefault()}
         style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}

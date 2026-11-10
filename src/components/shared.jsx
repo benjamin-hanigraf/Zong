@@ -31,6 +31,7 @@ export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, 
 function useListbox({ open, setOpen, items, value, onPick }) {
   const [typed, setTyped] = useState("");
   const [hi, setHi] = useState(0);
+  const [kbd, setKbd] = useState(false);   // the highlight only shows once the keyboard is used, so mouse use looks exactly as before
   const typedRef = useRef("");
   const hiRef = useRef(0);
   const itemsRef = useRef(items);
@@ -42,6 +43,7 @@ function useListbox({ open, setOpen, items, value, onPick }) {
   const matches = (t) => itemsRef.current.filter((o) => o.label.toLowerCase().includes(t.toLowerCase()));
   useEffect(() => {
     setTypedBoth("");
+    setKbd(false);
     if (!open) return undefined;
     setHiBoth(Math.max(0, itemsRef.current.findIndex((o) => o.id === value)));
     const onKey = (e) => {
@@ -60,7 +62,7 @@ function useListbox({ open, setOpen, items, value, onPick }) {
         const next = typedRef.current + e.key;
         if (matches(next).length) { setTypedBoth(next); setHiBoth(0); }
       } else handled = false;
-      if (handled) { e.preventDefault(); e.stopPropagation(); }
+      if (handled) { e.preventDefault(); e.stopPropagation(); setKbd(true); }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -68,9 +70,9 @@ function useListbox({ open, setOpen, items, value, onPick }) {
   const shown = typed ? matches(typed) : items;
   // keep the highlighted row in view
   useEffect(() => { if (open) document.querySelector('[data-listbox-hi="true"]')?.scrollIntoView({ block: "nearest" }); }, [open, hi, typed]);
-  const rowProps = (i, id) => ({ role: "option", "aria-selected": id === value, "data-listbox-hi": open && i === hi ? "true" : undefined, onMouseEnter: () => setHiBoth(i) });
+  const rowProps = (i, id) => ({ role: "option", "aria-selected": id === value, "data-listbox-hi": open && kbd && i === hi ? "true" : undefined });
   const triggerKeys = (e) => { if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); e.stopPropagation(); setOpen(true); } };
-  return { shown, hi, rowProps, triggerKeys };
+  return { shown, hi: kbd ? hi : -1, rowProps, triggerKeys };
 }
 const hiBackground = (isHi, isCurrent, C) => (isHi ? "rgba(255,255,255,0.09)" : isCurrent ? C.accentSoft : "transparent");
 

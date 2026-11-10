@@ -22,7 +22,7 @@ function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onC
     ? (effectiveTempo !== "" && effectiveTempo != null ? `${effectiveTempo}` : "—")
     : flatify(`${keyOverride || song.key}${song.keyQuality === "Minor" ? "m" : ""}`);
   return (
-    <div data-nav-row data-song-id={song.id} tabIndex={0} role="button" title="Enter opens · Alt + ↑ ↓ moves · Delete removes" onKeyDown={onKeyDown} onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
+    <div data-nav-row data-song-id={song.id} tabIndex={0} role="button" onKeyDown={onKeyDown} onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</Tamil></div>
@@ -139,7 +139,7 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
   return (
     <div ref={stageRoot} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 16px 12px", display: "flex", alignItems: "center", gap: 6 }}>
-        <button onClick={onBack} aria-label="Back" title="Back (Esc)" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
+        <button onClick={onBack} aria-label="Back" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
         {editingName ? (
           <input className="no-ring" autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             style={{ flex: 1, fontFamily: FONT, fontSize: 16, fontWeight: 700, background: "transparent", border: "none", color: C.text, textAlign: "center", padding: "6px 10px", textTransform: "uppercase", letterSpacing: 0.5, outline: "none" }} />
@@ -238,7 +238,7 @@ export function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C })
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Setlists</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{setlists.length} setlist{setlists.length === 1 ? "" : "s"}</div></div>
-          <button onClick={onCreate} aria-label="New setlist" title="New setlist" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+          <button onClick={onCreate} aria-label="New setlist" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
         <div style={{ marginTop: 16 }}>
           <ClearableInput search onEnter={() => { if (sorted[0]) onOpenStage(sorted[0].id); }} value={query} onChangeText={setQuery} placeholder="Search setlists"
@@ -252,7 +252,7 @@ export function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C })
         )}
         {sorted.map((sl) => (
           <SwipeToDelete key={sl.id} id={sl.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(sl.id)} C={C}>
-            <div data-nav-row tabIndex={0} role="button" title="Enter opens · Delete removes" onKeyDown={navRowKeys(() => onOpenStage(sl.id), { onDelete: () => onDelete(sl.id) })} onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
+            <div data-nav-row tabIndex={0} role="button" onKeyDown={navRowKeys(() => onOpenStage(sl.id), { onDelete: () => onDelete(sl.id) })} onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>{sl.name}</div>
                 <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{sl.entries.length} song{sl.entries.length === 1 ? "" : "s"}</div>

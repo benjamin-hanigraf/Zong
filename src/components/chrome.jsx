@@ -22,7 +22,7 @@ export function BottomNav({ active, onChange, mode, C }) {
           const isActive = active === id;
           const isPiano = Icon === PianoIcon;
           return (
-            <button key={id} onClick={() => onChange(id)} title={`${label} (${index + 1})`} aria-current={isActive ? "page" : undefined} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
+            <button key={id} onClick={() => onChange(id)} aria-current={isActive ? "page" : undefined} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
               {/* Allow the piano icon to be naturally balanced; constrain height */}
               <div style={{ height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Icon size={isPiano ? 16 : 18} height={isPiano ? 16 : undefined} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />

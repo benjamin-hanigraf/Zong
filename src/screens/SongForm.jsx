@@ -346,7 +346,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
   return (
     <div ref={formRoot} className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div data-sticky-header style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
-        <button onClick={onCancel} aria-label="Back" title="Back (Esc)" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
+        <button onClick={onCancel} aria-label="Back" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
         <button disabled={!canSave} onClick={handleSave} style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -436,7 +436,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
                   }}>
                   <button type="button" ref={(el) => { if (el) handleRefs.current[row.id] = el; else delete handleRefs.current[row.id]; }}
                     onPointerDown={(e) => startDrag(e, row.id)} onKeyDown={(e) => moveRowByKey(e, row.id)}
-                    aria-label={`Move ${row.s || "this section"}`} title="Hold and drag to move — or press ↑ ↓ here"
+                    aria-label={`Move ${row.s || "this section"}`}
                     style={{ width: 22, height: 44, padding: 0, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, touchAction: "none", cursor: "grab", flexShrink: 0 }}>
                     <GripVertical size={18} />
                   </button>

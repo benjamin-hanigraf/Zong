@@ -242,7 +242,7 @@ export function SongDetailScreen({
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
     <div ref={detailRoot} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 14px 16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
-        <button onClick={onBack} aria-label="Back" title="Back (Esc)" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
+        <button onClick={onBack} aria-label="Back" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
         <div
           onTouchStart={startTitlePress} onTouchMove={cancelTitlePress} onTouchEnd={cancelTitlePress} onTouchCancel={cancelTitlePress}
@@ -299,7 +299,7 @@ export function SongDetailScreen({
         <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
             <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} fontSize={12.5} C={C} />
-            <button onClick={cycleSubdivision} aria-label="Subdivision" title="Subdivision" style={{ ...chevronBtn, width: 30, height: 30 }}>
+            <button onClick={cycleSubdivision} aria-label="Subdivision" style={{ ...chevronBtn, width: 30, height: 30 }}>
               <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
             </button>
           </div>

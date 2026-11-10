@@ -91,7 +91,6 @@ function SongRow({ song, onOpen, onEdit, onDelete, onLoadToMetronome, onLoadToPi
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
     <div data-nav-row tabIndex={0} role="button"
-      title={`Enter opens · E edits · Delete removes${canSwipeRight ? ` · → loads it into the ${isDrums ? "metronome" : "chord piano"}` : ""}`}
       onKeyDown={navRowKeys(() => onOpen(song), {
         onEdit: onEdit ? () => onEdit(song) : undefined,
         onDelete: onDelete ? () => onDelete(song.id) : undefined,
@@ -131,7 +130,7 @@ export function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMe
             <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
               {langFilter === "All" ? "All" : (langFilter === "Tamil" ? (tanglishMode ? "Tamil" : "தமிழ்") : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter))}
             </button>
-            <button onClick={onAdd} aria-label="Add song" title="Add song" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+            <button onClick={onAdd} aria-label="Add song" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
           </div>
         </div>
         <div style={{ marginTop: 16 }}>

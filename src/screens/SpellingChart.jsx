@@ -232,7 +232,7 @@ export function SpellingChartScreen({ chart, onSave, onBack, C }) {
       {/* Sticky Header matching SongForm */}
       <div style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
         <button
-          onClick={onBack} aria-label="Back" title="Back (Esc)"
+          onClick={onBack} aria-label="Back"
           style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, marginLeft: -6, cursor: "pointer" }}
         >
           <ChevronLeft size={22} />

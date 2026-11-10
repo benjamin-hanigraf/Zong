@@ -97,10 +97,10 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%", maxWidth: 320 }}>
         <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ width: "100%" }} C={C} />
-        <button onClick={cycleSubdivision} aria-label="Subdivision" title="Subdivision" style={{ width: "100%", height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onClick={cycleSubdivision} aria-label="Subdivision" style={{ width: "100%", height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <SubdivisionIcon value={subdivision} size={19} color={C.text} />
         </button>
-        <button onPointerDown={tapTempo} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); tapTempo(e); } }} title="Tap tempo (T)" style={{ width: "100%", height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onPointerDown={tapTempo} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); tapTempo(e); } }} style={{ width: "100%", height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
           TAP
         </button>
       </div>

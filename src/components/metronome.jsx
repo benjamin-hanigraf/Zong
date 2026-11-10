@@ -66,7 +66,6 @@ export function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggl
   return (
     <div ref={knobRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp}
       role="slider" tabIndex={0} aria-label="Tempo" aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value)} aria-valuetext={`${Math.round(value)} BPM`}
-      title="Tempo — ↑ ↓ change by 1, Shift or Page Up / Down by 10"
       onKeyDown={(e) => {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
         const big = e.shiftKey ? 10 : 1;
@@ -103,7 +102,7 @@ export function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggl
           <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: "38%", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: size * 0.09 }}>
             <ChevronRight size={size * 0.1} color={C.textFaint} />
           </div>
-          <button aria-label="Start / stop" title="Start / stop (Space)" onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
+          <button aria-label="Start / stop" onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(); } }} style={{
             position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
             width: size * 0.34, height: size * 0.34, borderRadius: "50%", border: "none", background: "transparent", pointerEvents: "auto",
@@ -198,7 +197,7 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
         onPointerLeave={clearPress}
         onPointerCancel={clearPress}
         onContextMenu={(e) => e.preventDefault()}
-        aria-label="Beat pattern" title={onToggleMuted ? "Beat pattern — Enter edits, M silences / restores all beats" : "Beat pattern — Enter edits"}
+        aria-label="Beat pattern"
         style={{ display: "flex", gap: 8, justifyContent: "center", background: "none", border: "none", padding: 6, cursor: "pointer", WebkitTouchCallout: "none", userSelect: "none" }}>
         {pattern.map((state, i) => (
           <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: dotColor(state, flashBeat === i, C), border: state === "mute" ? `1.5px solid ${flashBeat === i ? "#fff" : C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
@@ -214,7 +213,7 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
             maxWidth: "calc(100vw - 16px)", boxSizing: "border-box",
           }}>
             {pattern.map((state, i) => (
-              <button key={i} onClick={() => cycleBeat(i)} aria-label={`Beat ${i + 1}: ${state === "mute" ? "silent" : state}`} title="Enter / Space changes this beat" style={{ background: "none", border: "none", padding: 4, cursor: "pointer" }}>
+              <button key={i} onClick={() => cycleBeat(i)} aria-label={`Beat ${i + 1}: ${state === "mute" ? "silent" : state}`} style={{ background: "none", border: "none", padding: 4, cursor: "pointer" }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%", background: state === "mute" ? "transparent" : state === "accent" ? C.accent : "#fff", border: state === "mute" ? `2px solid ${C.textFaint}` : "none", boxSizing: "border-box" }} />
               </button>
             ))}
