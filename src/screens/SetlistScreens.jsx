@@ -16,13 +16,13 @@ import { RemoveSharedSongModal } from "../components/dialogs.jsx";
 /* =========================================================================
    Setlist song row
    ========================================================================= */
-function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onClick, mode, tanglishMode, C }) {
+function SetlistSongRow({ song, keyOverride, tempoOverride, style, handlers, onClick, onKeyDown, mode, tanglishMode, C }) {
   const effectiveTempo = tempoOverride ?? song.tempo;
   const badgeText = mode === "drums"
     ? (effectiveTempo !== "" && effectiveTempo != null ? `${effectiveTempo}` : "—")
     : flatify(`${keyOverride || song.key}${song.keyQuality === "Minor" ? "m" : ""}`);
   return (
-    <div onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
+    <div data-nav-row data-song-id={song.id} tabIndex={0} role="button" title="Enter opens · Alt + ↑ ↓ moves · Delete removes" onKeyDown={onKeyDown} onClick={onClick} {...handlers} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", touchAction: "pan-y", ...style }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(stripAltTitle(song.title), tanglishMode)}</Tamil></div>
         <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Tamil>{maybeTanglishTitle(song.artist, tanglishMode) || "Unknown"}</Tamil></div>
@@ -82,6 +82,17 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
     onUpdateSetlist({ ...setlist, entries: has ? setlist.entries.filter((e) => e.songId !== songId) : [...setlist.entries, { songId, keyOverride: null, tempoOverride: null }] });
   };
 
+  // Keyboard reorder: Alt + ↑ / ↓ on a song moves it one place (the focus follows it).
+  const moveSongBy = (idx, dir) => {
+    const to = idx + dir;
+    if (to < 0 || to >= setlist.entries.length) return;
+    const id = setlist.entries[idx].songId;
+    const next = [...setlist.entries];
+    [next[idx], next[to]] = [next[to], next[idx]];
+    onUpdateSetlist({ ...setlist, entries: next });
+    // saved a moment later, once the new order has been applied (committing in the same breath would save the old one)
+    setTimeout(() => { onCommit?.(setlist.id); document.querySelector(`[data-song-id="${CSS.escape(id)}"]`)?.focus(); }, 80);
+  };
   const mouseDragIdxRef = useRef(null);
   const startSongDrag = (idx, clientY) => {
     startYRef.current = clientY;
@@ -128,7 +139,7 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
   return (
     <div ref={stageRoot} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: bottomInset, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 80, display: "flex", flexDirection: "column", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: `translateX(${dragX}px)`, transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div style={{ padding: "16px 16px 12px", display: "flex", alignItems: "center", gap: 6 }}>
-        <button onClick={onBack} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
+        <button onClick={onBack} aria-label="Back" title="Back (Esc)" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.textMuted, flexShrink: 0 }}><ChevronLeft size={22} /></button>
         {editingName ? (
           <input className="no-ring" autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={commitName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             style={{ flex: 1, fontFamily: FONT, fontSize: 16, fontWeight: 700, background: "transparent", border: "none", color: C.text, textAlign: "center", padding: "6px 10px", textTransform: "uppercase", letterSpacing: 0.5, outline: "none" }} />
@@ -157,6 +168,7 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
                   if (justDraggedRef.current) { justDraggedRef.current = false; return; }
                   if (activeDragIndex === null) onOpenSong(s);
                 }}
+                onKeyDown={navRowKeys(() => onOpenSong(s), { onDelete: () => requestRemoveFromStage(s.id), onMove: (dir) => moveSongBy(idx, dir) })}
                 handlers={{
                   onTouchStart: (e) => handleSongTouchStart(idx, e),
                   onTouchMove: (e) => handleSongTouchMove(idx, e),
@@ -226,7 +238,7 @@ export function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C })
       <div style={{ flex: "0 0 auto", padding: "22px 20px 14px", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div><div style={{ fontSize: 26, fontWeight: 700 }}>Setlists</div><div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{setlists.length} setlist{setlists.length === 1 ? "" : "s"}</div></div>
-          <button onClick={onCreate} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+          <button onClick={onCreate} aria-label="New setlist" title="New setlist" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
         </div>
         <div style={{ marginTop: 16 }}>
           <ClearableInput search onEnter={() => { if (sorted[0]) onOpenStage(sorted[0].id); }} value={query} onChangeText={setQuery} placeholder="Search setlists"
@@ -240,7 +252,7 @@ export function SetlistsScreen({ setlists, onOpenStage, onCreate, onDelete, C })
         )}
         {sorted.map((sl) => (
           <SwipeToDelete key={sl.id} id={sl.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => onDelete(sl.id)} C={C}>
-            <div data-nav-row tabIndex={0} role="button" onKeyDown={navRowKeys(() => onOpenStage(sl.id))} onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
+            <div data-nav-row tabIndex={0} role="button" title="Enter opens · Delete removes" onKeyDown={navRowKeys(() => onOpenStage(sl.id), { onDelete: () => onDelete(sl.id) })} onClick={() => onOpenStage(sl.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>{sl.name}</div>
                 <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{sl.entries.length} song{sl.entries.length === 1 ? "" : "s"}</div>

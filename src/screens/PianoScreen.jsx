@@ -446,6 +446,56 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
     };
   }, [isVocals]);
 
+  // Computer keyboard on the piano keys (Mac / PC): A W S E D F T G Y H U J play C to B — the layout of the keys themselves — and
+  // Z / X move the octave down / up (Chords mode). Held keys sound until released; in Vocals mode a new key replaces the chord, as with a tap.
+  const kb = useRef({});
+  kb.current = { startNote, startPadChord, stopPadChord, releaseVoice, isVocals, joystick, octaveStart, setOctaveStart };
+  useEffect(() => {
+    const SEMITONE_OF = { KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11 };
+    const stopEntry = (entry) => {
+      paintKeyRef.current?.(entry.keyEl, false);
+      if (entry.padVoice) kb.current.stopPadChord(entry.padVoice);
+      else if (entry.voice) kb.current.releaseVoice(entry.voice);
+    };
+    const onDown = (e) => {
+      const K = kb.current;
+      if (K.joystick || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || hasOpenLayer() || isTypingTarget(e.target)) return;
+      if (!pageRef.current || !isShown(pageRef.current)) return;
+      if (/^(BUTTON|A|SELECT)$/.test(e.target?.tagName || "") && (e.key === " " || e.key === "Enter")) return;
+      if (e.code === "KeyZ" || e.code === "KeyX") {
+        if (!K.isVocals) { e.preventDefault(); if (!e.repeat) K.setOctaveStart(K.octaveStart + (e.code === "KeyX" ? 1 : -1)); }
+        return;
+      }
+      const semitone = SEMITONE_OF[e.code];
+      if (semitone === undefined) return;
+      e.preventDefault();
+      if (e.repeat || activeRef.current.has(`kb:${e.code}`)) return;
+      const keyEl = containerRef.current?.querySelector(`[data-semitone="${semitone}"]`);
+      if (!keyEl) return;
+      unlockAudioPlayback();
+      if (K.isVocals) {
+        activeRef.current.forEach((entry) => stopEntry(entry));
+        activeRef.current.clear();
+        activeRef.current.set(`kb:${e.code}`, { semitone, padVoice: K.startPadChord(semitone), voice: null, keyEl });
+      } else {
+        activeRef.current.set(`kb:${e.code}`, { semitone, voice: K.startNote(semitone), padVoice: null, keyEl });
+      }
+      paintKeyRef.current?.(keyEl, true);
+    };
+    const release = (code) => {
+      const entry = activeRef.current.get(`kb:${code}`);
+      if (!entry) return;
+      stopEntry(entry);
+      activeRef.current.delete(`kb:${code}`);
+    };
+    const onUp = (e) => release(e.code);
+    const releaseAll = () => { [...activeRef.current.keys()].filter((k) => String(k).startsWith("kb:")).forEach((k) => release(String(k).slice(3))); };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", releaseAll);
+    return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); window.removeEventListener("blur", releaseAll); releaseAll(); };
+  }, []);
+
   // The song's key (set by swiping a song into the piano): a soft accent glow rising from the bottom edge, fading out a third of the way up.
   const keyGlow = (semitone) => (semitone === highlightSemitone
     ? <div aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "33%", borderRadius: "inherit", pointerEvents: "none", background: `linear-gradient(to top, ${C.accent}59, ${C.accent}00)` }} />
@@ -578,14 +628,14 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
               </button>
             )}
             {!joystick && <>
-            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} style={{
+            <button onClick={() => setOctaveStart(octaveStart - 1)} disabled={octaveStart <= 3} aria-label="Lower octave" title="Lower octave (Z)" style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
               color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart <= 3 ? 0.35 : 1,
             }}>
               <ChevronLeft size={15} />
             </button>
             <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 26, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{octaveStart - 4 === 0 ? "0" : octaveStart - 4 > 0 ? `+${octaveStart - 4}` : `${octaveStart - 4}`}</div>
-            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} style={{
+            <button onClick={() => setOctaveStart(octaveStart + 1)} disabled={octaveStart >= 5} aria-label="Higher octave" title="Higher octave (X)" style={{
               width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.borderStrong}`, background: C.surface2,
               color: C.text, display: "flex", alignItems: "center", justifyContent: "center", opacity: octaveStart >= 5 ? 0.35 : 1,
             }}>
@@ -601,6 +651,7 @@ export function PianoScreen({ C, mode, loadedQuality, onQualityChange, highlight
       ) : (
       <div
         ref={setKeysEl}
+        title="Computer keyboard: A W S E D F T G Y H U J play C to B (Z / X change octave)"
         onPointerDown={handlePointerDown}
         onContextMenu={(e) => e.preventDefault()}
         style={{ flex: 1, position: "relative", touchAction: "none", overflow: "hidden" }}

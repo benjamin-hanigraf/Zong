@@ -88,7 +88,7 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
                 <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: C.text }}>Transliteration</div>
                 <div style={{ fontFamily: FONT, fontSize: 12, color: C.textMuted, marginTop: 2 }}>(த → tha)</div>
               </div>
-              <IosSwitch checked={tanglishMode} onChange={setTanglishMode} C={C} />
+              <IosSwitch checked={tanglishMode} onChange={setTanglishMode} label="Transliteration" C={C} />
             </div>
             <button
               onClick={onOpenSpellingChart}
@@ -134,7 +134,7 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
                 {alignOptions.map(({ id, Icon }) => {
                   const active = textAlign === id;
                   return (
-                    <button key={id} onClick={() => setTextAlign(id)} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <button key={id} onClick={() => setTextAlign(id)} aria-label={`Align ${id}`} aria-pressed={textAlign === id} title={`Align ${id}`} style={{ flex: 1, height: 44, borderRadius: 10, border: `1px solid ${active ? C.accent : C.border}`, background: active ? C.accentSoft : C.surface3, color: active ? C.accent : C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Icon size={16} />
                     </button>
                   );
@@ -178,9 +178,9 @@ export function SettingsScreen({ mode, setMode, fontSize, setFontSize, chordFont
               <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 26, display: "flex", flexDirection: "column", gap: 18 }}>
                 <Field label="CLICK TONE">
                   <div style={{ height: 48, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 10, padding: "0 6px" }}>
-                    <button onClick={() => cycleTone(-1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
+                    <button onClick={() => cycleTone(-1)} aria-label="Previous click sound" title="Previous click sound" style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronLeft size={20} color={C.text} /></button>
                     <div style={{ fontSize: 16, fontWeight: 600, textAlign: "center", flex: 1 }}>{CLICK_TONES[toneIndex]?.name}</div>
-                    <button onClick={() => cycleTone(1)} style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
+                    <button onClick={() => cycleTone(1)} aria-label="Next click sound" title="Next click sound" style={{ background: "none", border: "none", padding: 10, display: "flex" }}><ChevronRight size={20} color={C.text} /></button>
                   </div>
                 </Field>
                 <Field label="AUDIO OUTPUT">

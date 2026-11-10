@@ -22,6 +22,58 @@ export function KeyStepper({ label, onPrev, onNext, onKeyClick, active = false, 
   );
 }
 
+// Keyboard control for an open drop-down list, shared by every drop-down in the app (a physical keyboard):
+//   ↑ ↓  move the highlight (Home / End jump)      Enter or Space  choose the highlighted option      Esc  close
+//   typing  narrows the list to the options containing the letters typed (any case); Backspace takes a letter back.
+//   A letter that would leave nothing is ignored. Nothing extra is drawn for it — the list just gets shorter.
+// `items` = [{ id, label }]. Returns { shown, hi, rowProps(i) } for drawing the rows, and `triggerKeys` for the button
+// that opens the list (↑ / ↓ open it).
+function useListbox({ open, setOpen, items, value, onPick }) {
+  const [typed, setTyped] = useState("");
+  const [hi, setHi] = useState(0);
+  const typedRef = useRef("");
+  const hiRef = useRef(0);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
+  const setHiBoth = (n) => { hiRef.current = n; setHi(n); };
+  const setTypedBoth = (t) => { typedRef.current = t; setTyped(t); };
+  const matches = (t) => itemsRef.current.filter((o) => o.label.toLowerCase().includes(t.toLowerCase()));
+  useEffect(() => {
+    setTypedBoth("");
+    if (!open) return undefined;
+    setHiBoth(Math.max(0, itemsRef.current.findIndex((o) => o.id === value)));
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      if (e.key === "Tab") { setOpen(false); return; }
+      const list = matches(typedRef.current);
+      const last = Math.max(0, list.length - 1);
+      let handled = true;
+      if (e.key === "ArrowDown") setHiBoth(Math.min(last, hiRef.current + 1));
+      else if (e.key === "ArrowUp") setHiBoth(Math.max(0, hiRef.current - 1));
+      else if (e.key === "Home") setHiBoth(0);
+      else if (e.key === "End") setHiBoth(last);
+      else if (e.key === "Enter" || (e.key === " " && !typedRef.current)) { const it = list[hiRef.current]; if (it) { pickRef.current(it.id); } }
+      else if (e.key === "Backspace") { setTypedBoth(typedRef.current.slice(0, -1)); setHiBoth(0); }
+      else if (e.key.length === 1) {
+        const next = typedRef.current + e.key;
+        if (matches(next).length) { setTypedBoth(next); setHiBoth(0); }
+      } else handled = false;
+      if (handled) { e.preventDefault(); e.stopPropagation(); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = typed ? matches(typed) : items;
+  // keep the highlighted row in view
+  useEffect(() => { if (open) document.querySelector('[data-listbox-hi="true"]')?.scrollIntoView({ block: "nearest" }); }, [open, hi, typed]);
+  const rowProps = (i, id) => ({ role: "option", "aria-selected": id === value, "data-listbox-hi": open && i === hi ? "true" : undefined, onMouseEnter: () => setHiBoth(i) });
+  const triggerKeys = (e) => { if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); e.stopPropagation(); setOpen(true); } };
+  return { shown, hi, rowProps, triggerKeys };
+}
+const hiBackground = (isHi, isCurrent, C) => (isHi ? "rgba(255,255,255,0.09)" : isCurrent ? C.accentSoft : "transparent");
+
 // A drop-down list of plain choices ([{ id, label }]), styled like the key dropdown. `value` is an id; `placeholder` shows when it is empty.
 export function OptionDropdown({ options, value, onChange, placeholder = "Select", C }) {
   const [open, setOpen] = useState(false);
@@ -37,41 +89,10 @@ export function OptionDropdown({ options, value, onChange, placeholder = "Select
     setOpen((o) => !o);
   };
   const current = options.find((o) => o.id === value);
-  // Type-ahead (a physical keyboard): while the list is open, typing narrows it to the options containing the letters typed, in any
-  // case; Backspace takes a letter back and Enter picks the first one left. Nothing is shown for it — the list just gets shorter.
-  // A letter that would leave nothing is ignored.
-  const [typed, setTyped] = useState("");
-  const typedRef = useRef("");
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
-  const pickRef = useRef(null);
-  pickRef.current = (id) => { onChange(id); setOpen(false); };
-  useEffect(() => {
-    typedRef.current = ""; setTyped("");
-    if (!open) return undefined;
-    const matches = (text) => optionsRef.current.filter((o) => o.label.toLowerCase().includes(text.toLowerCase()));
-    const onKey = (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-      let next = typedRef.current;
-      if (e.key === "Backspace") next = next.slice(0, -1);
-      else if (e.key === "Enter") {
-        const first = matches(next)[0];
-        if (first && next) { e.preventDefault(); e.stopPropagation(); pickRef.current(first.id); }
-        return;
-      } else if (e.key.length === 1) {
-        if (!matches(next + e.key).length) { e.preventDefault(); return; }
-        next += e.key;
-      } else return;
-      e.preventDefault();
-      typedRef.current = next; setTyped(next);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
-  const shown = typed ? options.filter((o) => o.label.toLowerCase().includes(typed.toLowerCase())) : options;
+  const lb = useListbox({ open, setOpen, items: options, value, onPick: (id) => { onChange(id); setOpen(false); btnRef.current?.focus(); } });
   return (
     <div style={{ position: "relative", minWidth: 0 }}>
-      <button ref={btnRef} type="button" onClick={toggle} style={{
+      <button ref={btnRef} type="button" onClick={toggle} onKeyDown={lb.triggerKeys} aria-haspopup="listbox" aria-expanded={open} style={{
         width: "100%", boxSizing: "border-box", height: 44, padding: "0 10px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2,
         color: current || value ? C.text : C.textFaint, fontFamily: FONT, fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
       }}>
@@ -81,17 +102,17 @@ export function OptionDropdown({ options, value, onChange, placeholder = "Select
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
-          <div style={{
+          <div role="listbox" style={{
             position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }), left: 0, minWidth: "100%", maxWidth: 260, maxHeight: 240, overflowY: "auto", zIndex: 150,
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
             {options.length === 0 && <div style={{ padding: "12px 14px", fontFamily: FONT, fontSize: 14, color: C.textMuted }}>No sections yet</div>}
-            {shown.map(({ id, label }) => {
+            {lb.shown.map(({ id, label }, i) => {
               const active = id === value;
               return (
-                <div key={id} onClick={() => { onChange(id); setOpen(false); }} style={{
+                <div key={id} {...lb.rowProps(i, id)} onClick={() => { onChange(id); setOpen(false); btnRef.current?.focus(); }} style={{
                   padding: "12px 14px", fontFamily: FONT, fontSize: 15, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent", cursor: "pointer",
+                  color: active ? C.accent : C.text, background: hiBackground(i === lb.hi, active, C), cursor: "pointer",
                 }}>
                   {label}
                 </div>
@@ -119,15 +140,26 @@ export function SectionLabel({ children }) {
 
 // `search` marks it as a list's search box: the / key focuses it, Esc clears it, ↓ jumps to the first result, Enter runs onEnter.
 // Keyboard handling for a focusable list row: Enter / Space activates it, ↑ / ↓ move between rows, Home / End jump to the ends.
-export const navRowKeys = (activate) => (e) => {
+// `extra` adds shortcuts to a row: { onEdit (E), onDelete (Delete / Backspace), onLoad (→), onMove(-1 | 1) (Alt + ↑ / ↓) }.
+export const navRowKeys = (activate, extra = {}) => (e) => {
   if (e.target !== e.currentTarget) return;
   const rows = [...document.querySelectorAll("[data-nav-row]")].filter(isShown);
   const at = rows.indexOf(e.currentTarget);
+  const plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+  if (e.altKey && extra.onMove && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); extra.onMove(e.key === "ArrowUp" ? -1 : 1); return; }
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
   else if (e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, at + 1)]?.focus(); }
   else if (e.key === "ArrowUp") { e.preventDefault(); if (at <= 0) [...document.querySelectorAll("input[data-search]")].find(isShown)?.focus(); else rows[at - 1].focus(); }
   else if (e.key === "Home") { e.preventDefault(); rows[0]?.focus(); }
   else if (e.key === "End") { e.preventDefault(); rows[rows.length - 1]?.focus(); }
+  else if (plain && extra.onEdit && (e.key === "e" || e.key === "E")) { e.preventDefault(); extra.onEdit(); }
+  else if (plain && extra.onLoad && e.key === "ArrowRight") { e.preventDefault(); extra.onLoad(); }
+  else if (plain && extra.onDelete && (e.key === "Delete" || e.key === "Backspace")) {
+    e.preventDefault();
+    extra.onDelete();
+    // keep the keyboard in the list: the row that takes this one's place gets the focus
+    setTimeout(() => { const now = [...document.querySelectorAll("[data-nav-row]")].filter(isShown); if (!document.activeElement || document.activeElement === document.body) now[Math.min(at, now.length - 1)]?.focus(); }, 60);
+  }
 };
 
 export function ClearableInput({ value, onChangeText, placeholder, leftIcon, style, type, inputMode, autoFocus, search, onEnter }) {
@@ -179,10 +211,12 @@ export function TimeSigPicker({ value, onChange, fullWidth, height = 44, fontSiz
     }
     setOpen((o) => !o);
   };
+  const tsItems = TIME_SIGS.map((ts) => ({ id: `${ts.beats}/${ts.unit}`, label: `${ts.beats}/${ts.unit}`, ts }));
+  const lb = useListbox({ open, setOpen, items: tsItems, value: value ? `${value.beats}/${value.unit}` : "", onPick: (id) => { const it = tsItems.find((x) => x.id === id); if (it) { onChange(it.ts); } setOpen(false); btnRef.current?.focus(); } });
   return (
     <div style={{ position: "relative", width: fullWidth ? "100%" : undefined, boxSizing: "border-box", zIndex: open ? 500 : "auto", ...style }}>
       <button
-        ref={btnRef} type="button" onClick={handleToggle}
+        ref={btnRef} type="button" onClick={handleToggle} onKeyDown={lb.triggerKeys} aria-haspopup="listbox" aria-expanded={open} aria-label="Time signature"
         style={subtle ? {
           fontFamily: FONT, fontSize: fontSize ?? 11, fontWeight: 600, borderRadius: 6, boxSizing: "border-box",
           border: `1px solid ${C.border}`, background: "transparent", color: value ? C.textMuted : C.textFaint,
@@ -200,18 +234,19 @@ export function TimeSigPicker({ value, onChange, fullWidth, height = 44, fontSiz
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
-          <div style={{
+          <div role="listbox" style={{
             position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
             ...(openLeft ? { left: 0 } : { left: "50%", transform: "translateX(-50%)" }), zIndex: 500, width: DROPDOWN_WIDTH,
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
             overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
-            {TIME_SIGS.map((ts) => {
+            {lb.shown.map((item, i) => {
+              const ts = item.ts;
               const active = value && ts.beats === value.beats && ts.unit === value.unit;
               return (
-                <div key={`${ts.beats}/${ts.unit}`} onClick={() => { onChange(ts); setOpen(false); }} style={{
+                <div key={item.id} {...lb.rowProps(i, item.id)} onClick={() => { onChange(ts); setOpen(false); btnRef.current?.focus(); }} style={{
                   padding: "10px 16px", fontFamily: FONT, fontSize: 15, fontWeight: 500, textAlign: "center",
-                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent",
+                  color: active ? C.accent : C.text, background: hiBackground(i === lb.hi, active, C), cursor: "pointer",
                 }}>
                   {ts.beats}/{ts.unit}
                 </div>
@@ -245,9 +280,10 @@ export function NaturalDropdown({ value, onChange, C }) {
     }
     setOpen((o) => !o);
   };
+  const lb = useListbox({ open, setOpen, items: NATURAL_OPTIONS, value: value || "", onPick: (id) => { onChange(id); setOpen(false); btnRef.current?.focus(); } });
   return (
     <div style={{ position: "relative" }}>
-      <button ref={btnRef} type="button" onClick={handleToggle} style={{
+      <button ref={btnRef} type="button" onClick={handleToggle} onKeyDown={lb.triggerKeys} aria-haspopup="listbox" aria-expanded={open} aria-label="Key note" style={{
         width: "100%", boxSizing: "border-box", height: 44, padding: "0 10px", borderRadius: 10,
         border: `1px solid ${C.border}`, background: C.surface2, color: C.text,
         fontFamily: FONT, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
@@ -257,18 +293,18 @@ export function NaturalDropdown({ value, onChange, C }) {
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
-          <div style={{
+          <div role="listbox" style={{
             position: "absolute", ...(openUpward ? { bottom: "110%" } : { top: "110%" }),
             left: 0, right: 0, zIndex: 150,
             background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 12,
             boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
           }}>
-            {NATURAL_OPTIONS.map(({ id, label }) => {
+            {lb.shown.map(({ id, label }, i) => {
               const active = id === (value || "");
               return (
-                <div key={label} onClick={() => { onChange(id); setOpen(false); }} style={{
+                <div key={label} {...lb.rowProps(i, id)} onClick={() => { onChange(id); setOpen(false); btnRef.current?.focus(); }} style={{
                   padding: "12px 14px", fontFamily: FONT, fontSize: 15, fontWeight: 700, textAlign: "center",
-                  color: active ? C.accent : C.text, background: active ? C.accentSoft : "transparent", cursor: "pointer",
+                  color: active ? C.accent : C.text, background: hiBackground(i === lb.hi, active, C), cursor: "pointer",
                 }}>
                   {label}
                 </div>
@@ -304,10 +340,10 @@ export function AccidentalButton({ variant, natural, value, onChange, C }) {
 // Plain iOS-style switch — a single toggle knob with no embedded text
 // labels, for rows where the label already lives outside the control
 // (e.g. "Tamil Transliteration" ...... [ o--]).
-export function IosSwitch({ checked, onChange, C }) {
+export function IosSwitch({ checked, onChange, label, C }) {
   return (
     <div
-      role="switch" aria-checked={checked} tabIndex={0}
+      role="switch" aria-checked={checked} aria-label={label} tabIndex={0}
       onClick={() => onChange(!checked)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onChange(!checked); } }}
       style={{

@@ -12,7 +12,7 @@ import { SwipeToDelete } from "../components/SwipeToDelete.jsx";
 /* =========================================================================
    Songs list
    ========================================================================= */
-function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, isSwipeOpen, lastScrollTimeRef, C }) {
+function SongRow({ song, onOpen, onEdit, onDelete, onLoadToMetronome, onLoadToPiano, mode, tanglishMode, isSwipeOpen, lastScrollTimeRef, C }) {
   const longPressTimerRef = useRef(null);
   const firedLongPressRef = useRef(false);
   const swipeStartRef = useRef(null);
@@ -90,7 +90,13 @@ function SongRow({ song, onOpen, onEdit, onLoadToMetronome, onLoadToPiano, mode,
 
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div data-nav-row tabIndex={0} role="button" onKeyDown={navRowKeys(() => onOpen(song))} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 120ms ease" : "none", background: C.bg, zIndex: 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+    <div data-nav-row tabIndex={0} role="button"
+      title={`Enter opens · E edits · Delete removes${canSwipeRight ? ` · → loads it into the ${isDrums ? "metronome" : "chord piano"}` : ""}`}
+      onKeyDown={navRowKeys(() => onOpen(song), {
+        onEdit: onEdit ? () => onEdit(song) : undefined,
+        onDelete: onDelete ? () => onDelete(song.id) : undefined,
+        onLoad: canSwipeRight ? () => (isDrums ? onLoadToMetronome(song) : onLoadToPiano(song)) : undefined,
+      })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 4px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", position: "relative", transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 120ms ease" : "none", background: C.bg, zIndex: 1, userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       onClick={handleClick} onTouchStart={startPress} onTouchMove={movePress} onTouchEnd={cancelPress} onTouchCancel={cancelPress}
       onMouseDown={startPress} onMouseMove={movePress} onMouseUp={cancelPress} onMouseLeave={cancelPress} onContextMenu={handleContextMenu}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -125,7 +131,7 @@ export function SongsScreen({ songs, onOpen, onAdd, onEdit, onDelete, onLoadToMe
             <button onClick={() => setLangFilter(f => f === "All" ? "English" : f === "English" ? "Tamil" : "All")} style={{ height: 34, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: FONT, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
               {langFilter === "All" ? "All" : (langFilter === "Tamil" ? (tanglishMode ? "Tamil" : "தமிழ்") : (LANGUAGES.find(l => l.id === langFilter)?.label || langFilter))}
             </button>
-            <button onClick={onAdd} style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
+            <button onClick={onAdd} aria-label="Add song" title="Add song" style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Plus size={17} color={C.accent} /></button>
           </div>
         </div>
         <div style={{ marginTop: 16 }}>

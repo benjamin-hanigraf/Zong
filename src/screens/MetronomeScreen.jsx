@@ -1,5 +1,6 @@
 // Metronome tab (Drums mode).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { hasOpenLayer, isShown, isTypingTarget } from "../lib/keys.js";
 import { FONT } from "../lib/constants.js";
 import { stripAltTitle } from "../lib/songText.js";
 import { Tamil } from "../components/Tamil.jsx";
@@ -22,6 +23,28 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
   };
   const clearTitleTouch = () => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } };
 
+  // Keyboard (Mac / PC): Space start / stop, ↑ ↓ tempo (Shift = 10), T tap tempo, M silence / restore every beat.
+  // Ignored while a dialog is open, while typing, and for keys that a focused button or the tempo slider already handles.
+  const pageRef = useRef(null);
+  const latest = useRef({});
+  latest.current = { bpm, setBpm, toggle, tapTempo, toggleMuted: engine.toggleMuted };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || hasOpenLayer()) return;
+      if (!pageRef.current || !isShown(pageRef.current)) return;
+      const t = e.target;
+      if (isTypingTarget(t)) return;
+      const onControl = /^(BUTTON|A|SELECT)$/.test(t?.tagName || "") || t?.getAttribute?.("role") === "slider";
+      const L = latest.current;
+      if (e.key === " " && !onControl) { e.preventDefault(); L.toggle(); }
+      else if ((e.key === "t" || e.key === "T") && !e.repeat) { e.preventDefault(); L.tapTempo(e); }
+      else if ((e.key === "m" || e.key === "M") && !e.repeat) { e.preventDefault(); L.toggleMuted(); }
+      else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !onControl) { e.preventDefault(); L.setBpm(Math.round(L.bpm) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1), true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const changeAccents = (next) => { const merged = engine.editAccents(next); if (loadedSong) onUpdateSongAccents(loadedSong.id, merged); };
   const cycleSubdivision = () => {
     const next = (subdivision % 3) + 1;
@@ -29,7 +52,7 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
   };
 
   return (
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "50px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
+    <div ref={pageRef} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "50px 20px 24px", boxSizing: "border-box", overflowY: "auto" }}>
       <div onTouchStart={startTitleTouch} onTouchMove={clearTitleTouch} onTouchEnd={clearTitleTouch} onTouchCancel={clearTitleTouch}
         onMouseDown={startTitleTouch} onMouseUp={clearTitleTouch} onMouseLeave={clearTitleTouch}
         style={{ textAlign: "center", minHeight: 44, display: "flex", flexDirection: "column", justifyContent: "center", cursor: "pointer", maxWidth: 260 }}>
@@ -52,7 +75,14 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
           onFocus={() => { setEditingBpm(true); setBpmDraft(""); }}
           onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
           onBlur={() => { const n = parseInt(bpmDraft, 10); if (!isNaN(n)) setBpm(n, true); setEditingBpm(false); }}
-          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              const next = Math.min(300, Math.max(30, Math.round(bpm) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1)));
+              setBpm(next, true); setBpmDraft(String(next));
+            }
+          }}
           className="bpm-number-input"
           style={{ fontSize: 60, fontWeight: 600, fontFamily: FONT, color: C.accent, fontVariantNumeric: "tabular-nums", lineHeight: "42px", background: "transparent", border: "none", textAlign: "center", width: 150, padding: 0, caretColor: "transparent" }}
         />
@@ -67,10 +97,10 @@ export function MetronomeScreen({ engine, onUpdateSongAccents, onUpdateSongSubdi
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, width: "100%", maxWidth: 320 }}>
         <TimeSigPicker value={timeSig} onChange={setTimeSig} fullWidth height={58} style={{ width: "100%" }} C={C} />
-        <button onClick={cycleSubdivision} style={{ width: "100%", height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onClick={cycleSubdivision} aria-label="Subdivision" title="Subdivision" style={{ width: "100%", height: 58, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <SubdivisionIcon value={subdivision} size={19} color={C.text} />
         </button>
-        <button onPointerDown={tapTempo} style={{ width: "100%", height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onPointerDown={tapTempo} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); tapTempo(e); } }} title="Tap tempo (T)" style={{ width: "100%", height: 58, boxSizing: "border-box", fontFamily: FONT, fontSize: 14, letterSpacing: 1, fontWeight: 600, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, display: "flex", alignItems: "center", justifyContent: "center" }}>
           TAP
         </button>
       </div>

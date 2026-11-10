@@ -65,6 +65,16 @@ export function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggl
   const ticks = Array.from({ length: 40 });
   return (
     <div ref={knobRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp}
+      role="slider" tabIndex={0} aria-label="Tempo" aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value)} aria-valuetext={`${Math.round(value)} BPM`}
+      title="Tempo — ↑ ↓ change by 1, Shift or Page Up / Down by 10"
+      onKeyDown={(e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const big = e.shiftKey ? 10 : 1;
+        const delta = e.key === "ArrowUp" || e.key === "ArrowRight" ? big : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -big : e.key === "PageUp" ? 10 : e.key === "PageDown" ? -10 : 0;
+        if (delta) { e.preventDefault(); e.stopPropagation(); onChange(Math.min(max, Math.max(min, Math.round(value) + delta))); }
+        else if (e.key === "Home") { e.preventDefault(); onChange(min); }
+        else if (e.key === "End") { e.preventDefault(); onChange(max); }
+      }}
       style={{ width: size + KNOB_TOUCH_PAD * 2, height: size + KNOB_TOUCH_PAD * 2, margin: -KNOB_TOUCH_PAD, position: "relative", touchAction: "none", userSelect: "none", cursor: "grab" }}>
       <div style={{
         position: "absolute", inset: KNOB_TOUCH_PAD, borderRadius: "50%",
@@ -93,7 +103,8 @@ export function Knob({ value, min = 30, max = 300, onChange, size = 220, onToggl
           <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: "38%", display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: size * 0.09 }}>
             <ChevronRight size={size * 0.1} color={C.textFaint} />
           </div>
-          <button onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }} style={{
+          <button aria-label="Start / stop" title="Start / stop (Space)" onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); onToggle(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onToggle(); } }} style={{
             position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
             width: size * 0.34, height: size * 0.34, borderRadius: "50%", border: "none", background: "transparent", pointerEvents: "auto",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -151,6 +162,20 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
     }
     setOpen(true);
   };
+  // Opened from the keyboard (or any way): the first dot takes focus; ← → move between dots, Enter / Space change the one in focus.
+  const popRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const frame = requestAnimationFrame(() => popRef.current?.querySelector("button")?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  const popKeys = (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const dots = [...popRef.current.querySelectorAll("button")];
+    const at = dots.indexOf(document.activeElement);
+    e.preventDefault(); e.stopPropagation();
+    dots[(at + (e.key === "ArrowRight" ? 1 : -1) + dots.length) % dots.length]?.focus();
+  };
   const hAlignStyle = hAlign === "left" ? { left: 0 } : hAlign === "right" ? { right: 0 } : { left: "50%", transform: "translateX(-50%)" };
   return (
     <div style={{ position: "relative", zIndex: 2 }} ref={btnRef}>
@@ -173,6 +198,7 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
         onPointerLeave={clearPress}
         onPointerCancel={clearPress}
         onContextMenu={(e) => e.preventDefault()}
+        aria-label="Beat pattern" title={onToggleMuted ? "Beat pattern — Enter edits, M silences / restores all beats" : "Beat pattern — Enter edits"}
         style={{ display: "flex", gap: 8, justifyContent: "center", background: "none", border: "none", padding: 6, cursor: "pointer", WebkitTouchCallout: "none", userSelect: "none" }}>
         {pattern.map((state, i) => (
           <div key={i} style={{ width: size, height: size, borderRadius: "50%", background: dotColor(state, flashBeat === i, C), border: state === "mute" ? `1.5px solid ${flashBeat === i ? "#fff" : C.textFaint}` : "none", boxSizing: "border-box", transition: "background 60ms linear" }} />
@@ -181,14 +207,14 @@ export function BeatAccentControl({ count, accents, onChange, size = 9, openUpwa
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 140 }} />
-          <div style={{
+          <div ref={popRef} onKeyDown={popKeys} role="group" aria-label="Beat pattern" style={{
             position: "absolute", ...(openUpward ? { bottom: "100%", marginBottom: 10 } : { top: "100%", marginTop: 10 }),
             ...hAlignStyle, zIndex: 150, background: C.surface3, border: `1px solid ${C.borderStrong}`, borderRadius: 16, padding: "16px 18px",
             boxShadow: "0 12px 32px rgba(0,0,0,0.6)", display: "flex", alignItems: "center", gap: 14, minWidth: POPUP_WIDTH, justifyContent: "center",
             maxWidth: "calc(100vw - 16px)", boxSizing: "border-box",
           }}>
             {pattern.map((state, i) => (
-              <button key={i} onClick={() => cycleBeat(i)} style={{ background: "none", border: "none", padding: 4, cursor: "pointer" }}>
+              <button key={i} onClick={() => cycleBeat(i)} aria-label={`Beat ${i + 1}: ${state === "mute" ? "silent" : state}`} title="Enter / Space changes this beat" style={{ background: "none", border: "none", padding: 4, cursor: "pointer" }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%", background: state === "mute" ? "transparent" : state === "accent" ? C.accent : "#fff", border: state === "mute" ? `2px solid ${C.textFaint}` : "none", boxSizing: "border-box" }} />
               </button>
             ))}
@@ -245,5 +271,7 @@ export function useHoldRepeat(step, { onStart, onEnd } = {}) {
     timeoutRef.current = setTimeout(scheduleNext, 380);
   };
   useEffect(() => () => clear(), []);
-  return { onPointerDown, onPointerUp: clear, onPointerLeave: clear, onPointerCancel: clear };
+  // From the keyboard: Enter / Space on the focused button steps once, and holding the key repeats (the system's key repeat).
+  const onKeyDown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); stepRef.current(); } };
+  return { onPointerDown, onPointerUp: clear, onPointerLeave: clear, onPointerCancel: clear, onKeyDown };
 }

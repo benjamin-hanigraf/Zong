@@ -56,7 +56,7 @@ export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, 
   return (
     <div style={{ position: "relative", overflow: elevated ? "visible" : "hidden", zIndex: elevated ? 100 : "auto" }}>
       <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: SWIPE_REVEAL, display: "flex", alignItems: "stretch", justifyContent: "center", background: "#161618" }}>
-        <button onClick={() => { onDelete(); setTranslateX(0); onOpenIdChange(null); }} style={{ width: "100%", background: "none", border: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button tabIndex={-1} aria-label="Delete" onClick={() => { onDelete(); setTranslateX(0); onOpenIdChange(null); }} style={{ width: "100%", background: "none", border: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <RevealIcon size={18} color={C.danger} />
         </button>
       </div>

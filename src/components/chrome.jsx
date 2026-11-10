@@ -18,11 +18,11 @@ export function BottomNav({ active, onChange, mode, C }) {
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30 }}>
       <div style={{ display: "flex", background: C.bg, paddingTop: 18, paddingBottom: "max(36px, calc(8px + var(--safe-bottom)))" }}>
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, label, icon: Icon }, index) => {
           const isActive = active === id;
           const isPiano = Icon === PianoIcon;
           return (
-            <button key={id} onClick={() => onChange(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
+            <button key={id} onClick={() => onChange(id)} title={`${label} (${index + 1})`} aria-current={isActive ? "page" : undefined} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, padding: "0 0 6px", background: "none", border: "none", fontFamily: FONT, cursor: "pointer" }}>
               {/* Allow the piano icon to be naturally balanced; constrain height */}
               <div style={{ height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Icon size={isPiano ? 16 : 18} height={isPiano ? 16 : undefined} color={isActive ? C.accent : C.textMuted} strokeWidth={isActive ? 2.3 : 1.8} />

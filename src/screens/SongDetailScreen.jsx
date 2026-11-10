@@ -205,6 +205,32 @@ export function SongDetailScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, [syncRole, onNextSong, onPrevSong]);
 
+  // Reading with the keyboard (when not leading Stage Mode — the leader's arrow keys step through sections): ↑ ↓ scroll a little,
+  // Page Up / Page Down / Space a page, Home / End the top / bottom. [ and ] move the song down / up a key.
+  const stepKeyRef = useRef(null);
+  stepKeyRef.current = stepKey;
+  useEffect(() => {
+    if (syncRole === "lead") return undefined;
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || isTypingTarget(e.target) || !isTopLayer(detailRoot.current)) return;
+      const box = scrollRef.current;
+      if (e.key === "[" || e.key === "]") { e.preventDefault(); stepKeyRef.current(e.key === "]" ? 1 : -1); return; }
+      if (!box || (e.key === " " && /^(BUTTON|A)$/.test(e.target?.tagName || ""))) return;
+      const page = box.clientHeight * 0.85;
+      let dy = null;
+      if (e.key === "ArrowDown") dy = 70;
+      else if (e.key === "ArrowUp") dy = -70;
+      else if (e.key === "PageDown" || (e.key === " " && !e.shiftKey)) dy = page;
+      else if (e.key === "PageUp" || (e.key === " " && e.shiftKey)) dy = -page;
+      if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) return;
+      if (dy !== null) { e.preventDefault(); box.scrollBy({ top: dy, behavior: "smooth" }); }
+      else if (e.key === "Home") { e.preventDefault(); box.scrollTo({ top: 0, behavior: "smooth" }); }
+      else if (e.key === "End") { e.preventDefault(); box.scrollTo({ top: box.scrollHeight, behavior: "smooth" }); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [syncRole]);
+
   const hasKeyChanged = Boolean(isSharedSetlist && onSaveOverrideToTeam && viewKey !== (syncedKeyOverride ?? song.key));
   const currentBpm = engine ? Math.round(engine.bpm) : (contextTempo ?? song.tempo);
   const baseTempo = syncedTempoOverride ?? (song.tempo === "" || song.tempo == null ? 120 : song.tempo);
@@ -216,7 +242,7 @@ export function SongDetailScreen({
     {isInSetlist && <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 99 }} />}
     <div ref={detailRoot} style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: FONT, zIndex: 100, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--safe-top)", boxSizing: "border-box", transform: isInSetlist ? undefined : `translateX(${dragX}px)`, transition: isInSetlist ? "none" : ((leaving || transitioning) ? "transform 180ms ease-out" : dragging ? "none" : dragX === 0 ? "transform 180ms ease" : "none"), touchAction: "pan-y" }} {...handlers}>
       <div style={{ flex: "0 0 auto", padding: "16px 14px 16px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 2, background: C.bg }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
+        <button onClick={onBack} aria-label="Back" title="Back (Esc)" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6, position: "relative", zIndex: 1 }}><ChevronLeft size={22} /></button>
         <div style={{ flex: 1, minWidth: 0 }} />
         <div
           onTouchStart={startTitlePress} onTouchMove={cancelTitlePress} onTouchEnd={cancelTitlePress} onTouchCancel={cancelTitlePress}
@@ -273,7 +299,7 @@ export function SongDetailScreen({
         <div style={{ flex: "0 0 auto", position: "relative", display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, overflow: "visible", zIndex: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, justifySelf: "start", position: "relative", zIndex: 1 }}>
             <TimeSigPicker value={engine.timeSig} onChange={engine.setTimeSig} height={30} fontSize={12.5} C={C} />
-            <button onClick={cycleSubdivision} style={{ ...chevronBtn, width: 30, height: 30 }}>
+            <button onClick={cycleSubdivision} aria-label="Subdivision" title="Subdivision" style={{ ...chevronBtn, width: 30, height: 30 }}>
               <SubdivisionIcon value={engine.subdivision} size={14} color={C.text} />
             </button>
           </div>
@@ -378,7 +404,7 @@ export function SongDetailScreen({
       {showBottomBar && (
         <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "14px 16px max(20px, calc(10px + var(--safe-bottom)))", background: "#0B0B0C" }}>
           <button {...decBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>−</button>
-          <button onPointerDown={(e) => { e.preventDefault(); engine.toggle(); }} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button aria-label="Start / stop" onPointerDown={(e) => { e.preventDefault(); engine.toggle(); }} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); engine.toggle(); } }} style={{ flex: "0 1 60%", height: 64, borderRadius: 18, border: "none", background: "#1F1F1F", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <PlayStopGlyph size={26} color={C.accent} playNudge={3} />
           </button>
           <button {...incBpmHold} style={{ width: 48, height: 48, borderRadius: "50%", border: "none", background: C.surface2, color: C.text, fontSize: 22, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>+</button>

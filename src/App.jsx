@@ -117,6 +117,22 @@ function AppInner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // 1 – 4 switch between the bottom bar's pages (Mac / PC). Off while a dialog or a song is open, while typing, and on the chord wheels page
+  // (where the number keys play chords).
+  const tabKeysRef = useRef({});
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing || hasOpenLayer() || isTypingTarget(e.target)) return;
+      const n = /^(?:Digit|Numpad)([1-4])$/.exec(e.code);
+      if (!n) return;
+      const { navHidden, change } = tabKeysRef.current;
+      if (navHidden) return;
+      e.preventDefault();
+      change(["practice", "songs", "setlists", "settings"][Number(n[1]) - 1]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [liveTarget, setLiveTarget] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [songToDelete, setSongToDelete] = useState(null);
@@ -862,6 +878,7 @@ function AppInner() {
 
   // The joystick chord piano takes the whole screen: no bottom bar while it is open (the joystick button in its title bar leaves it).
   const navHidden = tab === "practice" && mode === "chords" && (joystickOn || !!joyRemote?.on);
+  tabKeysRef.current = { navHidden, change: handleTabChange };
 
   return (
     <div ref={rootRef} style={{

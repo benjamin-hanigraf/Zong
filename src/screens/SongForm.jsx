@@ -97,6 +97,7 @@ function HighlightedAutoGrowTextarea({ value, onChange, onBlur, onFocus, placeho
         autoCapitalize="off"
         autoComplete="off"
         spellCheck={false}
+        aria-label="Section text"
         data-gramm="false"
         data-gramm_editor="false"
         data-enable-grammarly="false"
@@ -261,6 +262,19 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
   // Rows are moved by holding the dots at their left edge. The row follows the finger (or cursor); the rows it passes slide aside,
   // and nothing is reordered until it is let go — so nothing re-renders or flickers while it moves.
   const rowRefs = useRef({});
+  const handleRefs = useRef({});
+  const refocusRow = useRef(null);
+  // Keyboard: with the dots in focus, ↑ ↓ move the row one place (the focus follows it).
+  const moveRowByKey = (e, id) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const from = structure.findIndex((r) => r.id === id);
+    const to = from + (e.key === "ArrowUp" ? -1 : 1);
+    if (to < 0 || to >= structure.length) return;
+    refocusRow.current = id;
+    setStructure((rows) => { const next = [...rows]; const [m] = next.splice(from, 1); next.splice(to, 0, m); return next; });
+  };
+  useEffect(() => { if (refocusRow.current) { handleRefs.current[refocusRow.current]?.focus(); refocusRow.current = null; } }, [structure]);
   const [drag, setDrag] = useState(null);   // { id, from, to, dy } while a row is held
   const dragRef = useRef(null);
   const ROW_GAP = 8;
@@ -332,7 +346,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
   return (
     <div ref={formRoot} className="scroll-list" style={{ position: "fixed", inset: 0, zIndex: 150, background: C.bg, color: C.text, fontFamily: FONT, overflowY: dragging ? "hidden" : "auto", touchAction: dragging ? "none" : "pan-y", boxSizing: "border-box", paddingBottom: keyboardInset ? Math.max(60, keyboardInset + 60) : 60, transform: dragX ? `translateX(${dragX}px)` : "none", transition: leaving ? "transform 200ms ease-out" : dragX === 0 ? "transform 200ms ease" : "none" }} {...handlers}>
       <div data-sticky-header style={{ padding: "calc(16px + var(--safe-top)) 20px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, zIndex: 5, background: C.bg }}>
-        <button onClick={onCancel} style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
+        <button onClick={onCancel} aria-label="Back" title="Back (Esc)" style={{ background: "none", border: "none", color: C.textMuted, display: "flex", padding: 6 }}><ChevronLeft size={22} /></button>
         <div style={{ fontSize: 17, fontWeight: 600 }}>{initial ? "Edit Song" : "Add Song"}</div>
         <div style={{ flex: 1 }} />
         <button disabled={!canSave} onClick={handleSave} style={{ height: 34, padding: "0 16px", borderRadius: 9, border: "none", background: canSave ? C.accent : C.surface2, color: canSave ? "#fff" : C.textFaint, fontFamily: FONT, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -420,11 +434,12 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
                     transform: drag ? `translateY(${rowShift(index, row.id)}px)` : "none",
                     transition: held || !drag ? "none" : "transform 150ms ease",
                   }}>
-                  <div onPointerDown={(e) => startDrag(e, row.id)}
-                    aria-label="Hold and drag to move" title="Hold and drag to move"
-                    style={{ width: 22, height: 44, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, touchAction: "none", cursor: "grab", flexShrink: 0 }}>
+                  <button type="button" ref={(el) => { if (el) handleRefs.current[row.id] = el; else delete handleRefs.current[row.id]; }}
+                    onPointerDown={(e) => startDrag(e, row.id)} onKeyDown={(e) => moveRowByKey(e, row.id)}
+                    aria-label={`Move ${row.s || "this section"}`} title="Hold and drag to move — or press ↑ ↓ here"
+                    style={{ width: 22, height: 44, padding: 0, border: "none", background: "none", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, touchAction: "none", cursor: "grab", flexShrink: 0 }}>
                     <GripVertical size={18} />
-                  </div>
+                  </button>
                   <div style={{ width: "36%", minWidth: 110, flexShrink: 0 }}>
                     <OptionDropdown options={sectionOptions} value={row.s} onChange={(v) => setRow(row.id, { s: v })} placeholder="Section" C={C} />
                   </div>
