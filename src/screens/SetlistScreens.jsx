@@ -161,7 +161,7 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
         ) : setlistSongs.map(({ song: s, keyOverride, tempoOverride }, idx) => {
           const isDraggingThis = activeDragIndex === idx;
           return (
-            <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => requestRemoveFromStage(s.id)} icon={X} C={C} elevated={isDraggingThis}>
+            <SwipeToDelete key={s.id} id={s.id} openId={openSwipeId} onOpenIdChange={setOpenSwipeId} onDelete={() => requestRemoveFromStage(s.id)} icon={X} C={C} elevated={isDraggingThis} disabled={activeDragIndex !== null}>
               <SetlistSongRow
                 song={s} keyOverride={keyOverride} tempoOverride={tempoOverride} mode={mode} tanglishMode={tanglishMode} C={C}
                 onClick={() => {

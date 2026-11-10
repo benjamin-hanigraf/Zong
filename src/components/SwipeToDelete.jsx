@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { SWIPE_REVEAL } from "../lib/swipe.js";
 import { useWheelSwipe } from "../lib/wheelSwipe.js";
 
-export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, elevated = false, C }) {
+export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, elevated = false, disabled = false, C }) {
   const [translateX, setTranslateX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const startXRef = useRef(0); const startYRef = useRef(0); const startTranslateRef = useRef(0);
   const movedRef = useRef(false); const directionRef = useRef(null);
   const isOpen = openId === id;
   useEffect(() => { if (!isOpen) setTranslateX(0); }, [isOpen]);
+  useEffect(() => { if (disabled) { setTranslateX(0); setDragging(false); } }, [disabled]);
   const mouseActiveRef = useRef(false);
   const startDrag = (x, y) => {
     if (openId !== null && openId !== id) onOpenIdChange(null);
@@ -19,6 +20,7 @@ export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, 
     setDragging(true);
   };
   const moveDrag = (x, y, stopFn) => {
+    if (disabled) return;   // a song is being dragged to a new place: sideways movement is not a swipe
     const dx = x - startXRef.current;
     const dy = y - startYRef.current;
     if (directionRef.current === null) {
@@ -54,7 +56,7 @@ export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, 
   // belongs to the row, so it is not taken here).
   const wrapRef = useRef(null);
   useWheelSwipe({
-    accept: (sign, e) => !!wrapRef.current?.contains(e.target) && (sign < 0 || isOpen),
+    accept: (sign, e) => !disabled && !!wrapRef.current?.contains(e.target) && (sign < 0 || isOpen),
     onStart: () => { if (openId !== null && openId !== id) onOpenIdChange(null); startTranslateRef.current = translateX; setDragging(true); },
     onMove: (dx) => setTranslateX(Math.min(0, Math.max(-SWIPE_REVEAL, startTranslateRef.current + dx))),
     onEnd: (dx) => {
