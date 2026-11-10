@@ -51,6 +51,11 @@ function AppInner() {
   const [notesBold, setNotesBold] = useLocalStorageState("altar:notes-bold", false);
   const [lineSpacing, setLineSpacing] = useLocalStorageState("altar:line-spacing", 1.40);
   const [noteSpacing, setNoteSpacing] = useLocalStorageState("altar:note-spacing", 0.30);
+  // The Tight / Airy line spacings were widened (1.2 -> 1.15, 1.7 -> 1.9): a saved old value moves to its new equivalent once.
+  useEffect(() => {
+    if (Math.abs(lineSpacing - 1.7) < 0.001) setLineSpacing(1.9);
+    else if (Math.abs(lineSpacing - 1.2) < 0.001) setLineSpacing(1.15);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [mode, setMode] = useLocalStorageState("altar:mode", "vocals");
   const [clickSettings, setClickSettings] = useLocalStorageState("altar:click-settings", DEFAULT_CLICK_SETTINGS);
   const [tanglishMode, setTanglishMode] = useLocalStorageState("altar:tanglish", false);

@@ -1,11 +1,13 @@
 // Swipe gestures: edge swipe back and swiping between songs of a setlist.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { uiWidth } from "./viewport.js";
+import { isTopLayer } from "./keys.js";
+import { useWheelSwipe } from "./wheelSwipe.js";
 
 /* =========================================================================
    Swipe hooks
    ========================================================================= */
-export function useEdgeSwipeBack(onBack, edgeZone = 24) {
+export function useEdgeSwipeBack(onBack, edgeZone = 24, rootRef = null) {
   const touchStartRef = useRef(null);
   const [dragX, setDragX] = useState(0);
   const [leaving, setLeaving] = useState(false);
@@ -40,6 +42,16 @@ export function useEdgeSwipeBack(onBack, edgeZone = 24) {
     window.addEventListener("mouseup", onMouseUp);
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
+  // Trackpad: a two-finger swipe to the right, anywhere on this screen (while it is the one on top), goes back — the page follows the fingers.
+  useWheelSwipe({
+    enabled: !!rootRef && !leaving,
+    accept: (sign, e) => sign > 0 && !!rootRef?.current && rootRef.current.contains(e.target) && isTopLayer(rootRef.current) && !e.target.closest?.("textarea, input, [contenteditable]"),
+    onMove: (dx) => setDragX(Math.max(0, dx)),
+    onEnd: (dx) => {
+      if (dx > Math.min(110, uiWidth() * 0.2)) { setLeaving(true); setDragX(uiWidth()); setTimeout(onBack, 200); }
+      else setDragX(0);
+    },
+  });
   return { dragX, leaving, dragging: dragX > 0, handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown } };
 }
 
@@ -50,11 +62,11 @@ export function useEdgeSwipeBack(onBack, edgeZone = 24) {
 // copied into a "ghost" that slides out while the new song slides in from the other side,
 // both with the same easing and distance so their edges stay flush: a clean push transition.
 // Uses the Web Animations API (all current browsers, iOS Safari, desktop and the app).
-const SWIPE_MS = 300;
+const SWIPE_MS = 260;
 
-const SWIPE_EASE = "cubic-bezier(0.22, 0.61, 0.36, 1)";
+const SWIPE_EASE = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 
-export function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
+export function useSetlistSongSwipe(onPrev, onNext, cardRef, songId, rootRef = null) {
   // cardRef = the song's scrolling content area (lyrics / chords / notes). Only that part slides;
   // the header, badges and bottom bars stay where they are and just update their text.
   const startRef = useRef({ x: 0, y: 0 });
@@ -102,7 +114,7 @@ export function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
     const from = shownRef.current;
     setX(0);
     if (el && el.animate && from !== 0) {
-      el.animate([{ transform: `translate3d(${from}px,0,0)` }, { transform: "translate3d(0,0,0)" }], { duration: 240, easing: SWIPE_EASE });
+      el.animate([{ transform: `translate3d(${from}px,0,0)` }, { transform: "translate3d(0,0,0)" }], { duration: 200, easing: SWIPE_EASE });
     }
   };
 
@@ -196,6 +208,19 @@ export function useSetlistSongSwipe(onPrev, onNext, cardRef, songId) {
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
 
+  // Trackpad: a two-finger swipe either way, anywhere on this screen (while it is on top), moves between songs the same way a drag does.
+  useWheelSwipe({
+    enabled: !!rootRef,
+    accept: (sign, e) => !busyRef.current && !!rootRef?.current && rootRef.current.contains(e.target) && isTopLayer(rootRef.current),
+    onStart: () => { startRef.current = { x: 0, y: 0 }; dirRef.current = "x"; activeRef.current = true; velRef.current = { x: 0, t: performance.now(), v: 0 }; },
+    onMove: (dx, vx) => {
+      if (!activeRef.current || busyRef.current) return;
+      velRef.current.v = vx;
+      const canGo = dx > 0 ? !!onPrev : !!onNext;
+      setX(canGo ? dx : dx * 0.25);
+    },
+    onEnd: () => end(),
+  });
   return {
     handlers: { onTouchStart: handleTouchStart, onTouchMove: handleTouchMove, onTouchEnd: handleTouchEnd, onTouchCancel: handleTouchEnd, onMouseDown: handleMouseDown },
   };

@@ -20,9 +20,9 @@ const NOTES_SIZE_RATIO = 0.9;
 const HEADER_SIZE_RATIO = 0.75;
 
 const SPACING_PRESETS = [
-  { id: "tight", label: "Tight", line: 1.2, note: 0.15, iconGap: 4 },
+  { id: "tight", label: "Tight", line: 1.15, note: 0.15, iconGap: 3.5 },
   { id: "normal", label: "Normal", line: 1.4, note: 0.30, iconGap: 6.5 },
-  { id: "airy", label: "Airy", line: 1.7, note: 0.60, iconGap: 9 },
+  { id: "airy", label: "Airy", line: 1.9, note: 0.60, iconGap: 10 },
 ];
 
 // Three text lines with the preset's line gap, drawn in the button's colour.

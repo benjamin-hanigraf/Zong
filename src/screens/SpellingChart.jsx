@@ -178,7 +178,8 @@ function SpellingChartRow({ tamilKey, value, isFirst, onClick, C }) {
 
 export function SpellingChartScreen({ chart, onSave, onBack, C }) {
   const [modalData, setModalData] = useState(null); // null | { isNew: boolean, origTamil?: string, tamil: string, latin: string }
-  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onBack);
+  const chartRoot = useRef(null);
+  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onBack, 24, chartRoot);
 
   // User-added entries on top (newest-first), then seed entries below.
   const seedKeys = Object.keys(TANGLISH_EXCEPTIONS);
@@ -211,7 +212,6 @@ export function SpellingChartScreen({ chart, onSave, onBack, C }) {
     setModalData(null);
   };
 
-  const chartRoot = useRef(null);
   useKeys({ rootRef: chartRoot, escape: () => onBack() }, !modalData);
   return (
     <div

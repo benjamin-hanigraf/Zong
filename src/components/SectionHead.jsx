@@ -9,7 +9,7 @@ export function SectionHead({ label, size, textAlign, C }) {
     <div style={{ textAlign, marginBottom: Math.max(6, size * 0.7) }}>
       <span style={{
         display: "inline-block", maxWidth: "100%", boxSizing: "border-box", padding: `${Math.max(1, text * 0.12)}px ${Math.max(7, text * 0.6)}px`, borderRadius: Math.max(5, text * 0.45),
-        border: `1.5px solid ${C.accent}`, color: C.accent, fontSize: text, letterSpacing: 1.5, textTransform: "uppercase", lineHeight: 1.15, textAlign: "left",
+        border: `${Math.max(0.6, Math.round(text * 0.065 * 10) / 10)}px solid ${C.accent}`, color: C.accent, fontSize: text, letterSpacing: 1.5, textTransform: "uppercase", lineHeight: 1.15, textAlign: "left",
       }}>{label}</span>
     </div>
   );

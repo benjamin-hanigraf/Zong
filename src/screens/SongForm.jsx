@@ -163,9 +163,9 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
     return res.texts;
   };
 
-  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel);
-  const keyboardInset = useKeyboardInset();
   const formRoot = useRef(null);
+  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onCancel, 24, formRoot);
+  const keyboardInset = useKeyboardInset();
   const [discardOpen, setDiscardOpen] = useState(false);
 
   const handleTitleChange = (v) => {
@@ -430,7 +430,7 @@ export function SongForm({ initial, seed, onSave, onCancel, onDelete, onDuplicat
                 return (
                 <div key={row.id} ref={(el) => { if (el) rowRefs.current[row.id] = el; else delete rowRefs.current[row.id]; }}
                   style={{
-                    display: "flex", alignItems: "center", gap: 8, position: "relative", zIndex: held ? 10 : 1, borderRadius: 10,
+                    display: "flex", alignItems: "center", gap: 8, position: "relative", zIndex: held ? 10 : undefined, borderRadius: 10,   // no z-index at rest: a drop-down opened in a row must be able to rise above the rows after it
                     transform: drag ? `translateY(${rowShift(index, row.id)}px)` : "none",
                     transition: held || !drag ? "none" : "transform 150ms ease",
                   }}>

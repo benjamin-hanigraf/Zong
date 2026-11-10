@@ -42,6 +42,8 @@ final class NativeMetronomeEngine {
     private var accents: [String] = []   // "normal" | "accent" | "mute" | "silent" (mute mode: no click, beat still reported)
     private var title = "Metronome"      // shown on the lock-screen Live Activity
     private var isPlaying = false
+    /// Host time (mach ticks) at which the current run's player was started. A render time older than this belongs to the PREVIOUS run.
+    private var playStartHost: UInt64 = 0
     private var resumeAfterInterruption = false
     private var lastCommand: MetronomeCommand?
     private var lastCommandTime: UInt64 = 0
@@ -314,6 +316,7 @@ final class NativeMetronomeEngine {
         // First click plays the instant the player starts; the scheduler takes over right after.
         scheduleNextClick(immediate: true)
         clkNode.play()
+        playStartHost = mach_absolute_time()
         isPlaying = true
         startScheduler()
         publishState()
@@ -348,7 +351,10 @@ final class NativeMetronomeEngine {
 
     private func tick() {
         guard isPlaying, let fmt = format else { return }
-        let now = currentFrame()
+        // Until the player has rendered at least once in THIS run there is no valid clock. Reading the previous run's last
+        // render time (it survives stop / reset) made the first ticks think the clock was far ahead and queue a burst of
+        // catch-up clicks all at once — the double click heard when resuming.
+        guard let now = currentFrame() else { return }
         let horizon = Double(now) + lookahead * fmt.sampleRate
         while nextFrame < horizon {
             scheduleNextClick(immediate: false)
@@ -359,12 +365,11 @@ final class NativeMetronomeEngine {
         }
     }
 
-    /// Position of the audio clock on the player's timeline.
-    private func currentFrame() -> Int64 {
-        if let nodeTime = clkNode.lastRenderTime, let playerTime = clkNode.playerTime(forNodeTime: nodeTime) {
-            return max(0, playerTime.sampleTime)
-        }
-        return 0
+    /// Position of the audio clock on the player's timeline, or nil until the player has rendered in the current run.
+    private func currentFrame() -> Int64? {
+        guard let nodeTime = clkNode.lastRenderTime, nodeTime.isHostTimeValid, nodeTime.hostTime >= playStartHost,
+              let playerTime = clkNode.playerTime(forNodeTime: nodeTime) else { return nil }
+        return max(0, playerTime.sampleTime)
     }
 
     /// Schedules the click at `nextFrame`, then advances to the following one using the

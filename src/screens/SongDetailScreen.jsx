@@ -85,8 +85,8 @@ export function SongDetailScreen({
   const decBpmHold = useHoldRepeat(() => stepBpm(-1));
   const incBpmHold = useHoldRepeat(() => stepBpm(1));
 
-  const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80);
-  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong, scrollRef, song.id);
+  const edgeBack = useEdgeSwipeBack(onBack, isInSetlist ? 0 : 80, isInSetlist ? null : detailRoot);
+  const setlistSwipe = useSetlistSongSwipe(onPrevSong, onNextSong, scrollRef, song.id, isInSetlist ? detailRoot : null);
   const { dragX, leaving, dragging, handlers, transitioning } = isInSetlist
     ? { dragX: 0, leaving: false, dragging: false, handlers: setlistSwipe.handlers, transitioning: false }
     : { ...edgeBack, transitioning: false };

@@ -2,6 +2,7 @@
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { SWIPE_REVEAL } from "../lib/swipe.js";
+import { useWheelSwipe } from "../lib/wheelSwipe.js";
 
 export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, icon: RevealIcon = Trash2, elevated = false, C }) {
   const [translateX, setTranslateX] = useState(0);
@@ -49,12 +50,26 @@ export function SwipeToDelete({ id, openId, onOpenIdChange, onDelete, children, 
     window.addEventListener("mouseup", onMouseUp);
     return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
   });
+  // Trackpad: a two-finger swipe left over the row reveals Delete; a swipe right closes it again (the row's own swipe-right action
+  // belongs to the row, so it is not taken here).
+  const wrapRef = useRef(null);
+  useWheelSwipe({
+    accept: (sign, e) => !!wrapRef.current?.contains(e.target) && (sign < 0 || isOpen),
+    onStart: () => { if (openId !== null && openId !== id) onOpenIdChange(null); startTranslateRef.current = translateX; setDragging(true); },
+    onMove: (dx) => setTranslateX(Math.min(0, Math.max(-SWIPE_REVEAL, startTranslateRef.current + dx))),
+    onEnd: (dx) => {
+      setDragging(false);
+      const open = Math.min(0, Math.max(-SWIPE_REVEAL, startTranslateRef.current + dx)) < -SWIPE_REVEAL / 2;
+      setTranslateX(open ? -SWIPE_REVEAL : 0);
+      onOpenIdChange(open ? id : null);
+    },
+  });
   const handleContentClickCapture = (e) => {
     if (movedRef.current) { e.stopPropagation(); return; }
     if (isOpen) { e.stopPropagation(); setTranslateX(0); onOpenIdChange(null); }
   };
   return (
-    <div style={{ position: "relative", overflow: elevated ? "visible" : "hidden", zIndex: elevated ? 100 : "auto" }}>
+    <div ref={wrapRef} style={{ position: "relative", overflow: elevated ? "visible" : "hidden", zIndex: elevated ? 100 : "auto" }}>
       <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: SWIPE_REVEAL, display: "flex", alignItems: "stretch", justifyContent: "center", background: "#161618" }}>
         <button tabIndex={-1} aria-label="Delete" onClick={() => { onDelete(); setTranslateX(0); onOpenIdChange(null); }} style={{ width: "100%", background: "none", border: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <RevealIcon size={18} color={C.danger} />

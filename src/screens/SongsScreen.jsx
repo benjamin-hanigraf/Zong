@@ -5,6 +5,7 @@ import { FONT, LANGUAGES } from "../lib/constants.js";
 import { keyLabel } from "../lib/helpers.js";
 import { maybeTanglishTitle, songMatchesQuery, stripAltTitle } from "../lib/songText.js";
 import { ClearableInput, navRowKeys } from "../components/shared.jsx";
+import { useWheelSwipe } from "../lib/wheelSwipe.js";
 import { useKeyboardInset } from "../lib/viewport.js";
 import { Tamil } from "../components/Tamil.jsx";
 import { SwipeToDelete } from "../components/SwipeToDelete.jsx";
@@ -88,9 +89,19 @@ function SongRow({ song, onOpen, onEdit, onDelete, onLoadToMetronome, onLoadToPi
     if (onEdit) onEdit(song);
   };
 
+  // Trackpad: a two-finger swipe right over the row does what swiping the row right does (load it into the piano / metronome).
+  const rowRef = useRef(null);
+  useWheelSwipe({
+    accept: (sign, e) => sign > 0 && canSwipeRight && !isSwipeOpen && !!rowRef.current?.contains(e.target),
+    onMove: (dx) => setSwipeDx(Math.min(120, Math.max(0, dx))),
+    onEnd: (dx) => {
+      setSwipeDx(0);
+      if (dx > 60) { if (isDrums && onLoadToMetronome) onLoadToMetronome(song); else if ((isVocals || isChords) && onLoadToPiano) onLoadToPiano(song); }
+    },
+  });
   const badgeText = mode === "drums" ? (song.tempo !== "" && song.tempo != null ? `${song.tempo}` : "—") : keyLabel(song);
   return (
-    <div data-nav-row tabIndex={0} role="button"
+    <div ref={rowRef} data-nav-row tabIndex={0} role="button"
       onKeyDown={navRowKeys(() => onOpen(song), {
         onEdit: onEdit ? () => onEdit(song) : undefined,
         onDelete: onDelete ? () => onDelete(song.id) : undefined,

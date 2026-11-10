@@ -68,7 +68,7 @@ export function LyricsText({ text, textAlign = "left", fontSize = 22, lineHeight
   return (
     <div style={{ fontFamily: FONT, fontSize, lineHeight: `${lineHeightMult}em`, textAlign, whiteSpace: "pre-wrap", overflowWrap: "break-word", letterSpacing, fontWeight: bold ? 700 : 400, maxWidth: "100%", boxSizing: "border-box" }}>
       {lines.map((line, i) => (
-        <div key={i} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2)) }}>
+        <div key={i} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.2, fontSize * (lineHeightMult - 0.9)) }}>
           {line ? <Tamil>{line}</Tamil> : "\u00A0"}
         </div>
       ))}
@@ -262,7 +262,7 @@ export function ChordText({ text, onChange, editable, dim, brightTags, dimTags, 
         };
 
         return (
-          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.5, fontSize * (lineHeightMult - 1.2), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
+          <div key={li} style={{ minHeight: fontSize * lineHeightMult, marginBottom: Math.max(fontSize * 0.2, fontSize * (lineHeightMult - 0.9), tagGap * 1.8), lineHeight: `${lineHeightMult}em` }}>
             {groups.map((g, gi) => {
               const maxTagLen = g.items.reduce((max, it) => {
                 if (!it.tok.tag) return max;

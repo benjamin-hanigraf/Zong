@@ -423,6 +423,9 @@ export function TeamKeyModal({ isOpen, initialKey, onSave, onClose, C }) {
           autoFocus
           value={draft}
           onChange={(e) => { setDraft(e.target.value.toUpperCase()); setError(""); }}
+          // Not a name / email: stop Safari and Chrome offering contacts, saved logins or autofill for it.
+          type="text" name="zong-team-code" id="zong-team-code" autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
+          aria-autocomplete="none" data-form-type="other" data-lpignore="true" data-1p-ignore="true"
           placeholder="e.g. FACA or GRACE-CHURCH"
           style={{
             width: "100%", height: 42, background: C.surface3,

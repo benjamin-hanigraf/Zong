@@ -43,7 +43,8 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const nameLongPressTimerRef = useRef(null);
-  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onBack);
+  const stageRoot = useRef(null);
+  const { dragX, leaving, dragging, handlers } = useEdgeSwipeBack(onBack, 24, stageRoot);
 
   const [activeDragIndex, setActiveDragIndex] = useState(null);
   const [dragY, setDragY] = useState(0);
@@ -133,7 +134,6 @@ export function SetlistStageScreen({ setlist, songs, onBack, onCommit, onUpdateS
   });
 
   const bottomInset = "calc(55px + max(36px, 8px + var(--safe-bottom)))";
-  const stageRoot = useRef(null);
   useKeys({ rootRef: stageRoot, escape: () => onBack() });
 
   return (
