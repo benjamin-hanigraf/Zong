@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node tests/chords.test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.3",

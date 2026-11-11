@@ -48,7 +48,16 @@ function parseChordsOnlyLine(rawLine, viewKey, keyQuality, nashvilleMode) {
           i = end + 1;
           continue;
         }
+        // A bracketed note that is not a chord ("[Drop]", "[Guitar solo]") is shown as the plain text it is — and the
+        // scan always moves past it (it used to stall here and freeze the page).
+        segments.push({ type: "text", text: inner });
+        afterX = false;
+        i = end + 1;
+        continue;
       }
+      segments.push({ type: "text", text: "[" });   // an opening bracket that is never closed: plain text
+      i += 1;
+      continue;
     }
 
     // Space run

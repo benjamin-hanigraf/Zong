@@ -34,29 +34,22 @@ export function transposeKey(key, semitoneDelta) {
 // Only the root letters move; everything else (quality suffix) is kept as-is.
 const CHORD_ROOT_RE = /^([A-G])([#b]?)/;
 
+// A chord is recognised only when the WHOLE token fits the grammar of a chord name — never just because it starts with a note letter
+// or a digit. "Drop", "Drum", "End", "Fade", "Bass", "1st", "2x" start like chords but are words, and stay words.
+//   quality  m  M  maj  Maj  major  min  dim  aug  +  °  ø         extension  a number (7, 9, 11, 13, 6 …)
+//   mods     sus  sus2  sus4  add9  b5  #9  ♭13  (11)  alt  no3     bass       /G  /F#  (letters)  /3  /♭7  (numbers)
+const QUALITY_SRC = "(?:major|Major|maj|Maj|M|min|m|dim|aug|\u00B0|\u00F8|\\+)?";
+const EXTENSION_SRC = "(?:\\d{1,2})?";
+const MODS_SRC = "(?:sus[24]?|add\\d{1,2}|alt|no\\d|[b#\\u266D\\u266F]\\d{1,2}|\\([b#\\u266D\\u266F]?\\d{1,2}[b#\\u266D\\u266F]?\\))*";
+const SUFFIX_SRC = QUALITY_SRC + EXTENSION_SRC + MODS_SRC;
+const LETTER_CHORD_RE = new RegExp(`^([A-G])([#b]?)(${SUFFIX_SRC})(?:\\/([A-G])([#b]?))?$`);
+
 function isSingleChordSymbol(word) {
-  // Allow optional leading 'b' for flat-prefix notation (bA = Ab, bE = Eb)
   let s = String(word || "").trim();
   if (!s) return false;
-  // Handle flat-prefix: bA, bE, bB etc.
-  if (/^b[A-G]/.test(s)) s = s[1] + "b" + s.slice(2); // bA → Ab for further matching
-  // Must start with a note letter (A-G) followed by optional accidental
-  if (!/^[A-G]/.test(s)) return false;
-  // Strip the root (letter + optional accidental)
-  const rootMatch = s.match(/^([A-G][#b]?)/);
-  if (!rootMatch) return false;
-  const suffix = s.slice(rootMatch[0].length);
-  // Empty suffix = bare chord like "G", "Ab" — always a chord
-  if (!suffix) return true;
-  // Slash chord: suffix starts with '/' then an optional root
-  // Check if the suffix looks like a known chord quality or is short
-  // Reject anything with 4+ consecutive plain letters that look like a word
-  // (e.g. "Good", "Great") — but allow known quality keywords.
-  const QUALITY_KEYWORDS = /^(?:m(?:in(?:or)?)?|M(?:aj(?:or)?)?|maj(?:or)?|dim|°|aug|\+|sus\d?|add\d+|dom)?\d*(?:\/[A-G][#b]?)?$/i;
-  // Exception: block long plain-word suffixes that aren't musical (≥4 non-digit, non-slash chars)
-  const plainLetters = suffix.replace(/[\d/]/g, "");
-  if (plainLetters.length >= 4 && !QUALITY_KEYWORDS.test(suffix)) return false;
-  return true;
+  // Flat-prefix notation: bA = Ab, bE = Eb
+  if (/^b[A-G]/.test(s)) s = s[1] + "b" + s.slice(2);
+  return LETTER_CHORD_RE.test(s);
 }
 
 export function flatify(str) {
@@ -188,7 +181,7 @@ const MINOR_KEY_DEGREE_QUALITIES = ["m", "dim", "", "m", "m", "", ""];
 // is intentionally excluded — that already means "minor" everywhere else.
 const MAJOR_OVERRIDE_SUFFIXES = new Set(["M", "Maj", "maj", "major", "Major"]);
 
-const NUMBER_TOKEN_RE = /^([b#]?)([1-7])((?:(?!\/)[^\s])*)(?:\/([b#]?)([1-7]))?$/;
+const NUMBER_TOKEN_RE = new RegExp(`^([b#]?)([1-7])(${SUFFIX_SRC})(?:\\/([b#]?)([1-7]))?$`);
 
 // Plain numbers above 13 are text (bar counts, verse numbers) — except the degree + 7th/9th
 // shorthands: 37 = 3 with a 7th, 49 = 4 with a 9th.
@@ -280,6 +273,8 @@ export function chordToNumberToken(symbol, key, quality) {
   if (seq) return seq.map((part) => chordToNumberToken(part, key, quality)).join("-");
   // Already a Nashville number — nothing to convert.
   if (NUMBER_TOKEN_RE.test(trimmed)) return symbol;
+  // Only a real chord name is converted; any other text ("Drop", "Guitar solo") is left exactly as written.
+  if (!isSingleChordSymbol(trimmed)) return symbol;
   const scaleOffsets = quality === "Minor" ? MINOR_SCALE_OFFSETS : MAJOR_SCALE_OFFSETS;
   const semitoneRoot = KEY_TO_SEMITONE[key] ?? 0;
   const convertOne = (part) => {
